@@ -165,7 +165,9 @@ process.env.ADMIN_NAME ||= 'Admin';
 await import('./index.js');
 
 /* Say where it is, and open it, once it answers. */
-const url = `http://localhost:${PORT}`;
+// 127.0.0.1, not "localhost": the app listens on IPv4 only, and on Windows
+// "localhost" can resolve to the IPv6 ::1 first — refused, though it is running.
+const url = `http://127.0.0.1:${PORT}`;
 for (let i = 0; i < 60; i += 1) {
   try {
     if ((await fetch(`${url}/healthz`)).ok) break;
