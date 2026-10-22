@@ -13,6 +13,15 @@ const ssl = /sslmode=require/.test(config.databaseUrl) ? { rejectUnauthorized: f
 
 export const pool = new pg.Pool({ connectionString: config.databaseUrl, ssl, max: 10 });
 
+/*
+ * A connection the database closes while it sits idle in the pool — a restart
+ * of Postgres on Railway, or Ctrl+C reaching the local database first — is
+ * an 'error' on the pool, and an unhandled one ends the process with a page
+ * of stack trace. The pool has already dropped that connection; the next
+ * query simply opens a new one.
+ */
+pool.on('error', (err) => console.warn(`[db] a database connection closed: ${err.message}`));
+
 export const query = (text, params) => pool.query(text, params);
 
 /** Runs fn(client) inside a transaction. */
