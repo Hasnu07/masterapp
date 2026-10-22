@@ -1,0 +1,7 @@
+node_modules/
+data/
+.env
+*.log
+# Chrono Key exports carry purchase prices and suppliers — upload them in the
+# app, never commit them.
+*.csv

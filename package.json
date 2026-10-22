@@ -1,0 +1,29 @@
+{
+  "name": "masterapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Purosangue ERP — watch inventory (phase 1), imported from Chrono Key and the Watch vault",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node src/db/migrate.js",
+    "import": "node src/import/cli.js",
+    "user": "node src/auth/cli.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1155.0",
+    "cheerio": "^1.2.0",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "pg": "^8.23.1",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}
