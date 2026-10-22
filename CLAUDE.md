@@ -21,7 +21,7 @@ src/
   config.js                 every setting, from the environment
   db/                       Postgres pool, migrations (run at start-up)
   auth/                     accounts, roles, sessions; `npm run user`
-  storage/                  photos: Cloudflare R2, or disk under DATA_DIR
+  storage/                  photos: Cloudflare R2, or disk under DATA_DIR; same-picture check
   watches/fields.js         THE list of a watch's fields (API, import, form)
   watches/index.js          read / create / edit / delete / photos / history
   import/productlist.js     Chrono Key's product list (CSV export or live grid) → fields
@@ -35,8 +35,15 @@ src/
 test/                       node:test against stand-ins and a real Postgres
 ```
 
-Node 20+, Express 5, Postgres, `sharp` for thumbnails. Deployed like
-InvoiceWEB: Railway, push to deploy.
+Node 20+, Express 5, Postgres, `sharp` for thumbnails.
+
+**Where it runs: this PC** (`npm run local`), not Railway — decided 22 Oct
+2026, because of the sheer number of photos (thousands, GBs). Next: Cloudflare
+R2 for files + DigitalOcean App Platform and Managed Postgres — the steps are
+in `HOSTING.md`. Only this PC uses it for now, so it stays on 127.0.0.1.
+The database and photos under `data/` ARE the live
+data: back them up, and move them whole if it moves. The Railway notes below
+are kept for reference only.
 
 ## Three layers of data, kept apart
 
@@ -73,6 +80,14 @@ only fills a blank (the detail page's spec; the vault's spec, place and
 status). A currency is never CLEARED by a source that simply does not state
 one.
 
+An **empty spec cell on the list** (the Watch and Specification fields —
+size, bezel, dial, serial, …) is not a clear either: the vault or the watch's
+page often filled it, and clearing it made every sync blank it and the vault
+fill it again (85 sizes and bezels on the first live read). The list still
+clears the DEAL — a sale taken back on Chrono Key is cleared here. So handing
+back ("use Chrono Key's") a spec field the list leaves empty clears it at
+once, for the page or the vault to fill (`unlockField`, `leftBlank`).
+
 ## Chrono Key's product list — read it right
 
 Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):
@@ -97,11 +112,33 @@ Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):
 - Dates are day first (`21/04/2023`); a date that does not exist is refused.
 - Stock 238 appears four times (a sale recorded twice). The latest sale wins;
   the other rows are kept in `ck_records.list_row._repeated`.
-- Columns are matched **by heading**, never position. The live grid
-  (`/Stock/ProductsDataTable`) goes through the same reader; it may answer in
-  objects keyed by field name rather than arrays, and both are read. Which
-  shape the live grid uses has **not been seen yet** — first live run will
-  tell (`npm run import -- list`).
+- Columns are matched **by name**, never position.
+
+**The live grid** (`/Stock/ProductsDataTable`), first read 22 Oct 2026, and
+checked against the export watch by watch before anything was written:
+
+- One JSON answer, everything in it: `{draw: ["1"], recordsTotal: 1662,
+  recordsFiltered: 1662, data: [1665 objects]}` (stock 238's four rows count
+  once). Each row an **object with the same 54 keys** (`stockNumber`,
+  `makeName`, `subModel`, `purchaseDate`, `purchaseCash` …), typed: numbers,
+  true/false, null. **No markup**, so no detail-page id: the detail pass finds
+  each page through Chrono Key's search.
+- Read by `GRID_KEYS` in `productlist.js`, exactly, before the headings —
+  because **`retailPrice` is the export's Website Price and `wholeSalePrice`
+  its Retail Price** (all 16 watches where they differ). `id` is the Product
+  ID; `subModel` the reference; `material` the case; `paperWork` the papers;
+  `purchaseWire` / `purchaseZellVenmo` bank transfer and PayPal / Chrono24.
+- Dates are ISO with Chrono Key's clock time (`2026-10-22T13:05:07.84`); the
+  day is the day it says. A date written but not readable is left alone, not
+  taken as blank — read as blank, the first run would have wiped 1,661
+  purchase dates.
+- Order type is a code: `R` = INVENTORY (the only one seen). Another code is
+  kept as written.
+- Not read but kept in `list_row`: `purchaseExchangeRate` / `saleExchangeRate`
+  — they look like to-euro rates (AED ≈ 0.234, GBP ≈ 1.15, CHF ≈ 1.07, USD ≈
+  0.86) and may give the missing **sale currency**, but 1.000 also appears on
+  USD purchases, so not without checking. `shelfBox` (null everywhere),
+  `clientName` / `clientType`, `isSold`, `imgProduct`.
 
 ## Photos
 
@@ -115,6 +152,33 @@ bucket), else `DATA_DIR` (Railway volume).
 Only paths on Chrono Key's own host are fetched (a `data:` placeholder or an
 off-host url out of a scraped page is refused); the vault's key goes only to
 the worker's own origin.
+
+**The same picture comes many times.** Chrono Key's galleries and the vault
+both list a picture more than once under different file names, and the two
+hold many of the same pictures (first copy: 170 repeats on 113 watches). So
+the syncs fingerprint each picture (`watch_photos.sha256`, `dhash`) and a
+picture the watch already has — or HAD, and somebody removed — is recorded as
+a hidden row (`duplicate_of`, no file) and never fetched again. Repeats copied
+before that: `npm run import -- tidy-photos` (files kept).
+
+But **"looks the same" is not the test**: the vault keeps EDITED client copies
+beside the originals — the purchase date wiped off the papers, a serial
+hidden, a white box over a label — identical except one small patch (stock
+1650: average difference 0.04, date gone). Same picture = identical bytes, or
+same width and height and every 8x8 window, slid over the picture at 256x256,
+within 2.5 grey levels (re-saves reach 1.83; the smallest real edit never goes
+below 3.48). Fixed squares were not enough — an edit across their corners is
+split four ways. The same picture at another SIZE is kept twice by the rule —
+resizing differs along every edge, too like an edit. That turned out common
+(Chrono Key holds the full-size original, the vault a smaller copy: ~196
+pairs), so after the first copy those pairs were checked by eye, twice, and
+the agreed ones hidden by hand, keeping the larger.
+
+- Chrono Key's **"NO IMAGE AVAILABLE" graphic** (`/images/no_image.png`) sits
+  in the gallery of every page without photos. It is not copied
+  (`isPlaceholder`); the first copy had shown it on 316 watches.
+- **PDFs are not held.** 249 PDFs (invoices, papers) on 136 Chrono Key pages
+  were refused as "not a picture". Holding documents is still to do.
 
 ## Being polite to Chrono Key
 
@@ -175,6 +239,7 @@ npm start                 # migrates, creates the first admin, serves on :3000
 npm test                  # EMPTIES the test database first
 npm run import -- csv ProductList.csv
 npm run import -- list | details [new|active|full] [limit] | vault | all
+npm run import -- tidy-photos     # hide repeats among photos already copied
 npm run user -- add someone@example.com editor 'a-long-password' Name
 ```
 
@@ -183,8 +248,21 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
 
 ## Not done yet / next
 
-- Live Chrono Key and vault runs are only proven against stand-ins built from
-  InvoiceWEB's parsers; the first run against the real systems is the test.
+- First live runs, 22 Oct 2026, on the PC copy: the list (grid shape above),
+  then every watch's page and photos, then the vault. Each new kind of live
+  read was dry-run first (rolled back) — keep doing that.
+- A page that fails (a rejected sign-in included) is stamped `detail_at`, so
+  the `new` pass never retries it — only `active` (unsold / recent) or
+  `full` do. Should retry pages never read successfully.
+- After the first full copy: 1,354 of 1,671 watches have real photos. 315 have
+  none on Chrono Key either (mostly sold 2024–25; two still in stock).
+- Waiting on a person, found by the audit and not changed: the vault's
+  `1617.` is the same watch as Chrono Key's `1617` (same serial), likely
+  `1528` = `1515`; vault-only junk records (`-`, `0000`, `xxxx`, `Parsa 1`, …);
+  photos on the wrong watch in the source data (11 ↔ 1446, 1570, 739 ↔ 1346,
+  1607 ↔ 1606); buy-backs not linked by `ck_product_id` (same serial: 126/330,
+  537/1021, 683/1007, 813/1535, 1048/1433, 1149/1426, 1454/1645).
+- Documents (PDFs) per watch.
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.
