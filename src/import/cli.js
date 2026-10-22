@@ -5,6 +5,7 @@ import { importProductCsv } from './listimport.js';
 import { syncList, syncDetails } from './chronokey/sync.js';
 import { syncVault } from './vault/sync.js';
 import { runJob } from './jobs.js';
+import { tidyDuplicatePhotos } from '../watches/index.js';
 
 /*
  * npm run import -- csv <file>        Chrono Key's product list, exported as CSV
@@ -13,6 +14,7 @@ import { runJob } from './jobs.js';
  *                                     each watch's page and photos
  * npm run import -- vault             the Watch vault
  * npm run import -- all               list, new details, vault
+ * npm run import -- tidy-photos       hide repeats among photos already copied
  */
 const [cmd, ...args] = process.argv.slice(2);
 const show = (s) => console.log(JSON.stringify(s, null, 2));
@@ -35,7 +37,8 @@ try {
       show(await syncList());
       show(await syncDetails({ mode: 'new' }));
       show(await syncVault());
-    } else console.log('usage: npm run import -- csv <file> | list | details [new|active|full] [limit] | vault | all');
+    } else if (cmd === 'tidy-photos') show(await tidyDuplicatePhotos());
+    else console.log('usage: npm run import -- csv <file> | list | details [new|active|full] [limit] | vault | all | tidy-photos');
   });
 } catch (err) {
   console.error(err.message);

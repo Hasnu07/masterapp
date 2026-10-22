@@ -1,13 +1,14 @@
-import { parseMoney, realDate } from '../watches/fields.js';
+import { FIELDS, parseMoney, realDate } from '../watches/fields.js';
 
 /*
  * Chrono Key's PRODUCT LIST — one row per purchase — read into our fields.
  *
  * The same reader serves the CSV export somebody downloads from Chrono Key and
- * uploads here, and the live grid the sync reads (`/Stock/ProductsDataTable`):
- * both are that list, under the same column headings. Columns are matched BY
- * HEADING, never by position, so a column Chrono Key inserts tomorrow cannot
- * shift every value one place to the left.
+ * uploads here, and the live grid the sync reads (`/Stock/ProductsDataTable`).
+ * The export comes under column headings; the grid answers in objects keyed by
+ * its own field names (see GRID_KEYS). Either way columns are matched BY NAME,
+ * never by position, so a column Chrono Key inserts tomorrow cannot shift
+ * every value one place to the left.
  *
  * Two things in this list are not what they say, and both were checked
  * against the real export (22 Oct 2026, 1,664 rows):
@@ -86,13 +87,69 @@ const COLUMNS = {
 
 const PAYMENTS = { cash: 'cash', card: 'card', banktransfer: 'bank', crypto: 'crypto', paypalchrono24: 'paypal', paypal: 'paypal' };
 
+/*
+ * The live grid's own field names → our fields. Seen on the first live read
+ * (22 Oct 2026: 1,665 rows, each an object with the same 54 keys) and checked
+ * against the export watch by watch. Matched EXACTLY and before the headings,
+ * because two of them say the opposite of what they look like: the grid's
+ * `retailPrice` is the export's Website Price and its `wholeSalePrice` the
+ * export's Retail Price (all 16 watches where the two differ).
+ *
+ * Not read, but kept in the raw row: shelfBox (null on every row, so not
+ * known to be the display case), clientName / clientType / clientId /
+ * soldToId, isSold, imgProduct, and the purchase / sale exchange rates.
+ */
+const GRID_KEYS = {
+  id: 'ck_product_id', // the export's Product ID — equal on all 1,664
+  stockNumber: 'stock_no',
+  makeName: 'brand',
+  model: 'model',
+  subModel: 'reference',
+  serialNumber: 'serial',
+  orderType: 'order_type',
+  purchasedFrom: 'purchased_from',
+  purchaseDate: 'purchase_date',
+  purchasePrice: 'purchase_price',
+  wholeSalePrice: 'retail_price',
+  retailPrice: 'website_price',
+  watchMonth: 'watch_month',
+  watchYear: 'watch_year',
+  pouchNumber: 'pouch_number',
+  inspectedBy: 'inspected_by',
+  customization: 'customisation',
+  dial: 'dial',
+  size: 'case_size',
+  material: 'case_material',
+  bezel: 'bezel',
+  bracelet: 'bracelet',
+  description: 'description',
+  paperWork: 'papers',
+  servicePaper: 'service_papers',
+  box: 'box',
+  condition: 'condition',
+  accessoriesCost: 'accessories_cost',
+  consignmentCommission: 'consignment_pct',
+  consignmentCommissionPrice: 'consignment_price',
+  consignmentActualCost: 'consignment_cost',
+  soldTo: 'sold_to',
+  saleDate: 'sale_date',
+  salePrice: 'sale_price',
+  category: 'location',
+};
+
+/* purchaseCash … saleZellVenmo: the side and the kind are in the name. */
+const GRID_PAYMENTS = { Cash: 'cash', Card: 'card', Wire: 'bank', Crypto: 'crypto', ZellVenmo: 'paypal' };
+
 /**
- * Which field each column feeds, from the heading row.
+ * Which field each column feeds, from the heading row (or the grid's keys).
  * @returns {Array<{field?: string, payment?: {side, kind}}>} one per column
  */
 export function columnMap(headers) {
   const soldAt = headers.findIndex((h) => squash(h) === 'soldto');
   return headers.map((h, i) => {
+    if (Object.hasOwn(GRID_KEYS, h)) return { field: GRID_KEYS[h] };
+    const gridPay = String(h).match(/^(purchase|sale)(Cash|Card|Wire|Crypto|ZellVenmo)$/);
+    if (gridPay) return { payment: { side: gridPay[1], kind: GRID_PAYMENTS[gridPay[2]] } };
     const key = squash(h);
     if (PAYMENTS[key]) {
       // Before "Sold To" it is how we paid; after, how we were paid.
@@ -124,6 +181,36 @@ export function dmyToIso(v) {
   const iso = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
   return realDate(iso) ? iso : null;
 }
+
+/**
+ * A list date as "YYYY-MM-DD": the export's "21/04/2023", or the live grid's
+ * "2023-04-21T13:05:07.84" (Chrono Key's own clock, no zone — the day is the
+ * day it says). A day that does not exist is refused.
+ */
+export function listDate(v) {
+  const m = tidy(v).match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/);
+  if (!m) return dmyToIso(v);
+  const iso = `${m[1]}-${m[2]}-${m[3]}`;
+  return realDate(iso) ? iso : null;
+}
+
+/*
+ * The grid writes the order type as a code where the export writes the word.
+ * Only R has been seen (every row of the first live read, the export's
+ * INVENTORY); any other code is kept as Chrono Key wrote it, not guessed at.
+ */
+const ORDER_TYPES = { r: 'INVENTORY' };
+const orderType = (v) => ORDER_TYPES[tidy(v).toLowerCase()] || tidy(v);
+
+/*
+ * The watch itself, as opposed to the deal: the Watch and Specification
+ * fields. An EMPTY cell for one of these on the list says nothing — the vault
+ * or the watch's page may well have filled it (85 sizes and bezels on the
+ * first live read), and clearing it would have every sync blank it and the
+ * vault fill it again. The list stays the authority for the purchase and the
+ * sale, where an empty cell is meant: a sale taken back must clear here too.
+ */
+const SPEC = new Set(FIELDS.filter((x) => x.group === 'Watch' || x.group === 'Specification').map((x) => x.key));
 
 const yesNo = (v) => {
   const t = tidy(v).toLowerCase();
@@ -219,8 +306,8 @@ export function readRow(headers, values, map = columnMap(headers)) {
     reference: tidy(f.reference),
     serial: tidy(f.serial),
     purchased_from: tidy(f.purchased_from),
-    order_type: tidy(f.order_type),
-    purchase_date: dmyToIso(f.purchase_date),
+    order_type: orderType(f.order_type),
+    purchase_date: listDate(f.purchase_date),
     purchase_price: money(f.purchase_price),
     purchase_payments: pay.purchase,
     retail_price: money(f.retail_price),
@@ -244,7 +331,7 @@ export function readRow(headers, values, map = columnMap(headers)) {
     consignment_price: money(f.consignment_price),
     consignment_cost: money(f.consignment_cost),
     sold_to: tidy(f.sold_to),
-    sale_date: dmyToIso(f.sale_date),
+    sale_date: listDate(f.sale_date),
     sale_price: money(f.sale_price),
     sale_payments: pay.sale,
     location: locationOf(f.location),
@@ -263,7 +350,8 @@ export function readRow(headers, values, map = columnMap(headers)) {
   out.website_currency = out.website_price ? 'EUR' : '';
   // The sale currency is not on this list at all: it is left out, so it is
   // neither assumed nor cleared.
-  out.status = out.sale_date || out.sold_to || out.sale_price ? 'sold' : 'in_stock';
+  // A sale date that is there but cannot be read is still a sale.
+  out.status = tidy(f.sale_date) || out.sold_to || out.sale_price ? 'sold' : 'in_stock';
 
   /*
    * Only the fields this list actually HAS a column for. A grid that does not
@@ -286,9 +374,31 @@ export function readRow(headers, values, map = columnMap(headers)) {
       : derived[k] ? derived[k].some((x) => has.has(x))
       : has.has(k);
     if (!keep) delete out[k];
+    // An empty spec cell leaves ours alone (see SPEC).
+    else if (SPEC.has(k) && (out[k] === '' || out[k] === null)) delete out[k];
+  }
+  // A date that is written but cannot be read is not a blank: it leaves ours
+  // alone rather than clearing it.
+  for (const k of ['purchase_date', 'sale_date']) {
+    if (k in out && out[k] === null && tidy(f[k])) delete out[k];
   }
 
   return { fields: out, raw };
+}
+
+/**
+ * Does a stored list row (ck_records.list_row, as readRow kept it) have a
+ * column for this spec field and leave it EMPTY — the one case the list does
+ * not clear (see SPEC)?
+ */
+export function leftBlank(raw, key) {
+  if (!SPEC.has(key) || !raw || typeof raw !== 'object') return false;
+  const headers = Object.keys(raw).filter((h) => h !== '_repeated');
+  const map = columnMap(headers);
+  const from = key === 'watch_date' ? ['watch_date', 'watch_month', 'watch_year'] : [key];
+  if (!map.some((c) => from.includes(c.field))) return false;
+  const { fields } = readRow(headers, headers.map((h) => raw[h]), map);
+  return !(key in fields);
 }
 
 /**

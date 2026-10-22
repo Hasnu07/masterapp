@@ -38,6 +38,13 @@ export function assetPath(src) {
 }
 
 /*
+ * Chrono Key's own "NO IMAGE AVAILABLE" graphic, which a page with no photos
+ * shows in its gallery. Not a photo of anything: the first full copy stored
+ * it as the photo of 316 watches (22 Oct 2026).
+ */
+export const isPlaceholder = (path) => /\/no_?image\.(png|jpe?g|gif|webp)$/i.test(String(path || '').split('?')[0]);
+
+/*
  * Chrono Key labels every price it computes with £ and every one of them is
  * EUROS — checked by InvoiceWEB on eight watches against the hand-typed note
  * of what was really paid (1325: note £78,000, column 90,172 = the euros).
@@ -56,7 +63,7 @@ export function parseWatchDetail(html, purchaseId) {
   const images = [];
   $('#image-gallery li').each((_, li) => {
     const path = assetPath($(li).find('img').attr('src'));
-    if (path && !images.some((i) => i.path === path)) {
+    if (path && !isPlaceholder(path) && !images.some((i) => i.path === path)) {
       images.push({ path, caption: $(li).find('div').last().text().trim() });
     }
   });
@@ -174,8 +181,13 @@ export const cellText = (v) => {
  *
  * Two shapes, because a grid answers in whichever its page asked for: an
  * ARRAY per row, aligned to the page's own headings, or an OBJECT keyed by
- * field name. Both are read; guessing one would read the other as empty.
- * The purchase id is searched for in whatever markup the row carries.
+ * field name. The live product grid answers in OBJECTS (first live read, 22
+ * Oct 2026), typed — numbers, true/false, null, "2023-04-21T00:00:00" — and
+ * the reader knows its keys (productlist.js, GRID_KEYS). Arrays are still read.
+ *
+ * The purchase id is searched for in whatever markup the row carries. The
+ * live grid carries none, so the detail pass finds each watch's page through
+ * Chrono Key's search instead.
  */
 export function gridRows(json, headers) {
   const data = Array.isArray(json?.data) ? json.data : [];

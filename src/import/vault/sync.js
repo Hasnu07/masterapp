@@ -195,8 +195,10 @@ async function copyPhotos(watchId, urls) {
       const type = res.headers.get('content-type') || '';
       if (!res.ok || !type.startsWith('image/')) continue;
       const buffer = Buffer.from(await res.arrayBuffer());
-      await addPhotos(watchId, [{ buffer }], null, { source: 'vault', sourceRefs: [url] });
-      copied += 1;
+      // The same picture under another url, or already copied from Chrono
+      // Key, is recorded and not shown twice.
+      const ids = await addPhotos(watchId, [{ buffer }], null, { source: 'vault', sourceRefs: [url], skipDuplicates: true });
+      copied += ids.length;
     } catch (err) {
       if (err.code !== '23505') console.warn(`[vault] photo ${url}: ${err.message}`);
     }

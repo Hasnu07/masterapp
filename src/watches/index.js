@@ -1,6 +1,8 @@
 import { query, tx } from '../db/index.js';
 import { FIELDS, FIELD, cleanValue, displayTitle } from './fields.js';
-import { savePhoto, storage } from '../storage/index.js';
+import { savePhoto, storage, fingerprint, dhashDistance, samePicture } from '../storage/index.js';
+import { leftBlank } from '../import/productlist.js';
+import { isPlaceholder } from '../import/chronokey/parse.js';
 
 /*
  * Our record of every watch: reading it, and every way a person changes it.
@@ -280,11 +282,28 @@ export async function unlockField(id, key, user) {
   if (!FIELD[key]) throw Object.assign(new Error(`Unknown field: ${key}`), { status: 400 });
   return tx(async (db) => {
     const { rows } = await db.query(
-      'UPDATE watches SET locked_fields = array_remove(locked_fields, $1) WHERE id = $2 RETURNING id',
+      `UPDATE watches SET locked_fields = array_remove(locked_fields, $1) WHERE id = $2
+       RETURNING id, stock_no, ${key} AS value`,
       [key, Number(id) || 0]
     );
     if (!rows[0]) throw notFound();
-    await logEvent(db, rows[0].id, { userId: user?.id, action: 'unlock', changes: { field: key } });
+    const changes = { field: key };
+    /*
+     * A spec field Chrono Key's list leaves EMPTY is never cleared by the list
+     * (productlist.js, SPEC), so handing it back would otherwise leave the
+     * typed value in place, no longer marked as typed here. It is cleared now
+     * instead: Chrono Key has nothing for it, and the watch's page or the
+     * vault fill it on their next pass if they have something.
+     */
+    const { rows: ck } = await db.query('SELECT list_row FROM ck_records WHERE stock_no = $1', [rows[0].stock_no]);
+    if (ck[0]?.list_row && leftBlank(ck[0].list_row, key)) {
+      const empty = cleanValue(key, null);
+      if (!same(rows[0].value, empty)) {
+        await db.query(`UPDATE watches SET ${key} = $1, updated_at = now() WHERE id = $2`, [empty, rows[0].id]);
+        changes.cleared = rows[0].value;
+      }
+    }
+    await logEvent(db, rows[0].id, { userId: user?.id, action: 'unlock', changes });
   });
 }
 
@@ -319,7 +338,17 @@ export const MAX_PHOTOS = 40;
  * `files` is [{ buffer, name }]; one that is not a picture fails the whole
  * request before anything is stored, so a half-done upload never happens.
  */
-export async function addPhotos(id, files, user, { source = 'upload', sourceRefs = [], db: outer } = {}) {
+/**
+ * Adds photos to a watch.
+ *
+ * `skipDuplicates` (the syncs): a picture the watch already holds under
+ * another address — or held and somebody removed — is not stored again. It
+ * gets a row all the same, marked removed and pointing at the photo it
+ * repeats, so the next pass knows its address and does not fetch it again.
+ *
+ * @returns {number[]} the ids of the photos now shown
+ */
+export async function addPhotos(id, files, user, { source = 'upload', sourceRefs = [], db: outer, skipDuplicates = false } = {}) {
   const watchId = Number(id) || 0;
   const run = async (db) => {
     const { rows } = await db.query(
@@ -335,25 +364,29 @@ export async function addPhotos(id, files, user, { source = 'upload', sourceRefs
       });
     }
 
-    const saved = [];
-    for (const f of files) saved.push(await savePhoto(f.buffer));
+    const prints = [];
+    for (const f of files) prints.push(await fingerprint(f.buffer));
 
     const ids = [];
     let sort = rows[0].last;
-    for (let i = 0; i < saved.length; i += 1) {
-      const s = saved[i];
-      sort += 1;
+    for (let i = 0; i < files.length; i += 1) {
+      const fp = prints[i];
+      const dup = skipDuplicates ? await duplicateOf(db, watchId, files[i].buffer, fp) : null;
+      const s = dup ? { storage_key: null, thumb_key: null } : await savePhoto(files[i].buffer);
+      if (!dup) sort += 1;
       const { rows: r } = await db.query(
         `INSERT INTO watch_photos(watch_id, storage_key, thumb_key, content_type, bytes, width, height, sort, caption,
-                                  source, source_ref, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+                                  source, source_ref, created_by, sha256, dhash, duplicate_of, deleted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
         [
-          watchId, s.storage_key, s.thumb_key, s.content_type, s.bytes, s.width, s.height, sort,
+          watchId, s.storage_key, s.thumb_key, fp.content_type, fp.bytes, fp.width, fp.height, sort,
           String(files[i].caption || '').slice(0, 200), source, sourceRefs[i] ?? null, user?.id ?? null,
+          fp.sha256, fp.dhash, dup, dup ? new Date() : null,
         ]
       );
-      ids.push(r[0].id);
+      if (!dup) ids.push(r[0].id);
     }
+    if (!ids.length) return ids;
     await db.query('UPDATE watches SET updated_at = now() WHERE id = $1', [watchId]);
     await logEvent(db, watchId, {
       userId: user?.id,
@@ -364,6 +397,109 @@ export async function addPhotos(id, files, user, { source = 'upload', sourceRefs
     return ids;
   };
   return outer ? run(outer) : tx(run);
+}
+
+/** Fingerprints for photos stored before they were taken (read once, then kept). */
+async function fillFingerprints(db, photos) {
+  const s = await storage();
+  for (const p of photos) {
+    if (p.sha256 || !p.storage_key) continue;
+    const buffer = await s.get(p.storage_key);
+    if (!buffer) continue;
+    Object.assign(p, await fingerprint(buffer));
+    await db.query('UPDATE watch_photos SET sha256 = $1, dhash = $2 WHERE id = $3', [p.sha256, p.dhash, p.id]);
+  }
+}
+
+/**
+ * The photo among `photos` that this picture repeats — the same bytes, or
+ * the same picture only saved again (storage/index.js, samePicture) — or null.
+ * Points past a recorded duplicate to the photo it repeats.
+ */
+async function sameAs(photos, buffer, fp) {
+  const root = (p) => p.duplicate_of || p.id;
+  const exact = photos.find((p) => p.sha256 && p.sha256 === fp.sha256);
+  if (exact) return root(exact);
+  const s = await storage();
+  for (const p of photos) {
+    if (!p.storage_key || !p.dhash || p.width !== fp.width || p.height !== fp.height) continue;
+    if (dhashDistance(p.dhash, fp.dhash) > 8) continue; // not even a candidate
+    const other = await s.get(p.storage_key);
+    if (other && (await samePicture(buffer, other))) return root(p);
+  }
+  return null;
+}
+
+/** Every photo the watch has had — removed ones too: a removed picture must not come back under another address. */
+async function duplicateOf(db, watchId, buffer, fp) {
+  const { rows } = await db.query(
+    'SELECT id, storage_key, sha256, dhash, width, height, duplicate_of FROM watch_photos WHERE watch_id = $1 ORDER BY id',
+    [watchId]
+  );
+  await fillFingerprints(db, rows);
+  return sameAs(rows, buffer, fp);
+}
+
+/**
+ * Hides the repeats among the photos a watch SHOWS — copies made before the
+ * syncs recognised them. The first in the watch's order stays; each repeat is
+ * marked removed as a duplicate of it, its file kept, so nothing is lost and
+ * the next sync does not copy it back.
+ *
+ * @returns {{watches: number, hidden: number}}
+ */
+export async function tidyDuplicatePhotos({ onProgress } = {}) {
+  const stats = { watches: 0, hidden: 0, placeholders: 0 };
+
+  // Chrono Key's "no image" graphic, copied as a photo before the copy knew
+  // it (chronokey/parse.js, isPlaceholder): hidden, the row kept so it is
+  // never fetched again.
+  const { rows: fakes } = await query(
+    "SELECT id, watch_id, source_ref FROM watch_photos WHERE source = 'chronokey' AND deleted_at IS NULL"
+  );
+  for (const p of fakes.filter((x) => isPlaceholder(x.source_ref))) {
+    await tx(async (db) => {
+      await db.query('UPDATE watch_photos SET deleted_at = now() WHERE id = $1', [p.id]);
+      await db.query('UPDATE watches SET updated_at = now() WHERE id = $1', [p.watch_id]);
+      await logEvent(db, p.watch_id, { source: 'masterapp', action: 'photo_remove', changes: { photos: [p.id], placeholder: true } });
+    });
+    stats.placeholders += 1;
+  }
+
+  const { rows: list } = await query(
+    'SELECT watch_id FROM watch_photos WHERE deleted_at IS NULL GROUP BY watch_id HAVING count(*) > 1 ORDER BY watch_id'
+  );
+  const s = await storage();
+  for (const { watch_id: watchId } of list) {
+    await tx(async (db) => {
+      const { rows } = await db.query(
+        `SELECT id, storage_key, sha256, dhash, width, height, duplicate_of, source FROM watch_photos
+          WHERE watch_id = $1 AND deleted_at IS NULL ORDER BY sort, id FOR UPDATE`,
+        [watchId]
+      );
+      await fillFingerprints(db, rows);
+      const kept = [];
+      const hidden = [];
+      for (const p of rows) {
+        const buffer = p.storage_key && (await s.get(p.storage_key));
+        const dup = buffer && kept.length ? await sameAs(kept, buffer, p) : null;
+        if (!dup) {
+          kept.push(p);
+          continue;
+        }
+        await db.query('UPDATE watch_photos SET deleted_at = now(), duplicate_of = $1 WHERE id = $2', [dup, p.id]);
+        hidden.push(p.id);
+      }
+      if (hidden.length) {
+        await db.query('UPDATE watches SET updated_at = now() WHERE id = $1', [watchId]);
+        await logEvent(db, watchId, { source: 'masterapp', action: 'photo_remove', changes: { photos: hidden, duplicates: true } });
+        stats.watches += 1;
+        stats.hidden += hidden.length;
+      }
+    });
+    onProgress?.(stats);
+  }
+  return stats;
 }
 
 export async function removePhoto(watchId, photoId, user) {
@@ -415,7 +551,8 @@ export async function photoFile(photoId, { thumb = false } = {}) {
     [Number(photoId) || 0]
   );
   const p = rows[0];
-  if (!p) return null;
+  // A recorded duplicate has no file of its own.
+  if (!p?.storage_key) return null;
   const key = thumb && p.thumb_key ? p.thumb_key : p.storage_key;
   const buffer = await (await storage()).get(key);
   if (!buffer) return null;

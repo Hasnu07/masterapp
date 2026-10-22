@@ -27,7 +27,7 @@ const row = (o) => HEADERS.map((h, i) => {
 export const PRODUCTS = [
   row({ 'Product ID': 9001, 'Stock No': 1668, 'Serial Number': 'S1668', Marca: 'Rolex', Modello: 'Lady-Datejust',
     Referenza: '278274', 'Seller Name': 'Dealer  One', 'Order Type': 'INVENTORY', 'Purchase Date': '05/09/2026',
-    'Purchase Price (£)': '46000.00', Cash: '46000.00', 'Retail Price': '11538.00', 'Website Price': '11538.00',
+    'Purchase Price (£)': '46000.00', Cash: '46000.00', 'Retail Price': '11538.00', 'Website Price': '11900.00',
     'Watch Month': '3', 'Watch Year': '2026', Dial: 'Pink', Size: '31', Case: 'SS', Description: 'aed 46,000 = usd 12,534 as of 23-09-2026',
     Papers: 'Yes', 'Service Papers': 'No', Box: 'No', Condition: 'New', 'Sold To': 'Omar F', 'Sale Date': '25/09/2026',
     'Sale Price': '14000.00', 'sale Crypto': '14000.00', Category: 'Dubai' }),
@@ -36,18 +36,60 @@ export const PRODUCTS = [
     'Purchase Price (£)': '98000.00', 'Bank Transfer': '98000.00', 'Retail Price': '103000.00', 'Watch Month': '9',
     'Watch Year': '2026', Papers: 'Yes', Box: 'Yes', Condition: 'Unworn', Category: 'Watch' }),
   row({ 'Product ID': 9003, 'Stock No': 1701, 'Serial Number': 'S1701', Marca: 'Rolex', Modello: 'Daytona',
-    Referenza: '126500LN', 'Seller Name': 'Dealer Three', 'Purchase Date': '10/10/2026', 'Purchase Price (£)': '30000.00',
-    Category: 'UK' }),
+    Referenza: '126500LN', 'Seller Name': 'Dealer Three', 'Order Type': 'INVENTORY', 'Purchase Date': '10/10/2026',
+    'Purchase Price (£)': '30000.00', Category: 'UK' }),
+];
+
+/*
+ * The same three purchases as the LIVE grid (`/Stock/ProductsDataTable`)
+ * answers them — seen on the first live read, 22 Oct 2026: an object per row
+ * with these 54 keys, typed values, ISO dates with Chrono Key's clock time,
+ * the order type as a code, no markup, and `retailPrice` / `wholeSalePrice`
+ * the other way round from what they say (the export's Website and Retail).
+ * Exported and read at request time, so a test can change a row.
+ */
+const gridRow = (o) => ({
+  id: null, model: '', makeName: '', serialNumber: null, watchYear: null, watchMonth: null, subModel: '',
+  imgProduct: null, stockNumber: null, orderType: 'R', purchasePrice: 0, purchaseDate: null, retailPrice: 0,
+  wholeSalePrice: 0, clientName: '', clientType: 'D', shelfBox: null, pouchNumber: null, inspectedBy: null,
+  customization: null, dial: null, size: null, material: null, bezel: null, bracelet: null, description: null,
+  paperWork: false, servicePaper: false, box: false, accessoriesCost: null, consignmentCommission: null,
+  consignmentCommissionPrice: null, consignmentActualCost: null, isSold: false, purchasedFrom: '', category: '',
+  saleDate: null, salePrice: null, soldTo: '', purchaseExchangeRate: 1, saleExchangeRate: 1, clientId: '',
+  soldToId: null, purchaseCash: null, purchaseCard: null, purchaseWire: null, purchaseCrypto: null,
+  purchaseZellVenmo: null, saleCash: null, saleCard: null, saleWire: null, saleCrypto: null, saleZellVenmo: null,
+  condition: '',
+  ...o,
+});
+
+export const GRID = [
+  gridRow({ id: 9001, stockNumber: 1668, serialNumber: 'S1668', makeName: 'Rolex', model: 'Lady-Datejust',
+    subModel: '278274', purchasedFrom: 'Dealer  One', clientName: 'Dealer One ', purchaseDate: '2026-09-05T11:42:10.53',
+    purchasePrice: 46000, purchaseCash: 46000, purchaseCard: 0, purchaseWire: 0, purchaseCrypto: 0, purchaseZellVenmo: 0,
+    wholeSalePrice: 11538, retailPrice: 11900, watchMonth: 3, watchYear: 2026, dial: 'Pink', size: '31', material: 'SS',
+    description: 'aed 46,000 = usd 12,534 as of 23-09-2026', paperWork: true, servicePaper: false, box: false,
+    condition: 'New', isSold: true, soldTo: 'Omar F', saleDate: '2026-09-25T00:00:00', salePrice: 14000, saleCash: 0,
+    saleCard: 0, saleWire: 0, saleCrypto: 14000, saleZellVenmo: 0, purchaseExchangeRate: 0.234, category: 'Dubai' }),
+  gridRow({ id: 9002, stockNumber: 1700, serialNumber: 'S1700', makeName: 'Patek Philippe', model: 'Nautilus',
+    subModel: '5711/1A-014', purchasedFrom: 'Dealer Two', purchaseDate: '2026-10-01T09:00:00', purchasePrice: 98000,
+    purchaseWire: 98000, wholeSalePrice: 103000, retailPrice: null, watchMonth: 9, watchYear: 2026, paperWork: true,
+    box: true, condition: 'Unworn', category: 'Watch' }),
+  gridRow({ id: 9003, stockNumber: 1701, serialNumber: 'S1701', makeName: 'Rolex', model: 'Daytona',
+    subModel: '126500LN', purchasedFrom: 'Dealer Three', purchaseDate: '2026-10-10T16:20:00.1234567',
+    purchasePrice: 30000, category: 'UK' }),
 ];
 
 /* What each watch's own page says. Euro figures as Chrono Key computes them. */
 export const DETAILS = {
+  // a1-again is a1 under a second name, as Chrono Key's own galleries do.
   26001: { stock: '1668', title: 'Rolex Lady-Datejust 278274', category: 'Dubai', note: 'aed 46,000 = usd 12,534',
-    buy: '£10,989', sale: '£12,950', box: false, papers: true, images: ['/images//a1.jpg', '../../images/a2.jpg', 'data:image/gif;base64,AAAA'] },
+    buy: '£10,989', sale: '£12,950', box: false, papers: true,
+    images: ['/images//a1.jpg', '../../images/a2.jpg', '/images/a1-again.jpg', 'data:image/gif;base64,AAAA'] },
   26002: { stock: '1700', title: 'Patek Philippe Nautilus 5711/1A-014', category: 'Watch', note: '',
     buy: '£98,000', sale: '', box: true, papers: true, images: ['/images/b1.jpg', 'https://evil.example.com/x.jpg'] },
+  // No photos: Chrono Key's gallery then shows its own "no image" graphic.
   26003: { stock: '1701', title: 'Rolex Daytona 126500LN', category: 'UK', note: '', buy: '£34,500', sale: '',
-    box: true, papers: true, movement: '4131', images: [] },
+    box: true, papers: true, movement: '4131', images: ['../../images/no_image.png'] },
 };
 
 function detailPage(id) {
@@ -75,11 +117,54 @@ function detailPage(id) {
   </div></body></html>`;
 }
 
-const jpeg = (color) =>
-  sharp({ create: { width: 900, height: 700, channels: 3, background: color } }).jpeg().toBuffer();
+/*
+ * A photo-like picture: smooth light and a few soft shapes, different for
+ * each seed — flat colours would all look alike to a picture comparison.
+ * `box` paints a white patch over it, the way the vault's client copies hide
+ * a date or a serial; `quality` re-saves it; `width` resizes it.
+ */
+export function picture(seed, { box = false, quality = 90, width = 900, format = 'jpeg' } = {}) {
+  const W = 900;
+  const H = 700;
+  const px = Buffer.alloc(W * H * 3);
+  const spots = [0, 1, 2].map((k) => ({
+    x: ((seed * 211 + k * 307) % 800) + 50,
+    y: ((seed * 97 + k * 173) % 600) + 50,
+    r: 60 + ((seed * 31 + k * 53) % 90),
+    c: [(seed * 70 + k * 40) % 255, (seed * 130 + k * 90) % 255, (seed * 50 + k * 150) % 255],
+  }));
+  for (let y = 0; y < H; y += 1) {
+    for (let x = 0; x < W; x += 1) {
+      const i = (y * W + x) * 3;
+      let rgb = [80 + (x * 120) / W, 90 + (y * 100) / H, 140 - (x * 60) / W];
+      for (const s of spots) {
+        const d = Math.hypot(x - s.x, y - s.y) / s.r;
+        if (d < 1.4) {
+          const a = Math.max(0, Math.min(1, 1.4 - d));
+          rgb = rgb.map((v, j) => v * (1 - a) + s.c[j] * a);
+        }
+      }
+      if (box && x >= 600 && x < 660 && y >= 120 && y < 150) rgb = [255, 255, 255];
+      px[i] = rgb[0];
+      px[i + 1] = rgb[1];
+      px[i + 2] = rgb[2];
+    }
+  }
+  let img = sharp(px, { raw: { width: W, height: H, channels: 3 } });
+  if (width !== W) img = img.resize(width);
+  return (format === 'png' ? img.png() : img.jpeg({ quality })).toBuffer();
+}
 
 export async function startChronoKey({ username = 'ck-user', password = 'ck-pass' } = {}) {
-  const images = { '/images/a1.jpg': await jpeg('#c33'), '/images/a2.jpg': await jpeg('#3c3'), '/images/b1.jpg': await jpeg('#33c') };
+  const a1 = await picture(1);
+  const images = {
+    '/images/a1.jpg': a1,
+    '/images/a1-again.jpg': Buffer.from(a1),
+    '/images/a1-third.jpg': Buffer.from(a1),
+    '/images/a2.jpg': await picture(2),
+    '/images/b1.jpg': await picture(3),
+    '/images/no_image.png': await picture(9, { format: 'png' }),
+  };
   const sessions = new Set();
   const calls = [];
   const server = http.createServer((req, res) => {
@@ -110,9 +195,8 @@ export async function startChronoKey({ username = 'ck-user', password = 'ck-pass
         return res.end(`<table><thead><tr>${HEADERS.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody></tbody></table>`);
       }
       if (url.pathname === '/Stock/ProductsDataTable') {
-        const data = PRODUCTS.map((r, i) => r.map((v, j) => (j === 1 && i === 1 ? `<a href="/Stock/InstockDetailPage/26002">${v}</a>` : String(v))));
-        res.setHeader('Content-Type', 'application/json');
-        return res.end(JSON.stringify({ draw: 1, recordsTotal: data.length, recordsFiltered: data.length, data }));
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(JSON.stringify({ draw: ['1'], recordsTotal: GRID.length, recordsFiltered: GRID.length, data: GRID }));
       }
       if (url.pathname === '/Stock/ToBeShippedList') {
         return res.end('<table><thead><tr><th>Image</th><th>STOCK NUMBER</th><th>Tracking Status</th></tr></thead><tbody><tr><td></td><td>1701</td><td>In transit</td></tr></tbody></table>');
@@ -140,19 +224,26 @@ export async function startChronoKey({ username = 'ck-user', password = 'ck-pass
 }
 
 export async function startVault({ token = 'vault-key' } = {}) {
-  const pics = { '/photos/v1.jpg': await jpeg('#cc3'), '/photos/v2.jpg': await jpeg('#3cc') };
+  // v1: Chrono Key's a2, saved again (other bytes, same picture). v3: a1 with
+  // a white box over it — the vault's kind of client copy, a picture of its own.
+  const pics = {
+    '/photos/v1.jpg': await picture(2, { quality: 70 }),
+    '/photos/v2.jpg': await picture(4),
+    '/photos/v3.jpg': await picture(1, { box: true }),
+  };
   let base = '';
   const state = () => ({
     dubaiStock: [
       { id: 'v-1668', stockNumber: '1668', status: 'current', brand: 'Rolex', watchModel: 'Lady-Datejust', dial: 'Pink diamonds',
-        caseDiameter: '31mm', b2bFinal: { usd: 13500 }, b2cFinal: { usd: 0, aed: 52000 }, photos: [`${base}/photos/v1.jpg`] },
+        caseDiameter: '31mm', b2bFinal: { usd: 13500 }, b2cFinal: { usd: 0, aed: 52000 },
+        photos: [`${base}/photos/v1.jpg`, `${base}/photos/v3.jpg`] },
       { id: 'v-1800', stockNumber: '1800', status: 'current', brand: 'Audemars Piguet', watchModel: 'Royal Oak',
         watchReference: '15510ST', watchSerial: 'AP1800', b2bPrice: 41000, b2bCurrency: 'USD', b2cPrice: 1, b2cCurrency: 'ask first',
         photos: [`${base}/photos/v2.jpg`, 'data:image/png;base64,AAAA'] },
     ],
     londonStock: [],
     hkStock: [],
-    soldStocks: [{ id: 'v-1700-old', stockNumber: '1700', brand: 'Patek Philippe', b2bUsd: 1 }],
+    soldStocks: [{ id: 'v-1700-old', stockNumber: '1700', brand: 'Patek Philippe', b2bUsd: 1, caseDiameter: '41mm', bezel: 'Smooth' }],
     incomings: [{ id: 'v-1900', stockNumber: '1900', status: 'cancelled', brand: 'Rolex', watchModel: 'GMT' }],
   });
   const server = http.createServer((req, res) => {

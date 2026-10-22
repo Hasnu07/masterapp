@@ -391,7 +391,7 @@ async function loadSide(id) {
     photo_order: 'Photos reordered',
     unlock: 'Handed back to Chrono Key',
   };
-  const src = { chronokey: 'Chrono Key', vault: 'the Watch vault', user: '' };
+  const src = { chronokey: 'Chrono Key', vault: 'the Watch vault', masterapp: 'masterapp', user: '' };
   $('#events').innerHTML =
     ev.events
       .map((e) => {
@@ -401,8 +401,15 @@ async function loadSide(id) {
           ch = Object.entries(e.changes)
             .map(([k, [a, b]]) => `${esc(label(k))}: ${esc(show(a))} → ${esc(show(b))}`)
             .join('<br>');
-        } else if (e.action === 'unlock') ch = esc(label(e.changes.field));
-        else if (e.action === 'photo_add') ch = `${e.changes.count} photo${e.changes.count === 1 ? '' : 's'}`;
+        } else if (e.action === 'unlock') {
+          ch = esc(label(e.changes.field));
+          if ('cleared' in e.changes) ch += ` — Chrono Key has none, so ${esc(show(e.changes.cleared))} was cleared`;
+        } else if (e.action === 'photo_add') ch = `${e.changes.count} photo${e.changes.count === 1 ? '' : 's'}`;
+        else if (e.action === 'photo_remove' && e.changes.placeholder) ch = "Chrono Key's 'no image' graphic, not a photo";
+        else if (e.action === 'photo_remove' && e.changes.duplicates) {
+          const n = e.changes.photos.length;
+          ch = `${n} photo${n === 1 ? '' : 's'} repeating another of this watch's photos`;
+        }
         return `<li><b>${esc(words[e.action] || e.action)}</b> ${e.action === 'sync' ? '' : 'by'} ${esc(who)}
           <span class="when">· ${esc(fmtWhen(e.at))}</span>${ch ? `<div class="ch">${ch}</div>` : ''}</li>`;
       })
@@ -845,6 +852,38 @@ async function showImport() {
       .map(([k, v]) => `${esc(k)} ${esc(v)}`)
       .join(' · ');
 
+  /*
+   * A run still going: how far, and how long left at the pace so far. Watch
+   * pages count done of todo; the vault counts watches done of the stock
+   * numbers it found. Either is saved every few pages, so the bar moves in
+   * small steps. A run with nothing to count just says it is running.
+   */
+  const n = (x) => Number(x || 0).toLocaleString('en-GB');
+  const dur = (m) => (m < 1 ? 'under a minute' : m < 60 ? `${Math.round(m)} min` : `${Math.floor(m / 60)} h ${Math.round(m % 60)} min`);
+  const progress = (r) => {
+    const st = r.stats || {};
+    const todo = Number(st.todo ?? st.stockNumbers) || 0;
+    const done = Number(st.done ?? (st.created || 0) + (st.updated || 0) + (st.unchanged || 0)) || 0;
+    const mins = (Date.now() - new Date(r.started_at).getTime()) / 60000;
+    if (!todo) {
+      return `<div class="progress"><b>${esc(runName(r))}</b><div class="count">Running for ${dur(mins)} — starting up${st.photos ? ` · ${n(st.photos)} photos` : ''}</div></div>`;
+    }
+    const left = Math.max(0, todo - done);
+    const pct = Math.min(100, Math.floor((done / todo) * 100));
+    const rate = mins > 0 ? done / mins : 0;
+    const eta = done >= 10 && rate ? left / rate : null;
+    const at = eta === null ? '' : new Date(Date.now() + eta * 60000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="progress">
+      <div class="row" style="justify-content:space-between"><b>${esc(runName(r))}</b><b>${pct}%</b></div>
+      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="${todo}" aria-valuenow="${done}"><i style="width:${pct}%"></i></div>
+      <div class="count"><b>${n(done)}</b> of ${n(todo)} done · <b>${n(left)}</b> left${st.photos !== undefined ? ` · ${n(st.photos)} photos` : ''}${st.failed ? ` · <span style="color:var(--bad)">${n(st.failed)} failed</span>` : ''}</div>
+      <div class="count">Running for ${dur(mins)}${rate ? ` · ${rate.toFixed(1)} a minute` : ''} · ${
+        eta === null ? 'working out the time left…' : `<b>about ${dur(eta)} left</b>, done around ${at}`
+      }</div>
+    </div>`;
+  };
+  const going = s.runs.filter((r) => !r.finished_at);
+
   $('#app').innerHTML = `
     <h1>Import from Chrono Key and the Watch vault</h1>
     <p class="sub">Chrono Key stays the master until the switch-over. Its copy here is refreshed automatically; anything edited in masterapp is never overwritten.</p>
@@ -860,6 +899,7 @@ async function showImport() {
         </div>
         ${c.ck_errors ? `<p class="note" style="margin-top:12px">${c.ck_errors} Chrono Key page${c.ck_errors === 1 ? '' : 's'} could not be read — see the runs below.</p>` : ''}
         ${s.running ? `<p class="note info" style="margin-top:12px">Running now: ${esc(s.running.name)} (since ${esc(fmtWhen(s.running.startedAt))}). This page refreshes itself.</p>` : ''}
+        ${going.map(progress).join('')}
       </div>
       ${
         admin

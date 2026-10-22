@@ -233,11 +233,14 @@ async function copyPhotos(watchId, images) {
       const r = await chronokey().getImage(img.path);
       const type = String(r.headers['content-type'] || '');
       if (r.status !== 200 || !type.startsWith('image/') || !r.buffer?.length) continue;
-      await addPhotos(watchId, [{ buffer: r.buffer, caption: img.caption }], null, {
+      // The gallery lists some pictures twice under two names, and the vault
+      // may hold them already: those are recorded, not shown again.
+      const ids = await addPhotos(watchId, [{ buffer: r.buffer, caption: img.caption }], null, {
         source: 'chronokey',
         sourceRefs: [img.path],
+        skipDuplicates: true,
       });
-      copied += 1;
+      copied += ids.length;
     } catch (err) {
       if (err.code === '23505') continue; // copied meanwhile by another pass
       console.warn(`[chronokey] photo ${img.path} for watch ${watchId}: ${err.message}`);
