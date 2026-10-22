@@ -141,6 +141,33 @@ address. An admin cannot demote or disable themselves.
 
 ## Running
 
+**On a PC, with nothing to install but Node and Git** (asked for 22 Oct 2026,
+while Railway was down): double-click `start-masterapp.cmd`, or
+
+```bash
+npm install
+npm run local             # its own Postgres, http://localhost:3300, opens the browser
+```
+
+`src/local.js` starts an embedded Postgres (the `embedded-postgres` package
+ships the real binaries for Windows/macOS/Linux through npm) in `data/pg`, keeps
+photos in `data/`, makes `admin@local` with a random password the first time
+(printed, and kept in `data/local.json`), and stops the database on Ctrl+C.
+
+- Port **3300**, because InvoiceWEB's console is on 3000 on the same PC.
+- Bound to **127.0.0.1**: nothing on the network reaches it, and Windows does
+  not ask about its firewall.
+- The database is created **UTF-8 with the C locale** on every platform. Left
+  to itself, initdb on Windows takes the PC's code page (WIN1252), and an
+  Arabic or Chinese client name then cannot be stored. Proven here with
+  "محمد العلي — 王先生 € £ ✓".
+- Do not run it from an Administrator terminal: Postgres refuses to run with
+  admin rights on Windows.
+- Chrono Key / vault credentials in a `.env` beside it make it copy photos
+  locally too, exactly as on Railway.
+
+**On a server** (Railway):
+
 ```bash
 npm install
 cp .env.example .env      # fill in

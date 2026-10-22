@@ -301,7 +301,7 @@ export function createServer() {
                  (SELECT count(*)::int FROM ck_records WHERE error IS NOT NULL) AS ck_errors,
                  (SELECT count(*)::int FROM vault_records) AS vault_records,
                  (SELECT count(*)::int FROM watch_photos WHERE deleted_at IS NULL) AS photos,
-                 (SELECT count(*)::int FROM watches WHERE deleted_at IS NULL AND purchase_price IS NOT NULL
+                 (SELECT count(*)::int FROM watches WHERE deleted_at IS NULL AND purchase_price > 0
                      AND purchase_currency = '') AS currency_not_stated`),
       ]);
       res.json({

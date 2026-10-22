@@ -11,7 +11,7 @@ async function main() {
   setInterval(() => pruneSessions().catch(() => {}), 6 * 3600_000).unref();
 
   const app = createServer();
-  app.listen(config.port, () => {
+  app.listen(config.port, config.host, () => {
     console.log(`[web] masterapp on :${config.port} — photos stored on ${config.r2.configured ? 'R2' : `disk (${config.dataDir})`}`);
   });
 

@@ -17,6 +17,12 @@ changed what.
 
 See `CLAUDE.md` for how it works and why, and `.env.example` for settings.
 
+**Run it on a PC**: install Node.js 20+ and Git, then double-click
+`start-masterapp.cmd` (or `npm install` then `npm run local`). It brings its
+own database, opens http://localhost:3300 and prints the first sign-in.
+
+**On a server**:
+
 ```bash
 npm install && cp .env.example .env && npm start
 npm test   # needs a Postgres at TEST_DATABASE_URL; it is wiped

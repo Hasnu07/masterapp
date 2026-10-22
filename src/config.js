@@ -8,6 +8,7 @@ const bool = (v, dflt) => (v === undefined || v === '' ? dflt : !/^(0|off|false|
 
 export const config = {
   port: Number(process.env.PORT || 3000),
+  host: process.env.HOST || undefined, // all interfaces unless set
   production: process.env.NODE_ENV === 'production' || Boolean(process.env.RAILWAY_ENVIRONMENT),
 
   /* Postgres. Railway's Postgres plugin sets DATABASE_URL. */
