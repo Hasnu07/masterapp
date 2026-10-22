@@ -50,6 +50,9 @@ async function r2Driver(r2) {
   const client = new S3Client({
     region: 'auto',
     endpoint: r2.endpoint || `https://${r2.accountId}.r2.cloudflarestorage.com`,
+    // R2 takes either addressing style; path style also works with any
+    // S3-compatible stand-in, which is what the tests run against.
+    forcePathStyle: true,
     credentials: { accessKeyId: r2.accessKeyId, secretAccessKey: r2.secretAccessKey },
   });
   return {
