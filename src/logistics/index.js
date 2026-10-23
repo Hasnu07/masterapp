@@ -1,6 +1,7 @@
 import { query, tx } from '../db/index.js';
 import { parseMoney, realDate } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
+import { getRates } from '../rates/index.js';
 import { lastLogisticsRead, stockFor } from '../import/logistics/sync.js';
 import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
 import * as situation from './situation.js';
@@ -361,8 +362,43 @@ async function asOf() {
  * deleted ones included for the history (a sale takes a watch's row out of
  * its place's list, and that row's movements are its past).
  */
+/*
+ * What moving a watch cost, as ONE figure (asked 24 Oct 2026): every
+ * currency's total converted into the currency the watch was bought in —
+ * dollars when that is not known, as the logistics app counts — at the rates
+ * the converter beside every price uses. Null when no rate can be had: the
+ * page then shows each currency's own total, never a guess.
+ */
+async function costTotal(totals, purchaseCurrency) {
+  const parts = Object.entries(totals || {});
+  if (!parts.length) return null;
+  const target = /^[A-Z]{3,4}$/.test(purchaseCurrency || '') ? purchaseCurrency : 'USD';
+  let r;
+  try {
+    r = await getRates();
+  } catch {
+    return null;
+  }
+  if (!r.rates[target]) return null;
+  let sum = 0;
+  const missing = [];
+  for (const [cur, amount] of parts) {
+    if (r.rates[cur]) sum += (amount / r.rates[cur]) * r.rates[target];
+    else missing.push(cur);
+  }
+  if (missing.length === parts.length) return null;
+  return {
+    amount: Math.round(sum * 100) / 100,
+    currency: target,
+    bought_in: target === purchaseCurrency,
+    rates: r.kind, // "live" or "daily", as the converter prints it
+    stale: Boolean(r.stale),
+    missing, // currencies with no rate: left out of the figure, and said so
+  };
+}
+
 export async function forWatch(watchId) {
-  const { rows: w } = await query('SELECT id, stock_no FROM watches WHERE id = $1', [Number(watchId) || 0]);
+  const { rows: w } = await query('SELECT id, stock_no, purchase_currency FROM watches WHERE id = $1', [Number(watchId) || 0]);
   if (!w[0]) throw Object.assign(new Error('No such watch'), { status: 404 });
   const stockNo = w[0].stock_no;
   const [{ rows }, ctx, at] = await Promise.all([
@@ -372,12 +408,14 @@ export async function forWatch(watchId) {
   ]);
   const items = rows.map((r) => ({ ...r, id: r.id }));
   const opts = { clientName: ctx.client };
+  const costs = situation.costs(stockNo, items);
+  costs.total = await costTotal(costs.totals, w[0].purchase_currency);
   return {
     stock_no: stockNo,
     as_of: at,
     now: situation.now(items, opts),
     timeline: situation.timeline(items, opts).slice(0, 200).map((e) => ({ ...e, at: e.at ? new Date(e.at).toISOString() : null, kind_label: kindOf(e.kind).label })),
-    costs: situation.costs(stockNo, items),
+    costs,
     items: rows.filter((r) => !r.deleted_at).map((r) => view(r, ctx)),
   };
 }

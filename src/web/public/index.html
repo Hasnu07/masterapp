@@ -176,6 +176,29 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
 .progress .bar i { display: block; height: 100%; background: var(--gold); border-radius: 999px; transition: width .6s ease; }
 .progress .count { margin: 2px 0 0; }
 
+/* A panel that folds: closed until opened, the arrow at the right of its heading (app.js fold()). */
+details.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary h3 { margin: 0; }
+details.fold > summary:hover h3 { color: var(--ink); }
+details.fold > summary::after { content: ''; flex: none; width: 8px; height: 8px; margin: 0 4px 4px 0;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s ease; }
+details.fold[open] > summary::after { transform: rotate(-135deg); margin: 4px 4px 0 0; }
+details.fold[open] > summary { margin-bottom: 10px; }
+details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outline-offset: 4px; border-radius: 4px; }
+.fold-note { text-transform: none; letter-spacing: 0; font-weight: 400; }
+/* Inside Logistics: What it cost, History and Records, each a button opening its own section. */
+.lg-folds { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.lg-fold-btn { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+.lg-fold-btn:hover { border-color: #cfc6b6; }
+.lg-fold-btn::after { content: ''; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg); margin: 0 1px 3px 0; transition: transform .15s ease; }
+.lg-fold-btn[aria-expanded="true"] { background: var(--gold-soft); border-color: #e6d6b5; }
+.lg-fold-btn[aria-expanded="true"]::after { transform: rotate(-135deg); margin: 3px 1px 0 0; }
+.lg-section { margin-top: 14px; }
+.lg-section > h3 { margin-bottom: 6px; }
+
 /* logistics: its own tabs across the top, its lists' kinds in a row under them */
 .lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
 .lg-head h1 { margin: 0; }

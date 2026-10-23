@@ -87,6 +87,11 @@ before(async () => {
   worker = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     hits[url.pathname] = (hits[url.pathname] || 0) + 1;
+    // A stand-in for the converter's rate source (USD-based, as Coinbase answers): no test reaches the internet.
+    if (url.pathname === '/rates/live') {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({ data: { rates: { USD: '1', EUR: '0.9', GBP: '0.8', AED: '3.6725', HKD: '7.8' } } }));
+    }
     if (url.pathname === '/photos/doc.pdf') {
       res.setHeader('Content-Type', 'application/pdf');
       return res.end(Buffer.from('%PDF-1.4\n% a customs paper\n%%EOF\n'));
@@ -123,6 +128,8 @@ before(async () => {
     ADMIN_EMAIL: 'boss@example.com',
     ADMIN_PASSWORD: 'admin-password-1',
     SYNC: 'off',
+    RATES_LIVE_URL: `${base}/rates/live`,
+    RATES_DAILY_URL: `${base}/rates/live`,
   });
   const reset = new pg.Client({ connectionString: DB });
   await reset.connect();
@@ -375,6 +382,20 @@ test('where a watch is: its place, what is moving it, its history and what movin
   // The logistics app's own costing, line for line.
   assert.deepEqual(w.costs.totals, { AED: 100, USD: 50, GBP: 500 }, JSON.stringify(w.costs.lines));
   assert.ok(!w.costs.lines.some((l) => l.source === 'Shipment'), 'S1’s own cost is already the Courier line');
+
+  // As one figure: in dollars while the purchase currency is not known …
+  const usd = 100 / 3.6725 + 50 + 500 / 0.8;
+  assert.deepEqual(
+    { amount: w.costs.total.amount, currency: w.costs.total.currency, bought_in: w.costs.total.bought_in },
+    { amount: Math.round(usd * 100) / 100, currency: 'USD', bought_in: false }
+  );
+  // … and in the currency it was bought in once it is.
+  await db("UPDATE watches SET purchase_currency = 'AED' WHERE id = $1", [id]);
+  const aed = (await m.lg.forWatch(id)).costs.total;
+  assert.equal(aed.currency, 'AED');
+  assert.equal(aed.bought_in, true);
+  assert.equal(aed.amount, Math.round(usd * 3.6725 * 100) / 100);
+  await db("UPDATE watches SET purchase_currency = '' WHERE id = $1", [id]);
 
   const other = await m.lg.forWatch(rows.find((r) => r.stock_no === '1700').id);
   assert.equal(other.now.headline, 'At polish with Polisher X');
