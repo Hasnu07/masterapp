@@ -47,11 +47,6 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 nav a { text-decoration: none; color: var(--muted); padding: 10px 12px; border-radius: 8px; font-weight: 500; }
 nav a:hover { color: var(--ink); background: var(--paper); }
 nav a.on { color: var(--ink); background: var(--gold-soft); }
-/* Logistics' tabs, under their own heading. */
-nav .nav-group { margin: 12px 12px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--muted); font-weight: 600; }
-nav .nav-group:empty { margin: 6px 0; border-top: 1px solid var(--line); }
-nav a.nav-sub { padding: 6px 12px 6px 20px; font-size: 14px; }
-.drawer { overflow-y: auto; }
 .who { margin-top: auto; padding: 14px 4px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center;
   justify-content: space-between; color: var(--muted); font-size: 13px; }
 .who span { min-width: 0; overflow-wrap: anywhere; }
@@ -181,7 +176,19 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
 .progress .bar i { display: block; height: 100%; background: var(--gold); border-radius: 999px; transition: width .6s ease; }
 .progress .count { margin: 2px 0 0; }
 
-/* logistics */
+/* logistics: its own tabs across the top, its lists' kinds in a row under them */
+.lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
+.lg-head h1 { margin: 0; }
+.lg-tabs { display: flex; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; border-bottom: 1px solid var(--line); margin: 10px 0 16px; }
+.lg-tabs a { white-space: nowrap; padding: 9px 13px; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 14.5px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.lg-tabs a:hover { color: var(--ink); }
+.lg-tabs a.on { color: var(--ink); border-bottom-color: var(--gold); }
+.lg-title { font-size: 26px; margin: 4px 0 6px; }
+.lg-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.lg-subtabs .pill { font-size: 13px; }
+.lg-toolbar { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 10px; }
+@media (max-width: 640px) { .lg-toolbar { grid-template-columns: 1fr auto; } .lg-toolbar .q { grid-column: 1 / -1; } }
 .lg-now { margin-top: 10px; padding: 9px 12px; border-radius: 8px; background: var(--paper); border: 1px solid var(--line); font-size: 14px; }
 .lg-now:empty { display: none; }
 .lg-now .h { font-weight: 600; color: var(--ink); text-decoration: none; }
@@ -293,19 +300,7 @@ table.list.lg a { text-decoration: none; color: var(--ink); }
     <a href="#/" data-nav="inventory">Inventory</a>
     <a href="#/clients" data-nav="clients">Clients</a>
     <a href="#/expenses" data-nav="expenses">Expenses</a>
-    <div class="nav-group">Logistics</div>
-    <a class="nav-sub" href="#/logistics" data-nav="lg-overview">Overview</a>
-    <a class="nav-sub" href="#/logistics/shipments" data-nav="lg-shipments">Shipments</a>
-    <a class="nav-sub" href="#/logistics/incoming" data-nav="lg-incoming">Incoming</a>
-    <a class="nav-sub" href="#/logistics/stock" data-nav="lg-stock">Stock by place</a>
-    <a class="nav-sub" href="#/logistics/sales" data-nav="lg-sales">Sales &amp; delivery</a>
-    <a class="nav-sub" href="#/logistics/trips" data-nav="lg-trips">Trips</a>
-    <a class="nav-sub" href="#/logistics/accessories" data-nav="lg-accessories">Accessories</a>
-    <a class="nav-sub" href="#/logistics/services" data-nav="lg-services">Polish &amp; services</a>
-    <a class="nav-sub" href="#/logistics/costs" data-nav="lg-costs">Costs</a>
-    <a class="nav-sub" href="#/logistics/contacts" data-nav="lg-contacts">Contacts</a>
-    <a class="nav-sub" href="#/logistics/log" data-nav="lg-log">Activity</a>
-    <div class="nav-group"></div>
+    <a href="#/logistics" data-nav="logistics">Logistics</a>
     <a href="#/new" data-nav="new" data-role="editor">New watch</a>
     <a href="#/import" data-nav="import">Import</a>
     <a href="#/users" data-nav="users" data-role="admin">Users</a>

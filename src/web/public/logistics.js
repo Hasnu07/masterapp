@@ -112,6 +112,22 @@ function lgStockLinks(text, watches) {
 
 const stockTags = (nos) => (nos || []).map((s) => `<span class="lg-stock">#${esc(s)}</span>`).join(' ');
 
+/*
+ * Logistics is one entry in the menu. Its own tabs run across the top of
+ * every logistics page — Overview first — and a tab's lists sit in a row
+ * under them, so the menu is not a column of a dozen links.
+ */
+/* On a phone the tabs scroll sideways: the one open is brought into view. */
+const lgTabIntoView = () => $('.lg-tabs a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+
+function lgHeader(active, note = '') {
+  setTimeout(lgTabIntoView);
+  return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}</div>
+    <div class="lg-tabs" role="navigation" aria-label="Logistics">${lgGroups()
+      .map((g) => `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${esc(g.label)}</a>`)
+      .join('')}</div>`;
+}
+
 /* ── a tab: one group's records ─────────────────────────────────── */
 
 let lgSeq = 0;
@@ -123,22 +139,14 @@ async function showLogistics(group) {
     return;
   }
   if (lgState.group !== group) Object.assign(lgState, { group, kind: '', q: '' });
-  const kinds = lgKinds().filter((k) => k.group === group);
   $('#app').innerHTML = `
-    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
-      <div><h1>${esc(lgGroupLabel(group))}</h1><p class="sub" style="margin:0">From the logistics app, and added here. A change made here is kept: the copy from the logistics app leaves it alone.</p></div>
-      ${
-        can('editor')
-          ? `<div class="row" style="flex-wrap:nowrap"><select id="lg-addkind" style="width:auto">${kinds.filter((k) => k.key !== 'vaultTracking').map((k) => `<option value="${esc(k.key)}">${esc(k.label)}</option>`).join('')}</select>
-             <button class="btn gold" id="lg-add" style="white-space:nowrap">+ Add</button></div>`
-          : ''
-      }
-    </div>
-    <div class="filters" style="grid-template-columns:1fr auto">
+    ${lgHeader(group)}
+    <div class="lg-subtabs" id="lg-kinds"></div>
+    <div class="lg-toolbar">
       <input class="q" type="search" id="lgq" placeholder="Stock number, name, tracking, anything in the record…" value="${esc(lgState.q)}">
-      <label class="count" style="cursor:pointer;margin:0"><input type="checkbox" id="lgdel" ${lgState.deleted ? 'checked' : ''}> Show deleted</label>
+      <label class="count" style="cursor:pointer;margin:0;white-space:nowrap"><input type="checkbox" id="lgdel" ${lgState.deleted ? 'checked' : ''}> Show deleted</label>
+      ${can('editor') ? '<button class="btn gold" id="lg-add" style="white-space:nowrap">+ Add</button>' : ''}
     </div>
-    <div class="pills" id="lg-kinds" style="margin-bottom:10px"></div>
     <div class="count" id="lg-count"></div>
     <div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
       <th>Stock</th><th>What</th><th>Status</th><th>When</th><th>List</th>
@@ -157,13 +165,16 @@ async function showLogistics(group) {
     loadLogistics();
   });
   $('#lg-more').addEventListener('click', () => loadLogistics(true));
-  $('#lg-add')?.addEventListener('click', () => (location.hash = `#/lg-new/${$('#lg-addkind').value}`));
+  $('#lg-add')?.addEventListener('click', () => (location.hash = `#/lg-new/${lgAddKind()}`));
   $('#lg-rows').addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-id]');
     if (tr && !e.target.closest('a')) location.hash = `#/lg/${tr.dataset.id}`;
   });
   loadLogistics();
 }
+
+/* "+ Add" adds to the list picked in the row of lists, else to the tab's first. */
+const lgAddKind = () => lgState.kind || lgKinds().find((k) => k.group === lgState.group && k.key !== 'vaultTracking')?.key || '';
 
 async function loadLogistics(more = false) {
   const seq = ++lgSeq;
@@ -177,9 +188,17 @@ async function loadLogistics(more = false) {
   }
   if (seq !== lgSeq || !$('#lg-rows')) return;
   lgShown = more ? [...lgShown, ...r.items] : r.items;
+  // The lists in the logistics app's own order (London before Dubai), not the alphabet's.
+  const order = (key) => {
+    const i = lgKinds().findIndex((k) => k.key === key);
+    return i < 0 ? 999 : i;
+  };
+  r.kinds.sort((a, b) => order(a.kind) - order(b.kind));
   const all = r.kinds.reduce((a, k) => a + k.n, 0);
+  const add = $('#lg-add');
+  if (add) add.textContent = `+ Add to ${lgKind(lgAddKind()).label}`;
   $('#lg-kinds').innerHTML =
-    `<button class="pill ${lgState.kind ? '' : 'on'}" data-k="">All<b>${all}</b></button>` +
+    `<button class="pill ${lgState.kind ? '' : 'on'}" data-k="">All ${esc(lgGroupLabel(lgState.group).toLowerCase())}<b>${all}</b></button>` +
     r.kinds.map((k) => `<button class="pill ${lgState.kind === k.kind ? 'on' : ''}" data-k="${esc(k.kind)}">${esc(k.label)}<b>${k.n}</b></button>`).join('') +
     (lgState.kind && !r.kinds.some((k) => k.kind === lgState.kind) ? `<button class="pill on" data-k="${esc(lgState.kind)}">${esc(lgKind(lgState.kind).label)}<b>0</b></button>` : '');
   $$('#lg-kinds .pill').forEach((b) =>
@@ -208,15 +227,15 @@ async function loadLogistics(more = false) {
 /* ── the overview ───────────────────────────────────────────────── */
 
 async function showLogisticsOverview() {
-  $('#app').innerHTML = '<h1>Logistics</h1><p class="sub">Reading…</p>';
+  $('#app').innerHTML = `${lgHeader('overview')}<p class="sub">Reading…</p>`;
   let o;
   try {
     o = await api('/api/logistics/overview');
   } catch (err) {
-    $('#app').innerHTML = `<h1>Logistics</h1><p class="err">${esc(err.message)}</p>`;
+    $('#app').innerHTML = `${lgHeader('overview')}<p class="err">${esc(err.message)}</p>`;
     return;
   }
-  if (!location.hash.startsWith('#/logistics')) return;
+  if (location.hash !== '#/logistics' && location.hash !== '#/logistics/overview') return;
   const row = (i, extra = '') => `<a class="lg-line" href="#/lg/${i.id}">
       <span>${stockTags(i.stock_nos)}</span>
       <span class="grow"><b>${esc(i.summary.title)}</b>${i.summary.sub ? ` <span class="count" style="margin:0">${esc(i.summary.sub)}</span>` : ''}</span>
@@ -234,9 +253,7 @@ async function showLogisticsOverview() {
       <div class="d">${esc(words)} · ${esc(e.source === 'user' ? e.user_name || 'someone here' : 'the logistics app')}</div></div></li>`;
   };
   $('#app').innerHTML = `
-    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
-      <div><h1>Logistics</h1><p class="sub" style="margin:0">What is moving now. ${o.as_of ? `The logistics app was last read ${esc(fmtWhen(o.as_of))}.` : 'The logistics app has not been read yet.'}</p></div>
-    </div>
+    ${lgHeader('overview', o.as_of ? `the logistics app as of ${esc(fmtWhen(o.as_of))}` : 'the logistics app has not been read yet')}
     <div class="stat" style="margin-bottom:16px">
       <div><b>${o.shipments.length}</b><span>shipments on their way</span></div>
       <div><b>${o.ready.length}</b><span>sold, waiting for delivery</span></div>
@@ -267,7 +284,6 @@ async function showLogisticsItem(id, { editing = false } = {}) {
     return;
   }
   const k = lgKind(it.kind);
-  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === `lg-${k.group}`));
   const editor = can('editor') && !it.deleted_at;
   const locked = new Set(it.locked_fields || []);
   const lockMark = (key) =>
@@ -307,10 +323,11 @@ async function showLogisticsItem(id, { editing = false } = {}) {
       }</dl></div>`;
 
   $('#app').innerHTML = `
+    ${lgHeader(k.group)}
     <div class="watch-head">
       <div>
-        <a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))}</a>
-        <h1>${esc(it.summary.title)}</h1>
+        <a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))} · ${esc(k.label)}</a>
+        <h2 class="lg-title">${esc(it.summary.title)}</h2>
         <div class="row">${lgStockLinks(it.stock_nos.join(', '), it.watches)} ${it.deleted_at ? '<span class="chip deleted">deleted</span>' : lgChip(it.summary.status)}
           <span class="count" style="margin:0">${esc(k.label)} · ${it.origin === 'manual' ? 'added in masterapp' : 'from the logistics app'}</span></div>
         ${it.summary.sub ? `<p class="desc">${esc(it.summary.sub)}</p>` : ''}
@@ -475,12 +492,12 @@ async function fillLogisticsClients(form) {
 function showNewLogisticsItem(kind) {
   const k = lgKind(kind);
   if (!can('editor') || !lgKinds().some((x) => x.key === kind)) return (location.hash = '#/logistics');
-  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === `lg-${k.group}`));
   const blank = {};
   for (const f of k.fields) if (f.type === 'date') blank[f.key] = new Date().toISOString().slice(0, 10);
   $('#app').innerHTML = `
+    ${lgHeader(k.group)}
     <a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))}</a>
-    <h1>Add to ${esc(k.label)}</h1>
+    <h2 class="lg-title">Add to ${esc(k.label)}</h2>
     <form class="panel" id="lg-new" style="max-width:860px">
       ${k.fields.length ? lgForm(k.fields, blank) : '<div class="form-grid"><label class="wide">Title<input type="text" name="title"></label><label class="wide">Notes<textarea name="notes"></textarea></label></div>'}
       <div class="err" id="lg-err"></div>

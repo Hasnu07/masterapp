@@ -109,9 +109,7 @@ function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
   const [, page, id] = hash.split('/');
-  // A logistics record's own tab is known once it is read (logistics.js marks it).
-  const section =
-    page === 'logistics' ? `lg-${id || 'overview'}` : { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   menu(false);
   window.scrollTo(0, 0);
