@@ -543,7 +543,7 @@ function renderSoldFor(s) {
   const total = s.soldTotal || s.sold.length;
   box.innerHTML = fold(
     'sold-for',
-    `What it has sold for <span class="fold-note">— ${esc(s.reference)}${total ? ` · ${total} sold` : ''}</span>`,
+    `What it has sold for <span class="fold-note" data-nofx>— ${esc(s.reference)}${total ? ` · ${total} sold` : ''}</span>`,
     `${s.sold.length ? s.sold.map(line).join('') : '<p class="count">No sale of this reference on record.</p>'}
     <p class="count" style="margin-bottom:0">${[more ? esc(more) : '', stock].filter(Boolean).join(' ')}</p>`
   );

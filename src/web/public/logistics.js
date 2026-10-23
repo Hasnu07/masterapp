@@ -570,35 +570,72 @@ function renderWatchLogistics() {
     return;
   }
   const totals = Object.entries(L.costs.totals || {});
-  // The minute's refresh redraws the panel: the costs list someone opened stays open (the panel's own fold, through fold()).
-  const open = Boolean(panel.querySelector('details.lg-cost')?.open);
+  const t = L.costs.total;
   panel.hidden = false;
   const records = L.items.length;
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  /*
+   * What moving it cost, as one figure in the currency it was bought in (the
+   * server converts at the converter's rates). Without a rate, each currency
+   * shows on its own rather than a guessed total.
+   */
+  const figure = !L.costs.lines.length
+    ? ''
+    : t
+      ? `<div class="figures" style="margin:0 0 4px"><div><span>Moving it cost</span><b>${money(t.amount, t.currency)}</b></div></div>
+         <p class="count" style="margin:0 0 6px">${t.bought_in ? 'In the currency it was bought in' : 'In dollars — its purchase currency is not recorded'}${
+           totals.length > 1 || totals[0]?.[0] !== t.currency ? `, converted at today’s ${esc(t.rates)} rates${t.stale ? ' (not fresh)' : ''}` : ''
+         }${t.missing.length ? `; ${esc(t.missing.join(', '))} left out — no rate` : ''}.</p>`
+      : `<div class="figures" style="margin:0 0 6px">${totals.map(([cur, n]) => `<div><span>Moving it, ${esc(cur)}</span><b>${money(n, cur === '?' ? '' : cur)}</b></div>`).join('')}</div>`;
+
+  /* What it cost, History and Records: a row of buttons, each opening its own section, all closed until opened. */
+  const sections = [
+    L.costs.lines.length && {
+      key: 'lg-cost',
+      label: `What it cost — ${plural(L.costs.lines.length, 'line')}`,
+      // Each currency's own total first — what the one figure above is made of.
+      body: (t && totals.length > 1 ? `<p class="count" style="margin:0 0 6px">By currency: ${totals.map(([cur, n]) => money(n, cur === '?' ? '' : cur)).join(' · ')}</p>` : '') + L.costs.lines
+        .map((c) => `<div class="sold-row"><span><a href="#/lg/${c.itemId}">${esc(c.source)}</a> · ${esc(c.title || '')}${c.detail ? ` <span class="count" style="margin:0">${esc(c.detail)}</span>` : ''}</span><span>${money(c.amount, c.currency || '')} <span class="count">${esc(fmtDate(c.date))}</span></span></div>`)
+        .join(''),
+    },
+    {
+      key: 'lg-history',
+      label: `History — ${plural(L.timeline.length, 'event')}`,
+      body: `<ul class="lg-tl">${
+        L.timeline
+          .slice(0, 40)
+          .map((e) => `<li><time>${esc(e.at ? fmtDate(e.at) : '—')}</time><div><a href="#/lg/${e.itemId}">${esc(e.text)}</a>${e.detail ? `<div class="d">${esc(e.detail)}</div>` : ''}</div></li>`)
+          .join('') || '<li class="count">Nothing yet.</li>'
+      }</ul>${L.timeline.length > 40 ? `<p class="count">and ${L.timeline.length - 40} earlier</p>` : ''}`,
+    },
+    {
+      key: 'lg-records',
+      label: `Records — ${records}`,
+      body: L.items.map((i) => `<a class="lg-line" href="#/lg/${i.id}"><span class="count" style="margin:0;min-width:110px">${esc(i.kind_label)}</span><span class="grow">${esc(i.summary.title)}</span>${lgChip(i.summary.status)}</a>`).join(''),
+    },
+  ].filter(Boolean);
+  const isOpen = (key) => Boolean(current?.open?.[key]);
+
   panel.innerHTML = fold(
     'logistics',
-    `Logistics <span class="fold-note">· ${records} record${records === 1 ? '' : 's'}${L.costs.lines.length ? ' · costs' : ''}</span>`,
-    `${
-      L.costs.lines.length
-        ? `<div class="figures" style="margin:0 0 6px">${totals.map(([cur, n]) => `<div><span>Moving it, ${esc(cur)}</span><b>${money(n, cur === '?' ? '' : cur)}</b></div>`).join('')}</div>
-           <details class="lg-cost"><summary class="count" style="cursor:pointer;margin:0">What it cost — ${L.costs.lines.length} line${L.costs.lines.length === 1 ? '' : 's'}</summary>
-           ${L.costs.lines
-             .map((c) => `<div class="sold-row"><span><a href="#/lg/${c.itemId}">${esc(c.source)}</a> · ${esc(c.title || '')}${c.detail ? ` <span class="count" style="margin:0">${esc(c.detail)}</span>` : ''}</span><span>${money(c.amount, c.currency || '')} <span class="count">${esc(fmtDate(c.date))}</span></span></div>`)
-             .join('')}</details>`
-        : ''
-    }
-    <h3 style="margin-top:14px">History</h3>
-    <ul class="lg-tl">${
-      L.timeline
-        .slice(0, 40)
-        .map((e) => `<li><time>${esc(e.at ? fmtDate(e.at) : '—')}</time><div><a href="#/lg/${e.itemId}">${esc(e.text)}</a>${e.detail ? `<div class="d">${esc(e.detail)}</div>` : ''}</div></li>`)
-        .join('') || '<li class="count">Nothing yet.</li>'
-    }</ul>
-    ${L.timeline.length > 40 ? `<p class="count">and ${L.timeline.length - 40} earlier</p>` : ''}
-    <h3 style="margin-top:14px">Records</h3>
-    ${L.items.map((i) => `<a class="lg-line" href="#/lg/${i.id}"><span class="count" style="margin:0;min-width:110px">${esc(i.kind_label)}</span><span class="grow">${esc(i.summary.title)}</span>${lgChip(i.summary.status)}</a>`).join('')}`
+    // No converter arrow in the heading: a click there opens and closes the panel.
+    `Logistics <span class="fold-note" data-nofx>· ${plural(records, 'record')}${t ? ` · moving it ${money(t.amount, t.currency)}` : ''}</span>`,
+    `${figure}
+    <div class="lg-folds">${sections
+      .map((s) => `<button type="button" class="lg-fold-btn" data-lgfold="${s.key}" aria-expanded="${isOpen(s.key)}">${esc(s.label)}</button>`)
+      .join('')}</div>
+    ${sections
+      .filter((s) => isOpen(s.key))
+      .map((s) => `<div class="lg-section"><h3>${esc(s.label.split(' — ')[0])}</h3>${s.body}</div>`)
+      .join('')}`
   );
-  const costs = panel.querySelector('details.lg-cost');
-  if (costs) costs.open = open;
+  $$('[data-lgfold]', panel).forEach((b) =>
+    b.addEventListener('click', () => {
+      (current.open ||= {})[b.dataset.lgfold] = !isOpen(b.dataset.lgfold);
+      renderWatchLogistics();
+    })
+  );
 }
 
 /* Fetched with the rest of the watch's side panels, then again every minute while the page stays open. */
