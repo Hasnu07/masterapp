@@ -9,9 +9,34 @@ pg.types.setTypeParser(1700, (v) => (v === null ? null : Number(v)));
 // than letting it become a midnight in whatever zone the server runs in.
 pg.types.setTypeParser(1082, (v) => v);
 
-const ssl = /sslmode=require/.test(config.databaseUrl) ? { rejectUnauthorized: false } : undefined;
+/*
+ * TLS to a managed Postgres. DigitalOcean signs its database certificates
+ * with its own CA, so verifying one needs that CA — App Platform hands it
+ * over as ${db.CA_CERT}, read here as DATABASE_CA_CERT. Without it the link
+ * is still encrypted, only not verified.
+ *
+ * The sslmode is taken OUT of the url: node-pg reads `sslmode=require` as
+ * "verify against the system's CAs" and lets it override the ssl settings
+ * given here — the first deploy on DigitalOcean failed on exactly that
+ * (SELF_SIGNED_CERT_IN_CHAIN, 23 Oct 2026).
+ */
+export function connectionOptions(url, ca = process.env.DATABASE_CA_CERT) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return { connectionString: url };
+  }
+  const mode = u.searchParams.get('sslmode');
+  if (!mode || mode === 'disable') return { connectionString: url };
+  u.searchParams.delete('sslmode');
+  return {
+    connectionString: u.toString(),
+    ssl: ca ? { ca, rejectUnauthorized: true } : { rejectUnauthorized: false },
+  };
+}
 
-export const pool = new pg.Pool({ connectionString: config.databaseUrl, ssl, max: 10 });
+export const pool = new pg.Pool({ ...connectionOptions(config.databaseUrl), max: 10 });
 
 /*
  * A connection the database closes while it sits idle in the pool — a restart
