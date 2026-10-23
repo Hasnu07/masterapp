@@ -99,7 +99,9 @@ marks it "✎ edited here · use Chrono Key's" (unlock). On a record added here
   still lists it; restore brings it back.
 - A photo removed here keeps its row (`deleted_at`), which is what stops the
   sync copying it back.
-- `SYNC=off` is the switch-over: nothing is copied any more.
+- `SYNC=off` is the switch-over: nothing is copied any more — not by the
+  timer, and not from the Import page (its buttons and the CSV upload answer
+  409). The command line (`npm run import`) still can, deliberately.
 
 Source strengths (`apply.js`): **own** replaces (Chrono Key's product list for
 purchase and sale; Chrono Key's euro figures; the vault's B2B, B2C and Chrono24 — its `b2chronoFinal`), **fill**
@@ -332,7 +334,13 @@ bucket), else `DATA_DIR` (Railway volume).
 
 Only paths on Chrono Key's own host are fetched (a `data:` placeholder or an
 off-host url out of a scraped page is refused); the vault's key goes only to
-the worker's own origin.
+the worker's own origin. A vault photo url is fetched only from a public
+address (not loopback, a private network or the metadata service) unless it
+is on the worker's own origin, with the vault's timeout and at most 50 MB;
+redirects are followed by hand, each hop checked, the key never carried off
+the worker's origin.
+Chrono Key's sign-in follows a redirect only on Chrono Key's own host — the
+client's cookies go with it.
 
 **The same picture comes many times.** Chrono Key's galleries and the vault
 both list a picture more than once under different file names, and the two
@@ -385,8 +393,11 @@ viewer (reads), editor (+ add/edit/delete watches and photos), admin
 (+ accounts, imports). The first admin comes from `ADMIN_EMAIL` /
 `ADMIN_PASSWORD` when there are no accounts. scrypt hashes, 30-day sessions
 (stored hashed), HttpOnly SameSite=Lax cookie, and every non-GET API call must
-carry `X-Requested-With: masterapp`. Ten sign-in attempts per ten minutes per
-address. An admin cannot demote or disable themselves.
+carry `X-Requested-With: masterapp`. Ten failed sign-ins per ten minutes per
+address AND per account. The address is `do-connecting-ip` in production:
+on App Platform `x-forwarded-for` (so `req.ip`) is DigitalOcean's ingress,
+the same for everybody — counted by it, ten wrong passwords from anyone locked
+everyone out (fixed 23 Oct 2026). An admin cannot demote or disable themselves.
 
 The console page carries a Content-Security-Policy (`server.js`,
 `PAGE_POLICY`): scripts only from the app itself, so a value that ever slipped
@@ -483,5 +494,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.
+- **Port to InvoiceWEB**: its Chrono Key client follows a sign-in redirect to
+  any host, cookies and all. masterapp's (`chronokey/client.js`, `login`) now
+  refuses one off Chrono Key's host (23 Oct 2026); the two should agree again.
 - The rest of the ERP: customers/suppliers, invoices (InvoiceWEB), payments,
   consignment, accounting.

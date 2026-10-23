@@ -1541,7 +1541,9 @@ async function showImport() {
         ${going.map(progress).join('')}
       </div>
       ${
-        admin
+        admin && !s.configured.sync
+          ? `<div class="panel"><p class="note info" style="margin:0">Sync is off (SYNC=off): masterapp is the master. Nothing is copied from Chrono Key or the vault — not by the timer, and not from this page.</p></div>`
+          : admin
           ? `<div class="panel">
         <h2>1 · Chrono Key's product list (CSV)</h2>
         <p class="sub">Export the Product List from Chrono Key and upload it here. It brings in every purchase with all its columns. Upload a newer export any time — it updates what changed.</p>

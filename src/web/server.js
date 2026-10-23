@@ -60,13 +60,29 @@ const PAGE_POLICY = [
   "frame-ancestors 'none'",
 ].join('; ');
 
-/* Sign-in attempts per address: ten in ten minutes. */
+/*
+ * Failed sign-ins: ten in ten minutes per address, and per account — the
+ * account limit holds whatever the address is.
+ *
+ * The address: on App Platform x-forwarded-for carries DigitalOcean's ingress,
+ * not the person (DigitalOcean's docs), so req.ip was the same for everybody
+ * and ten wrong passwords from anyone locked everyone out. The person's
+ * address is in do-connecting-ip.
+ */
 const attempts = new Map();
-function tooMany(ip) {
+const clientAddress = (req) => (config.production && req.get('do-connecting-ip')) || req.ip;
+function recent(key, now) {
+  const list = (attempts.get(key) || []).filter((t) => now - t < 10 * 60_000);
+  if (list.length) attempts.set(key, list);
+  else attempts.delete(key);
+  return list;
+}
+const tooMany = (keys) => keys.some((k) => recent(k, Date.now()).length >= 10);
+function failed(keys) {
   const now = Date.now();
-  const list = (attempts.get(ip) || []).filter((t) => now - t < 10 * 60_000);
-  attempts.set(ip, list);
-  return list.length >= 10;
+  for (const k of keys) attempts.set(k, [...recent(k, now), now]);
+  // Addresses that never come back are dropped, so the map cannot grow for ever.
+  if (attempts.size > 10_000) for (const k of [...attempts.keys()]) recent(k, now);
 }
 
 export function createServer() {
@@ -117,10 +133,11 @@ export function createServer() {
   app.post(
     '/api/login',
     wrap(async (req, res) => {
-      if (tooMany(req.ip)) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
+      const keys = [`address ${clientAddress(req)}`, `account ${String(req.body?.email || '').trim().toLowerCase()}`];
+      if (tooMany(keys)) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
       const r = await auth.signIn(req.body?.email, req.body?.password);
       if (!r) {
-        attempts.get(req.ip).push(Date.now());
+        failed(keys);
         return res.status(401).json({ error: 'Wrong email or password' });
       }
       res.cookie(auth.COOKIE, r.token, {
@@ -487,9 +504,20 @@ export function createServer() {
     })
   );
 
+  /*
+   * SYNC=off is the switch-over: masterapp is the master, and a click on the
+   * Import page must not copy Chrono Key over it either. (The command line,
+   * `npm run import`, still can — deliberately.)
+   */
+  const syncOn = (req, res, next) =>
+    config.sync.enabled
+      ? next()
+      : res.status(409).json({ error: 'Sync is off (SYNC=off): masterapp is the master — nothing is copied from Chrono Key or the vault' });
+
   app.post(
     '/api/import/csv',
     need('admin'),
+    syncOn,
     csvUpload.single('file'),
     wrap(async (req, res) => {
       if (!req.file) return res.status(400).json({ error: 'No file was sent' });
@@ -503,6 +531,7 @@ export function createServer() {
   app.post(
     '/api/import/run',
     need('admin'),
+    syncOn,
     wrap(async (req, res) => {
       const job = String(req.body?.job || '');
       if (job.startsWith('chronokey') && !config.chronokey.configured) {
