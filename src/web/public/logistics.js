@@ -44,12 +44,23 @@ function lgWhen(v) {
 /* ── values, whatever shape the logistics app gave them ──────────── */
 
 const isFile = (v) => typeof v === 'string' && /^lgfile:\d+$/.test(v);
-const fileUrl = (v, thumb) => `/api/logistics/files/${v.slice(7)}${thumb ? '?thumb=1' : ''}`;
+/*
+ * A picture or PDF still on the logistics app's worker: shown through
+ * masterapp, which copies it on first sight (the page may not load the
+ * worker's address itself, and the worker goes when the logistics app does).
+ */
+const isWorkerFile = (v) => typeof v === 'string' && Boolean(state.meta?.logistics?.photoPrefix) && v.startsWith(state.meta.logistics.photoPrefix);
+const fileUrl = (v, thumb) =>
+  isWorkerFile(v)
+    ? `/api/logistics/worker-file?u=${encodeURIComponent(v)}${thumb ? '&thumb=1' : ''}`
+    : `/api/logistics/files/${v.slice(7)}${thumb ? '?thumb=1' : ''}`;
+const isPicture = (v) => isFile(v) || isWorkerFile(v);
+const picture = (v, cls = '') => `<a href="${esc(fileUrl(v))}" target="_blank" rel="noopener"><img${cls ? ` class="${cls}"` : ''} src="${esc(fileUrl(v, true))}" alt="" loading="lazy"></a>`;
 const TIME_KEY = /(^ts$|At$|^date$|Date$|^eta$)/;
 
 function lgValue(v, key = '', depth = 0) {
   if (v === null || v === undefined || v === '') return '<span class="blank">—</span>';
-  if (isFile(v)) return `<a href="${fileUrl(v)}" target="_blank" rel="noopener"><img class="lg-pic1" src="${fileUrl(v, true)}" alt=""></a>`;
+  if (isPicture(v)) return picture(v, 'lg-pic1');
   if (v === 'lgfile:unreadable') return '<span class="blank">a picture that could not be read</span>';
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (TIME_KEY.test(key) && (typeof v === 'number' || /^\d{4}-\d{2}-\d{2}/.test(String(v)) || /^\d{10,13}$/.test(String(v)))) return esc(lgWhen(v));
@@ -60,8 +71,8 @@ function lgValue(v, key = '', depth = 0) {
   }
   if (Array.isArray(v)) {
     if (!v.length) return '<span class="blank">none</span>';
-    if (v.every((x) => isFile(x) || x === 'lgfile:unreadable')) {
-      return `<div class="lg-pics">${v.filter(isFile).map((x) => `<a href="${fileUrl(x)}" target="_blank" rel="noopener"><img src="${fileUrl(x, true)}" alt="" loading="lazy"></a>`).join('')}</div>`;
+    if (v.every((x) => isPicture(x) || x === 'lgfile:unreadable')) {
+      return `<div class="lg-pics">${v.filter(isPicture).map((x) => picture(x)).join('')}</div>`;
     }
     if (v.every((x) => x === null || typeof x !== 'object')) return v.map((x) => lgValue(x, key, depth + 1)).join(', ');
     if (depth > 2) return `<span class="blank">${v.length} entries</span>`;
