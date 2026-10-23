@@ -66,6 +66,15 @@ export const config = {
     },
   },
 
+  /* Exchange rates for the converter under every price. Public, no key; the
+     same two sources InvoiceWEB uses. Held a minute. */
+  rates: {
+    liveUrl: process.env.RATES_LIVE_URL || 'https://api.coinbase.com/v2/exchange-rates?currency=USD',
+    dailyUrl: process.env.RATES_DAILY_URL || 'https://open.er-api.com/v6/latest/USD',
+    ttlMs: Number(process.env.RATES_TTL_MS || 60_000),
+    timeoutMs: Number(process.env.RATES_TIMEOUT_MS || 8_000),
+  },
+
   /*
    * The copy from Chrono Key and the vault keeps running until the switch-over.
    * SYNC=off stops it (the day masterapp becomes the master). The interval is

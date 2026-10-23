@@ -84,6 +84,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 
 /* the watch page */
 .watch-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+.figures { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 12px; }
+.figures > div > span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
+.figures b { font-size: 16px; font-weight: 600; }
+.sold-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.sold-row .count { margin: 0; white-space: nowrap; }
+.desc { margin: 10px 0 0; color: var(--muted); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .watch-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .gallery .main { aspect-ratio: 1/1; background: #f1ede6; border-radius: var(--radius); display: grid; place-items: center; overflow: hidden; position: relative; }
 .gallery .main img { width: 100%; height: 100%; object-fit: contain; background: #f1ede6; }
@@ -111,14 +117,6 @@ dl.fields dd { margin: 0; overflow-wrap: anywhere; }
 .pay label { font-size: 12px; }
 .sticky-save { position: sticky; bottom: 0; background: rgba(246,243,238,.96); padding: 10px 0; display: flex; gap: 10px; border-top: 1px solid var(--line); margin-top: 12px; }
 
-details.src { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fcfbf8; }
-details.src summary { cursor: pointer; font-weight: 600; }
-.kv { display: grid; grid-template-columns: minmax(120px, 40%) 1fr; gap: 3px 12px; font-size: 13px; margin-top: 8px; }
-.kv div:nth-child(odd) { color: var(--muted); }
-.events { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-.events li { padding: 8px 0; border-bottom: 1px solid var(--line); }
-.events .when { color: var(--muted); }
-.events .ch { color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
 
 table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.list th, table.list td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -165,6 +163,33 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
   .brand { order: 1; } .who { order: 2; } nav { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; }
   nav a { white-space: nowrap; padding: 6px 10px; }
 }
+
+/* The converter under every price (fxchip.js), as in InvoiceWEB. BLUE, and
+   only the converter wears it. The arrow is a pseudo-element, so it adds no
+   text to the price it sits beside. */
+.fx-p { white-space: nowrap; }
+.fx-chip { display: inline-block; vertical-align: middle; width: 16px; height: 16px; margin-left: 4px;
+  border-radius: 50%; background: #E8F0FC; border: 1px solid #C9DAF6; cursor: pointer; position: relative;
+  line-height: 0; font-size: 0; transform: translateY(-1px); }
+.fx-chip::before { content: ''; position: absolute; left: 50%; top: 55%; transform: translate(-50%, -50%);
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #2D6BCF; }
+.fx-chip:hover { background: #D6E4FA; border-color: #2D6BCF; }
+.fx-chip:focus-visible { outline: 2px solid #2D6BCF; outline-offset: 2px; }
+.fx-pop { position: fixed; z-index: 400; width: min(300px, calc(100vw - 32px)); padding: 12px 14px;
+  background: var(--card); border: 1px solid #C9DAF6; border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0,0,0,.12); font: 13.5px/1.45 var(--sans); color: var(--ink); text-transform: none; letter-spacing: 0; }
+.fx-pop-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px;
+  font-family: var(--serif); font-size: 18px; }
+.fx-pop-x { border: 0; background: none; font-size: 18px; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px 4px; }
+.fx-pop-list { display: grid; gap: 3px; padding: 6px 0 8px; border-bottom: 1px solid var(--line); }
+.fx-pop-row { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.fx-pop-row span { color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.fx-pop-bar { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; margin-top: 10px; }
+.fx-pop-bar input, .fx-pop-bar select { min-width: 0; padding: 6px 8px; font: inherit; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
+.fx-pop-bar span { color: var(--muted); }
+.fx-pop-out { margin-top: 8px; font-family: var(--serif); font-size: 19px; color: #2D6BCF; font-variant-numeric: tabular-nums; }
+.fx-pop-foot { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -182,5 +207,6 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
 </header>
 <main id="app"></main>
 <script src="/app.js"></script>
+<script src="/fxchip.js"></script>
 </body>
 </html>

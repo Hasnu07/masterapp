@@ -235,7 +235,7 @@ export async function startVault({ token = 'vault-key' } = {}) {
   const state = () => ({
     dubaiStock: [
       { id: 'v-1668', stockNumber: '1668', status: 'current', brand: 'Rolex', watchModel: 'Lady-Datejust', dial: 'Pink diamonds',
-        caseDiameter: '31mm', b2bFinal: { usd: 13500 }, b2cFinal: { usd: 0, aed: 52000 },
+        caseDiameter: '31mm', b2bFinal: { usd: 13500 }, b2cFinal: { usd: 0, aed: 52000 }, b2chronoFinal: { usd: 14900 },
         photos: [`${base}/photos/v1.jpg`, `${base}/photos/v3.jpg`] },
       { id: 'v-1800', stockNumber: '1800', status: 'current', brand: 'Audemars Piguet', watchModel: 'Royal Oak',
         watchReference: '15510ST', watchSerial: 'AP1800', b2bPrice: 41000, b2bCurrency: 'USD', b2cPrice: 1, b2cCurrency: 'ask first',

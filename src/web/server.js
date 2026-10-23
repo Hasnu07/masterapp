@@ -4,6 +4,7 @@ import multer from 'multer';
 import { config, ROOT } from '../config.js';
 import * as auth from '../auth/index.js';
 import * as watches from '../watches/index.js';
+import * as rates from '../rates/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -181,6 +182,34 @@ export function createServer() {
       );
       res.json({ related: rows });
     })
+  );
+
+  /* Rates for the blue ▾ converter beside every price (public/fxchip.js). */
+  app.get(
+    '/api/rates',
+    need('viewer'),
+    wrap(async (req, res) => {
+      try {
+        const r = await rates.getRates();
+        res.json({
+          base: 'USD',
+          rates: r.rates,
+          currencies: rates.CURRENCIES,
+          sourceName: r.sourceName,
+          kind: r.kind, // "live" or "daily" — printed, so a daily fix is never read as live
+          cachedAt: r.cachedAt,
+          stale: r.stale,
+        });
+      } catch (err) {
+        res.status(502).json({ error: err.message });
+      }
+    })
+  );
+
+  app.get(
+    '/api/watches/:id/sold-for',
+    need('viewer'),
+    wrap(async (req, res) => res.json(await watches.soldFor(req.params.id)))
   );
 
   app.patch(

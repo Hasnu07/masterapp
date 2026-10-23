@@ -12,7 +12,7 @@ import { startRun, finishRun, progressRun } from '../listimport.js';
  * same watch — InvoiceWEB checked twelve numbers present in both against the
  * serial, twelve out of twelve. So the stock number is the join.
  *
- * What the vault is the authority for: B2B and B2C prices. Everything else it
+ * What the vault is the authority for: B2B, B2C and Chrono24 prices. Everything else it
  * holds (dial, size, movement, accessories) only fills a field Chrono Key left
  * blank. A watch that is ONLY in the vault becomes a watch here too, with its
  * place and status from the list it sits in.
@@ -122,6 +122,7 @@ export const photosOf = (w) => [
 function fieldsOf(w, list) {
   const b2b = vaultPrice(w, 'b2b');
   const b2c = vaultPrice(w, 'b2c');
+  const c24 = vaultPrice(w, 'b2chrono');
   const acc = text(w.accessoriesPresent);
   return {
     own: {
@@ -129,6 +130,8 @@ function fieldsOf(w, list) {
       b2b_currency: b2b?.currency ?? '',
       b2c_price: b2c?.price ?? null,
       b2c_currency: b2c?.currency ?? '',
+      chrono24_price: c24?.price ?? null,
+      chrono24_currency: c24?.currency ?? '',
     },
     fill: {
       brand: text(w.brand),

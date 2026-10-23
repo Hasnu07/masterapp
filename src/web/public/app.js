@@ -331,6 +331,15 @@ function renderWatch() {
         <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
           ${w.location ? `<span>${esc(w.location)}</span>` : ''}
           <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
+        <div class="figures">${[
+          ['Purchase', w.purchase_price, w.purchase_currency],
+          ['B2B', w.b2b_price, w.b2b_currency],
+          ['B2C', w.b2c_price, w.b2c_currency],
+          ['Chrono24', w.chrono24_price, w.chrono24_currency],
+        ]
+          .map(([k, n, cur]) => `<div><span>${k}</span><b>${money(n, cur) || '<span class="blank">—</span>'}</b></div>`)
+          .join('')}</div>
+        ${w.description ? `<p class="desc">${esc(w.description)}</p>` : ''}
       </div>
       <div class="row">
         ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
@@ -341,18 +350,16 @@ function renderWatch() {
     <div class="watch-layout">
       <div class="stack">
         <div class="panel gallery" id="gallery"></div>
+        <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
-        <div class="panel"><h3>Chrono Key and the Watch vault</h3><div id="sources"></div></div>
       </div>
       <div class="stack">
         <form class="panel" id="details"></form>
-        <div class="panel"><h3>History</h3><ul class="events" id="events"><li class="count">Loading…</li></ul></div>
       </div>
     </div>`;
 
   renderGallery();
   renderDetails(groups);
-  renderSources();
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
     renderWatch();
@@ -373,48 +380,12 @@ function renderWatch() {
 }
 
 async function loadSide(id) {
-  const [ev, rel] = await Promise.all([
-    api(`/api/watches/${id}/events`).catch(() => ({ events: [] })),
+  const [rel, sold] = await Promise.all([
     api(`/api/watches/${id}/related`).catch(() => ({ related: [] })),
+    api(`/api/watches/${id}/sold-for`).catch((err) => ({ error: err.message })),
   ]);
   if (current?.w.id !== id) return;
-  const label = (k) => state.meta.fields.find((f) => f.key === k)?.label || k;
-  const show = (v) => (v === null || v === '' || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
-  const words = {
-    create: 'Added',
-    update: 'Edited',
-    sync: 'Updated from',
-    delete: 'Deleted',
-    restore: 'Restored',
-    photo_add: 'Photos added',
-    photo_remove: 'Photo removed',
-    photo_order: 'Photos reordered',
-    unlock: 'Handed back to Chrono Key',
-  };
-  const src = { chronokey: 'Chrono Key', vault: 'the Watch vault', masterapp: 'masterapp', user: '' };
-  $('#events').innerHTML =
-    ev.events
-      .map((e) => {
-        const who = e.source === 'user' ? e.user_name || e.user_email || 'someone' : src[e.source] || e.source;
-        let ch = '';
-        if (e.action === 'update' || e.action === 'sync') {
-          ch = Object.entries(e.changes)
-            .map(([k, [a, b]]) => `${esc(label(k))}: ${esc(show(a))} → ${esc(show(b))}`)
-            .join('<br>');
-        } else if (e.action === 'unlock') {
-          ch = esc(label(e.changes.field));
-          if ('cleared' in e.changes) ch += ` — Chrono Key has none, so ${esc(show(e.changes.cleared))} was cleared`;
-        } else if (e.action === 'photo_add') ch = `${e.changes.count} photo${e.changes.count === 1 ? '' : 's'}`;
-        else if (e.action === 'photo_remove' && e.changes.placeholder) ch = "Chrono Key's 'no image' graphic, not a photo";
-        else if (e.action === 'photo_remove' && e.changes.duplicates) {
-          const n = e.changes.photos.length;
-          ch = `${n} photo${n === 1 ? '' : 's'} repeating another of this watch's photos`;
-        }
-        return `<li><b>${esc(words[e.action] || e.action)}</b> ${e.action === 'sync' ? '' : 'by'} ${esc(who)}
-          <span class="when">· ${esc(fmtWhen(e.at))}</span>${ch ? `<div class="ch">${ch}</div>` : ''}</li>`;
-      })
-      .join('') || '<li class="count">Nothing yet.</li>';
-
+  renderSoldFor(sold);
   const r = $('#related');
   if (rel.related.length) {
     r.hidden = false;
@@ -429,6 +400,39 @@ async function loadSide(id) {
         )
         .join('')}`;
   }
+}
+
+/*
+ * What this reference has sold for, under the photos: Chrono Key's euro
+ * figure (else the sale price as held), the vault's own figure beside it, and
+ * the examples still in stock.
+ */
+function renderSoldFor(s) {
+  const box = $('#sold-for');
+  if (!box || (!s.error && !s.reference)) return;
+  box.hidden = false;
+  if (s.error) {
+    box.innerHTML = `<h3>What it has sold for</h3><p class="count">Could not read the sales: ${esc(s.error)}</p>`;
+    return;
+  }
+  const line = (o) => {
+    const v = o.vault;
+    // A sale price with no currency, at the vault's figure, is that figure.
+    const deal = o.deal && !o.deal.currency && v && v.price === o.deal.price ? v : o.deal;
+    const main = o.eur !== null ? money(o.eur, 'EUR') : deal ? money(deal.price, deal.currency, { plain: true }) : money(v.price, v.currency);
+    const also = v && (o.eur !== null || (deal !== v && o.deal)) ? ` <span class="count">· vault: ${money(v.price, v.currency)}</span>` : '';
+    return `<div class="sold-row"><span><a href="#/watch/${o.id}"><b>${esc(o.stock_no)}</b></a>${o.self ? ' <span class="count">(this one)</span>' : ''} — ${main}${also}</span>
+      <span class="count">${esc(fmtDate(o.date))}</span></div>`;
+  };
+  const more = s.soldTotal > s.sold.length ? `${s.soldTotal} sold in all; showing the ${s.sold.length} most recent.` : '';
+  const stock = s.inStock.length
+    ? `${s.inStock.length} still in stock: ${s.inStock
+        .map((o) => `<a href="#/watch/${o.id}">${esc(o.stock_no)}</a>${o.self ? ' (this one)' : ''}`)
+        .join(', ')}.`
+    : 'None in stock.';
+  box.innerHTML = `<h3>What it has sold for <span class="count" style="text-transform:none;letter-spacing:0;font-weight:400">— ${esc(s.reference)}</span></h3>
+    ${s.sold.length ? s.sold.map(line).join('') : '<p class="count">No sale of this reference on record.</p>'}
+    <p class="count" style="margin-bottom:0">${[more ? esc(more) : '', stock].filter(Boolean).join(' ')}</p>`;
 }
 
 /* ── photos ──────────────────────────────────────────────────────── */
@@ -759,37 +763,6 @@ function readForm(form, w) {
   return patch;
 }
 
-function renderSources() {
-  const { w } = current;
-  const box = $('#sources');
-  const parts = [];
-  for (const ck of w.sources.chronokey) {
-    const sections = Object.entries(ck.sections || {})
-      .map(
-        ([name, fields]) =>
-          `<div style="margin-top:8px"><b style="font-size:13px">${esc(name)}</b><div class="kv">${Object.entries(fields)
-            .map(([k, v]) => `<div>${esc(k)}</div><div>${esc(v)}</div>`)
-            .join('')}</div></div>`
-      )
-      .join('');
-    const tags = Object.entries(ck.tags || {})
-      .map(([k, v]) => `${v ? '✓' : '✗'} ${esc(k)}`)
-      .join(' · ');
-    parts.push(`<details class="src"><summary>Chrono Key's page${ck.ck_id ? ` (id ${ck.ck_id})` : ''}</summary>
-      <p class="count">Read ${esc(fmtWhen(ck.fetched_at)) || 'not yet'}. Prices on this page are labelled £ by Chrono Key and are euros.</p>
-      ${ck.currencyNote ? `<p><b>Note:</b> ${esc(ck.currencyNote)}</p>` : ''}${tags ? `<p>${tags}</p>` : ''}${sections || '<p class="count">The page has not been read yet — only the product list.</p>'}</details>`);
-  }
-  for (const v of w.sources.vault) {
-    const rows = Object.entries(v.data || {})
-      .filter(([, val]) => val !== '' && val !== null && !(Array.isArray(val) && !val.length))
-      .map(([k, val]) => `<div>${esc(k)}</div><div>${esc(typeof val === 'object' ? JSON.stringify(val) : val)}</div>`)
-      .join('');
-    parts.push(`<details class="src"><summary>Watch vault record (${esc(v.list)})</summary>
-      <p class="count">Read ${esc(fmtWhen(v.fetched_at))}.</p><div class="kv">${rows}</div></details>`);
-  }
-  box.innerHTML = parts.join('<div style="height:8px"></div>') || '<p class="count">Added in masterapp — neither system holds it.</p>';
-}
-
 /* ── new watch ────────────────────────────────────────────────────── */
 
 function showNew() {
@@ -923,7 +896,7 @@ async function showImport() {
       <div class="panel">
         <h2>3 · The Watch vault</h2>
         ${s.configured.vault ? '' : '<p class="note">Not configured — set VAULT_TOKEN (the worker’s WORKER_TOKEN) on the server.</p>'}
-        <p class="sub">Brings in B2B and B2C prices, the vault's photos, and watches only the vault holds.</p>
+        <p class="sub">Brings in B2B, B2C and Chrono24 prices, the vault's photos, and watches only the vault holds.</p>
         <button class="btn gold" data-job="vault">Import the Watch vault</button>
       </div>`
           : ''

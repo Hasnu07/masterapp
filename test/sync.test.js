@@ -167,6 +167,8 @@ test('the vault adds prices, its photos and the watches only it holds', async ()
   assert.equal(a.b2b_currency, 'USD');
   assert.equal(a.b2c_price, 52000, 'a zero in the final prices is skipped, not taken');
   assert.equal(a.b2c_currency, 'AED');
+  assert.equal(a.chrono24_price, 14900);
+  assert.equal(a.chrono24_currency, 'USD');
   assert.equal(a.dial, 'Pink', "Chrono Key's value is not replaced by the vault's");
   assert.equal(a.location, 'Dubai');
   const vp = (await photos(a.id)).filter((p) => p.source === 'vault');

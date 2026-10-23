@@ -7,8 +7,8 @@ changed what.
 - **Inventory**: search by stock number, reference, serial, brand, model,
   supplier or client; filter by status, place and brand.
 - **A watch**: every field, grouped; edit any of them; add photos by dropping,
-  pasting or picking them, reorder, caption, remove; the full history; what
-  Chrono Key and the vault hold for it; the same watch under its other stock
+  pasting or picking them, reorder, caption, remove; what the reference has
+  sold for and which are still in stock; the same watch under its other stock
   numbers.
 - **Import**: upload Chrono Key's Product List export, read each watch's page
   and photos live, import the Watch vault. Chrono Key stays the master until

@@ -1,5 +1,5 @@
 import { query, tx } from '../db/index.js';
-import { FIELDS, FIELD, cleanValue, displayTitle } from './fields.js';
+import { FIELDS, FIELD, cleanValue, displayTitle, parseMoney } from './fields.js';
 import { savePhoto, storage, fingerprint, dhashDistance, samePicture } from '../storage/index.js';
 import { leftBlank } from '../import/productlist.js';
 import { isPlaceholder } from '../import/chronokey/parse.js';
@@ -146,50 +146,76 @@ export async function getWatch(id) {
   const w = rows[0];
   if (!w) throw notFound();
 
-  const [photos, ck, vault] = await Promise.all([
-    query(
-      `SELECT id, caption, source, width, height, bytes, content_type, sort, created_at
-         FROM watch_photos WHERE watch_id = $1 AND deleted_at IS NULL ORDER BY sort, id`,
-      [w.id]
-    ),
-    query('SELECT ck_id, stock_no, detail, list_row, detail_at AS fetched_at FROM ck_records WHERE watch_id = $1', [w.id]),
-    query('SELECT vault_id, list, data, fetched_at FROM vault_records WHERE watch_id = $1', [w.id]),
-  ]);
+  const photos = await query(
+    `SELECT id, caption, source, width, height, bytes, content_type, sort, created_at
+       FROM watch_photos WHERE watch_id = $1 AND deleted_at IS NULL ORDER BY sort, id`,
+    [w.id]
+  );
 
-  return {
-    ...w,
-    display_title: displayTitle(w),
-    photos: photos.rows,
-    sources: {
-      // What Chrono Key and the vault hold for it, shown beside our record so a
-      // difference can be seen. Photo urls are left out: they are copied.
-      chronokey: ck.rows.map((r) => ({
-        ck_id: r.ck_id,
-        fetched_at: r.fetched_at,
-        title: r.detail?.title || '',
-        status: r.detail?.status || '',
-        category: r.detail?.category || '',
-        currencyNote: r.detail?.currencyNote || '',
-        tags: r.detail?.tags || {},
-        sections: r.detail?.sections || {},
-      })),
-      vault: vault.rows.map((r) => ({
-        vault_id: r.vault_id,
-        list: r.list,
-        fetched_at: r.fetched_at,
-        data: stripPhotoUrls(r.data),
-      })),
-    },
-  };
+  return { ...w, display_title: displayTitle(w), photos: photos.rows };
 }
 
-function stripPhotoUrls(data) {
-  const out = {};
-  for (const [k, v] of Object.entries(data || {})) {
-    if (/photos?$/i.test(k) || typeof v === 'string' && v.startsWith('data:')) continue;
-    out[k] = v;
-  }
-  return out;
+/**
+ * What this watch's REFERENCE has sold for, newest first, and which examples
+ * are still in stock — the same answer InvoiceWEB's "What it has sold for"
+ * gives, read from our own copy instead of Chrono Key's pages.
+ *
+ * Each sale carries Chrono Key's euro figure, the sale price as held, and the
+ * vault's own sold figure (with its currency) beside them. A sale with no
+ * figure anywhere is counted but not listed: "sold, price unknown" reads as a
+ * free watch at a glance.
+ */
+export async function soldFor(id, limit = 10) {
+  const { rows } = await query('SELECT id, reference FROM watches WHERE id = $1', [Number(id) || 0]);
+  const w = rows[0];
+  if (!w) throw notFound();
+  const reference = w.reference.trim();
+  if (!reference) return { reference, sold: [], soldTotal: 0, inStock: [] };
+
+  const { rows: same } = await query(
+    `SELECT w.id, w.stock_no, w.status, w.sale_date, w.sale_price, w.sale_currency, w.sale_price_eur,
+            v.data->>'soldPrice' AS vault_price, v.data->>'soldCurrency' AS vault_currency, v.data->>'soldDate' AS vault_date
+       FROM watches w
+       LEFT JOIN LATERAL (
+         SELECT data FROM vault_records r
+          WHERE r.watch_id = w.id AND r.list = 'soldStocks'
+          ORDER BY r.fetched_at DESC LIMIT 1
+       ) v ON true
+      WHERE lower(w.reference) = lower($1) AND w.deleted_at IS NULL`,
+    [reference]
+  );
+
+  const vaultSold = (r) => {
+    const n = parseMoney(r.vault_price);
+    // Under 100 is the vault's placeholder (it writes 1), not a sale.
+    return Number.isFinite(n) && n >= 100 && /^[A-Za-z]{3,4}$/.test(r.vault_currency || '')
+      ? { price: n, currency: r.vault_currency.toUpperCase() }
+      : null;
+  };
+  const sold = same
+    .filter((r) => r.status === 'sold' || r.sale_date)
+    .map((r) => ({
+      id: r.id,
+      stock_no: r.stock_no,
+      self: r.id === w.id,
+      date: r.sale_date || (/^\d{4}-\d{2}-\d{2}$/.test(r.vault_date || '') ? r.vault_date : null),
+      eur: r.sale_price_eur,
+      deal: r.sale_price === null ? null : { price: r.sale_price, currency: r.sale_currency },
+      vault: vaultSold(r),
+    }));
+  const priced = sold
+    .filter((s) => s.eur !== null || s.deal || s.vault)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || Number(b.stock_no) - Number(a.stock_no));
+
+  return {
+    reference,
+    sold: priced.slice(0, limit),
+    soldTotal: sold.length,
+    inStock: same
+      .filter((r) => r.status === 'in_stock' || r.status === 'reserved')
+      .map((r) => ({ id: r.id, stock_no: r.stock_no, status: r.status, self: r.id === w.id }))
+      .sort((a, b) => Number(a.stock_no) - Number(b.stock_no)),
+  };
 }
 
 export async function watchEvents(id, limit = 200) {

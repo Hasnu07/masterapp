@@ -61,6 +61,26 @@ are kept for reference only.
 - `watch_events` — every change, by whom (a user, `chronokey`, `vault`), with
   old → new values.
 
+The watch page shows neither the history nor the raw Chrono Key / vault
+records (asked 23 Oct 2026). Both are still kept: the history at
+`/api/watches/:id/events`, the raw records in the tables.
+
+The watch page's header shows the purchase price, B2B, B2C and Chrono24 and
+Chrono Key's description; under the photos, **what the reference has sold
+for** (`soldFor`, `/api/watches/:id/sold-for`) — InvoiceWEB's box of the same
+name, but read from our own copy, so it costs Chrono Key nothing: Chrono Key's
+euro figure (else the sale price held), the vault's own sold figure beside it,
+newest ten, and the examples still in stock.
+
+**The blue ▾ converter beside every price** (asked 23 Oct 2026) is
+InvoiceWEB's, ported: `public/fxchip.js` watches the page and hangs an arrow
+after any amount written WITH its currency (`€16,800`, `AED 71,000`,
+`$110,000`); a bare figure ("currency not stated") gets none — converting it
+would be guessing. Rates: `src/rates` → `/api/rates` (Coinbase live, else
+open.er-api daily; held a minute; a stale copy says so). No Converter tab
+here, so the popup has no "Open converter". If InvoiceWEB's changes, port it
+again rather than letting the two drift.
+
 **One watch record = one STOCK NUMBER = one purchase.** The same physical
 watch bought back and sold again is two records, exactly as in Chrono Key;
 `ck_product_id` (Chrono Key's "Product ID") links them, and the watch page
@@ -82,7 +102,7 @@ marks it "✎ edited here · use Chrono Key's" (unlock). On a record added here
 - `SYNC=off` is the switch-over: nothing is copied any more.
 
 Source strengths (`apply.js`): **own** replaces (Chrono Key's product list for
-purchase and sale; Chrono Key's euro figures; the vault's B2B/B2C), **fill**
+purchase and sale; Chrono Key's euro figures; the vault's B2B, B2C and Chrono24 — its `b2chronoFinal`), **fill**
 only fills a blank (the detail page's spec; the vault's spec, place and
 status). A currency is never CLEARED by a source that simply does not state
 one.
