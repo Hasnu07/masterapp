@@ -29,6 +29,8 @@ src/
   import/listimport.js      the list → ck_records + watches
   import/chronokey/         client (ported), page parsers, sync
   import/vault/sync.js      the Watch vault → watches
+  import/logistics/sync.js  the logistics app (same worker document) → logistics_items
+  logistics/                its lists (kinds.js), "right now" / history / costs (situation.js), the API's reads and edits
   import/jobs.js            the timer, and the one-job-at-a-time lock
   web/server.js             the API
   web/public/               the console — no build step, served raw
@@ -269,6 +271,82 @@ method, description, payment copy. `src/expenses`,
   is retried a day later, not never. First run on the live site: ~915 pages
   over the first five passes.
 
+## Logistics (24 Oct 2026)
+
+Asked for: copy the logistics app (Purosangue Watches Logistics, repo
+`11muhammadharis11-cloud/purosangue-watches`, private) into masterapp, with
+editing — "we all will switch to the masterapp as whole … no one will use
+either the logistic app or watch vault or even chronokey". Until then
+masterapp copies it, the way it copies Chrono Key. `src/logistics`,
+`import/logistics/sync.js`, migration 009.
+
+- **Its whole state is ONE JSON document** on the puro-sync worker — the
+  same `/api/state` the vault sync reads for its five stock lists. One
+  download per pass serves both steps (`fetchState({ reuse })`). About 35
+  lists: shipments, incomings, londonStock / dubaiStock / hkStock /
+  safeStock / checkoutStock / hkSituation, readyForDelivery, soldStocks,
+  personTrips, kashanPlans, thirdPartyMovers / thirdPartyShipments,
+  logisticCosts, transactions, accCollect / accGive, externalPolish,
+  driverDeliveries, clients, activity … (`src/logistics/kinds.js` names
+  them; a list it does not know yet is copied too, under its own name).
+- **Kept as documents, one row per record** (`logistics_items.data` jsonb),
+  not a table per list: the shapes keep changing. Same three layers:
+  `logistics_records` (as read), `logistics_items` (ours, `locked_fields` =
+  top-level keys edited here), `logistics_events`. Pictures inside records
+  (inline base64 — 90% of the document's bytes) are stored once each in
+  `logistics_files` and the record keeps `lgfile:<id>`; the worker's own
+  `/photos/` are copied too, a hundred a pass — the worker goes when the app
+  does. Served only behind the sign-in (`/api/logistics/files/:id`).
+- **Its `settings` are never copied**: they hold Chrono Key's username and
+  password, FedEx and AI keys, the worker's key and the vault PIN. Fields
+  that look like secrets are dropped at any depth (`isSecret`).
+- Same rules as the other copies: the app wins until the switch-over except
+  a field edited here; a record it drops is deleted softly and comes back
+  with it; a person's deletion stands; a list losing more than 3% (and ten)
+  at once is refused; `activity` (the app keeps its last 200 lines) never
+  mirrors a deletion. Never written back.
+- **About a minute behind, not fifteen**: the worker's `/api/version` (a few
+  bytes) is checked every `LOGISTICS_POLL_SEC` (60) and the document read
+  again when it moved; unchanged records are skipped by hash, and a pass
+  that found nothing new leaves no `import_runs` row. `LOGISTICS_SYNC` is
+  its own switch and follows `SYNC` when unset.
+- **Stock numbers join everything** (`stock_nos`, GIN-indexed): split on
+  `, ; newline` (the app's own rule), "-" and "SHIP-…" are no watch, and a
+  trip names its watches by ROW ids with a list prefix (`lon-`, `dubai-`,
+  `hk-`, `inc-`, `sold-`, `ready-`). Clients are mostly typed names there;
+  only transactions and shipments carry client ids — not linked to our
+  clients (by id only, never by name).
+- **"Right now" on the watch page** (`situation.now`): sold (and delivered)
+  → sold, waiting for delivery → checked out → in a place (London, Dubai,
+  Hong Kong, the safe — a client's), maybe on consignment or at polish → the
+  HK list → on its way in; and on top, what is moving it — a shipment not
+  delivered (the carrier's stage first: FedEx's codes, then the words — the
+  app's own `shpStageFrom`), a mover, a trip, a driver, accessories still to
+  give or collect. Under the photos: its logistics history, what moving it
+  cost, its records. Refreshed every minute while open. **Tracking is only as
+  fresh as the logistics app's open tabs**: its worker's cron does not save
+  carrier results into the document.
+- **Costs = the app's own `costsForStock`, line for line** — logistic costs
+  split evenly over the watches they name (a trip's lines counted with the
+  trip), a shipment's own cost unless a cost line stands for it, trip lines
+  split over its watches, the purchase from the incoming. Checked on the
+  June snapshot: all 172 watches equal to the app's function run on the same
+  data. Amounts stay in their own currency.
+- **The console**: one Logistics entry in the menu; its tabs across the top
+  (Overview first), a tab's lists in a row under them. Every record has its
+  page: its fields (typed ones with proper controls, the rest as plain
+  fields), its lists and pictures, its history, edit / delete / restore /
+  "use the logistics app's".
+- First copy of the June snapshot (on a stand-in worker): 699 records, 18
+  lists, 59 pictures. `npm run import -- logistics` runs it by hand.
+- **Found in the logistics app, for its owner** (not ours to fix): its
+  worker key is written in its public page (`index.html:2445`), and its
+  settings — with the passwords above — travel in the document, so anyone
+  who loads that page can read and overwrite everything. Also: cancelling an
+  HK sale restores into the wrong list; background DHL tracking never saves;
+  deliveredAt is milliseconds or a date string; Kashan-plan watches drop out
+  of Movement (ids without a prefix); vault notifications can revert a value.
+
 ## Chrono Key's product list — read it right
 
 Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):
@@ -394,7 +472,10 @@ viewer (reads), editor (+ add/edit/delete watches and photos), admin
 `ADMIN_PASSWORD` when there are no accounts. scrypt hashes, 30-day sessions
 (stored hashed), HttpOnly SameSite=Lax cookie, and every non-GET API call must
 carry `X-Requested-With: masterapp`. Ten failed sign-ins per ten minutes per
-address AND per account. The address is `do-connecting-ip` in production:
+address, and per account at each address (three while that account is failing
+from everywhere) — never one lock on a whole account, which let anybody keep
+its owner out (fixed 24 Oct 2026). Each attempt is counted before its password
+is checked, so a burst sent at once gets no more. The address is `do-connecting-ip` in production:
 on App Platform `x-forwarded-for` (so `req.ip`) is DigitalOcean's ingress,
 the same for everybody — counted by it, ten wrong passwords from anyone locked
 everyone out (fixed 23 Oct 2026). An admin cannot demote or disable themselves.

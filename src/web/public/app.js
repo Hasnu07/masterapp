@@ -109,7 +109,7 @@ function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
   const [, page, id] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   menu(false);
   window.scrollTo(0, 0);
@@ -119,6 +119,9 @@ function route() {
   if (page === 'client' && id) return showClient(Number(id));
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
   if (page === 'expense' && id) return showExpense(Number(id));
+  if (page === 'logistics') return showLogistics(id);
+  if (page === 'lg' && id) return showLogisticsItem(Number(id));
+  if (page === 'lg-new' && id) return showNewLogisticsItem(id);
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -388,9 +391,11 @@ async function showWatch(id, { keepEdit = false } = {}) {
     $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/">Back to the inventory</a>`;
     return;
   }
-  current = { w, selected: current?.w?.id === w.id ? current.selected : 0, editing: keepEdit && current?.editing };
+  const same = current?.w?.id === w.id;
+  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, logistics: same ? current.logistics : null };
   renderWatch();
   loadSide(w.id);
+  loadWatchLogistics(w.id);
 }
 
 function renderWatch() {
@@ -406,6 +411,7 @@ function renderWatch() {
           ${w.location ? `<span>${esc(w.location)}</span>` : ''}
           <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
         ${statusLine(w)}
+        <div id="lg-now"></div>
         <div class="figures">${[
           ['Purchase', w.purchase_price, w.purchase_currency],
           ['B2B', w.b2b_price, w.b2b_currency],
@@ -434,6 +440,7 @@ function renderWatch() {
         <div class="panel" id="wclients"></div>
         <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
+        <div class="panel" id="lg-panel" hidden></div>
       </div>
       <div class="stack">
         <form class="panel" id="details"></form>
@@ -443,6 +450,8 @@ function renderWatch() {
   renderGallery();
   renderWatchClients();
   renderDetails(groups);
+  // Kept on `current`: Edit redraws the page without reading its side panels again.
+  renderWatchLogistics();
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
     renderWatch();

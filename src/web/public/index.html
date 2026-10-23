@@ -176,6 +176,55 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
 .progress .bar i { display: block; height: 100%; background: var(--gold); border-radius: 999px; transition: width .6s ease; }
 .progress .count { margin: 2px 0 0; }
 
+/* logistics: its own tabs across the top, its lists' kinds in a row under them */
+.lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
+.lg-head h1 { margin: 0; }
+.lg-tabs { display: flex; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; border-bottom: 1px solid var(--line); margin: 10px 0 16px; }
+.lg-tabs a { white-space: nowrap; padding: 9px 13px; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 14.5px;
+  border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.lg-tabs a:hover { color: var(--ink); }
+.lg-tabs a.on { color: var(--ink); border-bottom-color: var(--gold); }
+.lg-title { font-size: 26px; margin: 4px 0 6px; }
+.lg-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.lg-subtabs .pill { font-size: 13px; }
+.lg-toolbar { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 10px; }
+@media (max-width: 640px) { .lg-toolbar { grid-template-columns: 1fr auto; } .lg-toolbar .q { grid-column: 1 / -1; } }
+.lg-now { margin-top: 10px; padding: 9px 12px; border-radius: 8px; background: var(--paper); border: 1px solid var(--line); font-size: 14px; }
+.lg-now:empty { display: none; }
+.lg-now .h { font-weight: 600; color: var(--ink); text-decoration: none; }
+.lg-now a.h:hover { text-decoration: underline; }
+.lg-now.here { background: var(--good-soft); border-color: #cfe3d6; }
+.lg-now.moving { background: var(--blue-soft); border-color: #cddcf0; }
+.lg-now.away { background: var(--warn-soft); border-color: #f0dcbf; }
+.lg-now.sold { background: var(--gold-soft); border-color: #e6d6b5; }
+.lg-ov { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.lg-tag { font-size: 12.5px; padding: 3px 9px; border-radius: 999px; background: #fff; border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+.lg-tag.warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcbf; }
+.lg-tag.problem { background: var(--bad-soft); color: var(--bad); border-color: #ecc9c5; }
+.lg-tag.moving { background: var(--blue-soft); color: var(--blue); border-color: #cddcf0; }
+.lg-tl { list-style: none; margin: 0; padding: 0; }
+.lg-tl li { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.lg-tl li:last-child { border-bottom: 0; }
+.lg-tl time { color: var(--muted); font-size: 12.5px; }
+.lg-tl .d { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.lg-line { display: flex; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; font-size: 14px; }
+.lg-line:last-child { border-bottom: 0; }
+.lg-line:hover { background: var(--paper); }
+.lg-stock { font-weight: 600; white-space: nowrap; }
+.lg-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.lg-pics img, .lg-pic1 { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #f0ece4; display: block; }
+.lg-pic1 { width: 84px; }
+.lg-sub > .lg-entry { padding: 6px 0 6px 10px; border-left: 2px solid var(--line); margin-bottom: 6px; }
+.lg-dl { grid-template-columns: minmax(110px, 34%) 1fr; font-size: 13.5px; }
+table.list.lg tbody tr { cursor: pointer; }
+table.list.lg tbody tr:hover { background: var(--paper); }
+table.list.lg a { text-decoration: none; color: var(--ink); }
+.chip.lg-good { background: var(--good-soft); color: var(--good); }
+.chip.lg-warn { background: var(--warn-soft); color: var(--warn); }
+.chip.lg-blue { background: var(--blue-soft); color: var(--blue); }
+.chip.lg-bad { background: var(--bad-soft); color: var(--bad); }
+.chip.lg-muted { background: #eee; color: var(--muted); }
+
 .flash { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px;
   border-radius: 10px; z-index: 100; max-width: min(560px, calc(100vw - 32px)); box-shadow: 0 6px 24px rgba(0,0,0,.2); }
 .flash.bad { background: var(--bad); }
@@ -251,6 +300,7 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
     <a href="#/" data-nav="inventory">Inventory</a>
     <a href="#/clients" data-nav="clients">Clients</a>
     <a href="#/expenses" data-nav="expenses">Expenses</a>
+    <a href="#/logistics" data-nav="logistics">Logistics</a>
     <a href="#/new" data-nav="new" data-role="editor">New watch</a>
     <a href="#/import" data-nav="import">Import</a>
     <a href="#/users" data-nav="users" data-role="admin">Users</a>
@@ -259,6 +309,7 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
 </aside>
 <main id="app"></main>
 <script src="/app.js"></script>
+<script src="/logistics.js"></script>
 <script src="/fxchip.js"></script>
 </body>
 </html>

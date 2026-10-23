@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
@@ -7,6 +8,7 @@ import * as watches from '../watches/index.js';
 import * as rates from '../rates/index.js';
 import * as clients from '../clients/index.js';
 import * as expenses from '../expenses/index.js';
+import * as logistics from '../logistics/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -61,8 +63,18 @@ const PAGE_POLICY = [
 ].join('; ');
 
 /*
- * Failed sign-ins: ten in ten minutes per address, and per account — the
- * account limit holds whatever the address is.
+ * Failed sign-ins, over the last ten minutes:
+ *  - ten from one address, and that address waits;
+ *  - per account, counted at each address — never one count for the whole
+ *    account. A whole-account count let anybody who knew an email (the
+ *    admin's) keep its owner out, right password and all, with ten wrong ones
+ *    every ten minutes. While an account is failing from everywhere (ten or
+ *    more in all) each address gets three tries at it instead of ten: guessing
+ *    from many addresses is slowed, and the owner, from their own, still gets in.
+ *
+ * An attempt is counted BEFORE its password is checked, and handed back when
+ * it signs in. Counted after, a burst sent at once all got past the limit
+ * while the first ten passwords were still being checked.
  *
  * The address: on App Platform x-forwarded-for carries DigitalOcean's ingress,
  * not the person (DigitalOcean's docs), so req.ip was the same for everybody
@@ -70,20 +82,51 @@ const PAGE_POLICY = [
  * address is in do-connecting-ip.
  */
 const attempts = new Map();
+const MAX_KEYS = 20_000;
 const clientAddress = (req) => (config.production && req.get('do-connecting-ip')) || req.ip;
+// Kept as a short hash: an email can be any length, and its key is held for ten minutes.
+// JSON, not a separator: an email with a newline in it must not pass for an (account, address) pair.
+const keyOf = (...parts) => crypto.createHash('sha256').update(JSON.stringify(parts)).digest('base64url');
 function recent(key, now) {
   const list = (attempts.get(key) || []).filter((t) => now - t < 10 * 60_000);
+  // Moved to the back: the front of the map is what was touched longest ago.
+  attempts.delete(key);
   if (list.length) attempts.set(key, list);
-  else attempts.delete(key);
   return list;
 }
-const tooMany = (keys) => keys.some((k) => recent(k, Date.now()).length >= 10);
-function failed(keys) {
+
+/** Counts a sign-in attempt, or returns null when it is over a limit. */
+export function reserveAttempt(address, email) {
   const now = Date.now();
-  for (const k of keys) attempts.set(k, [...recent(k, now), now]);
-  // Addresses that never come back are dropped, so the map cannot grow for ever.
-  if (attempts.size > 10_000) for (const k of [...attempts.keys()]) recent(k, now);
+  const at = keyOf('address', address);
+  const account = keyOf('account', email);
+  const here = keyOf('account', email, address);
+  if (recent(at, now).length >= 10) return null;
+  const failingEverywhere = recent(account, now).length >= 10;
+  if (recent(here, now).length >= (failingEverywhere ? 3 : 10)) return null;
+  const keys = [at, account, here];
+  // Only the newest ten matter: no limit is higher.
+  for (const k of keys) attempts.set(k, [...recent(k, now), now].slice(-10));
+  // Bounded whatever is sent: the keys touched longest ago go first.
+  for (const k of attempts.keys()) {
+    if (attempts.size <= MAX_KEYS) break;
+    attempts.delete(k);
+  }
+  return { keys, now };
 }
+
+/** A sign-in that went through is not a failure. */
+function giveBackAttempt({ keys, now }) {
+  for (const k of keys) {
+    const list = attempts.get(k) || [];
+    const i = list.lastIndexOf(now);
+    if (i >= 0) list.splice(i, 1);
+    if (!list.length) attempts.delete(k);
+  }
+}
+
+/* For the tests: what the limit is holding. */
+export const attemptKeys = () => [...attempts.keys()];
 
 export function createServer() {
   const app = express();
@@ -133,13 +176,18 @@ export function createServer() {
   app.post(
     '/api/login',
     wrap(async (req, res) => {
-      const keys = [`address ${clientAddress(req)}`, `account ${String(req.body?.email || '').trim().toLowerCase()}`];
-      if (tooMany(keys)) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
-      const r = await auth.signIn(req.body?.email, req.body?.password);
-      if (!r) {
-        failed(keys);
-        return res.status(401).json({ error: 'Wrong email or password' });
+      const held = reserveAttempt(clientAddress(req), String(req.body?.email || '').trim().toLowerCase());
+      if (!held) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
+      let r = null;
+      let wrong = false;
+      try {
+        r = await auth.signIn(req.body?.email, req.body?.password);
+        wrong = !r;
+      } finally {
+        // Kept only for a wrong password — not for one that signed in, nor a check that broke.
+        if (!wrong) giveBackAttempt(held);
       }
+      if (wrong) return res.status(401).json({ error: 'Wrong email or password' });
       res.cookie(auth.COOKIE, r.token, {
         httpOnly: true,
         sameSite: 'lax',
@@ -174,11 +222,13 @@ export function createServer() {
       clientFields: clients.CLIENT_FIELDS,
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
+      logistics: logistics.catalog(),
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
         chronokey: config.chronokey.configured,
         vault: config.vault.configured && Boolean(config.vault.token),
+        logistics: config.logistics.enabled && config.vault.configured && Boolean(config.vault.token),
       },
     });
   });
@@ -470,6 +520,67 @@ export function createServer() {
     })
   );
 
+  /* ── logistics ───────────────────────────────────────────────── */
+
+  app.get('/api/logistics/overview', need('viewer'), wrap(async (req, res) => res.json(await logistics.overview())));
+  app.get('/api/logistics/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await logistics.clientChoices() })));
+  app.get('/api/logistics/items', need('viewer'), wrap(async (req, res) => res.json(await logistics.listItems(req.query))));
+  app.get('/api/logistics/items/:id', need('viewer'), wrap(async (req, res) => res.json(await logistics.getItem(req.params.id))));
+  app.get(
+    '/api/logistics/items/:id/events',
+    need('viewer'),
+    wrap(async (req, res) => res.json({ events: await logistics.itemEvents(req.params.id) }))
+  );
+  app.post(
+    '/api/logistics/items',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await logistics.createItem(String(req.body?.kind || ''), req.body?.data || {}, req.user) }))
+  );
+  app.patch(
+    '/api/logistics/items/:id',
+    need('editor'),
+    wrap(async (req, res) => res.json(await logistics.updateItem(req.params.id, req.body || {}, req.user)))
+  );
+  app.post(
+    '/api/logistics/items/:id/unlock',
+    need('editor'),
+    wrap(async (req, res) => {
+      await logistics.unlockField(req.params.id, String(req.body?.field || ''), req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.delete(
+    '/api/logistics/items/:id',
+    need('editor'),
+    wrap(async (req, res) => {
+      await logistics.deleteItem(req.params.id, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.post(
+    '/api/logistics/items/:id/restore',
+    need('editor'),
+    wrap(async (req, res) => {
+      await logistics.deleteItem(req.params.id, req.user, { restore: true });
+      res.json({ ok: true });
+    })
+  );
+  /* Behind the sign-in: customs papers, passports and serials are in these. */
+  app.get(
+    '/api/logistics/files/:fid',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await logistics.file(req.params.fid, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      if (req.query.download === '1') res.attachment(`logistics-${Number(req.params.fid)}.${f.type.split('/')[1]}`);
+      res.send(f.buffer);
+    })
+  );
+  app.get('/api/watches/:id/logistics', need('viewer'), wrap(async (req, res) => res.json(await logistics.forWatch(req.params.id))));
+
   /* ── import ──────────────────────────────────────────────────── */
 
   app.get(
@@ -487,6 +598,7 @@ export function createServer() {
                  (SELECT count(*)::int FROM ck_records WHERE detail_at IS NOT NULL AND error IS NULL) AS ck_details,
                  (SELECT count(*)::int FROM ck_records WHERE error IS NOT NULL) AS ck_errors,
                  (SELECT count(*)::int FROM vault_records) AS vault_records,
+                 (SELECT count(*)::int FROM logistics_items WHERE deleted_at IS NULL) AS logistics_items,
                  (SELECT count(*)::int FROM watch_photos WHERE deleted_at IS NULL) AS photos,
                  (SELECT count(*)::int FROM watches WHERE deleted_at IS NULL AND purchase_price > 0
                      AND purchase_currency = '') AS currency_not_stated`),
@@ -499,6 +611,7 @@ export function createServer() {
           chronokey: config.chronokey.configured,
           vault: config.vault.configured && Boolean(config.vault.token),
           sync: config.sync.enabled,
+          logistics: config.logistics.enabled,
         },
       });
     })
@@ -509,10 +622,17 @@ export function createServer() {
    * Import page must not copy Chrono Key over it either. (The command line,
    * `npm run import`, still can — deliberately.)
    */
-  const syncOn = (req, res, next) =>
-    config.sync.enabled
+  const syncOn = (req, res, next) => {
+    // The logistics app has its own switch (LOGISTICS_SYNC): its switch-over need not be Chrono Key's.
+    if (req.body?.job === 'logistics') {
+      return config.logistics.enabled
+        ? next()
+        : res.status(409).json({ error: 'Logistics sync is off (LOGISTICS_SYNC=off): masterapp is the master for logistics' });
+    }
+    return config.sync.enabled
       ? next()
       : res.status(409).json({ error: 'Sync is off (SYNC=off): masterapp is the master — nothing is copied from Chrono Key or the vault' });
+  };
 
   app.post(
     '/api/import/csv',
@@ -537,7 +657,7 @@ export function createServer() {
       if (job.startsWith('chronokey') && !config.chronokey.configured) {
         return res.status(400).json({ error: 'Chrono Key is not configured — set CHRONOKEY_USERNAME and CHRONOKEY_PASSWORD' });
       }
-      if (job === 'vault' && !(config.vault.configured && config.vault.token)) {
+      if ((job === 'vault' || job === 'logistics') && !(config.vault.configured && config.vault.token)) {
         return res.status(400).json({ error: 'The Watch vault needs its key — set VAULT_TOKEN' });
       }
       startJob(job, req.user);

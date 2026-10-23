@@ -89,4 +89,19 @@ export const config = {
     concurrency: Number(process.env.SYNC_CONCURRENCY || 2),
     pauseMs: Number(process.env.SYNC_PAUSE_MS || 400),
   },
+
+  /*
+   * The logistics app's records (shipments, incomings, places, trips, costs …),
+   * read from the same worker document as the vault. Its own switch, because
+   * its switch-over need not be Chrono Key's: LOGISTICS_SYNC=off stops it, and
+   * it follows SYNC when not set. Besides the pass every SYNC_INTERVAL_MIN, the
+   * worker's version stamp (a few bytes) is checked every LOGISTICS_POLL_SEC
+   * and the document read again when it moved — so a watch page is about a
+   * minute behind the logistics app, not fifteen. 0 turns the check off.
+   */
+  logistics: {
+    enabled: bool(process.env.LOGISTICS_SYNC, bool(process.env.SYNC, true)),
+    pollSec: Number(process.env.LOGISTICS_POLL_SEC ?? 60),
+    photosPerPass: Number(process.env.LOGISTICS_PHOTOS_PER_PASS || 100),
+  },
 };

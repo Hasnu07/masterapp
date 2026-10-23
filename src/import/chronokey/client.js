@@ -109,8 +109,9 @@ class ChronoKeyClient {
           ? r.headers.location
           : `${base}${r.headers.location}`;
         // Every cookie this client holds goes with the next request: only to Chrono Key's own host.
+        // A 401, as a rejected password: a pass stops at the first page, not signing in again for each.
         const host = new URL(loc).host;
-        if (host !== new URL(base).host) throw new ChronoKeyError(`Chrono Key sent the sign-in to another site (${host})`);
+        if (host !== new URL(base).host) throw new ChronoKeyError(`Chrono Key sent the sign-in to another site (${host})`, 401);
         r = await this.fetch(loc);
       }
 

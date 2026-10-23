@@ -300,6 +300,12 @@ test('what a request names that is not a field is refused, never taken for a col
   const x = await editor.call('POST', '/api/expenses', { title: 'T', amount: 1, currency: 'EUR' });
   assert.equal((await editor.call('PATCH', `/api/expenses/${x.body.id}`, { valueOf: 'x' })).status, 400);
   assert.equal(await syncOn(async () => (await admin.call('POST', '/api/import/run', { job: 'constructor' })).status), 400);
+  const ids = async (sort) => {
+    const r = await editor.call('GET', `/api/watches?sort=${sort}`);
+    assert.equal(r.status, 200, `sort=${sort}`);
+    return r.body.watches.map((x) => x.id);
+  };
+  assert.deepEqual(await ids('constructor'), await ids('newest'), 'a sort that is not one of ours is the newest first');
 });
 
 test('too many files, or a mangled cookie, is a refusal — not a server error', async () => {
@@ -363,20 +369,43 @@ test('an admin cannot lock themselves out', async () => {
   assert.equal((await viewer.call('GET', '/api/watches')).status, 401, 'a disabled account is signed out at once');
 });
 
-test('failed sign-ins count per person and per account — not for everybody behind the same proxy', async () => {
-  config.production = true; // as on App Platform, where the person's address is in do-connecting-ip
-  const from = (address, email, password) =>
-    fetch(`${base}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'masterapp', 'do-connecting-ip': address },
-      body: JSON.stringify({ email, password }),
-    }).then((r) => r.status);
+/* As on App Platform, where the person's address is in do-connecting-ip. */
+async function inProduction(fn) {
+  config.production = true;
   try {
-    for (let i = 0; i < 10; i += 1) assert.equal(await from('203.0.113.1', 'ed@example.com', 'wrong-password'), 401);
-    assert.equal(await from('203.0.113.1', 'boss@example.com', 'admin-password-1'), 429, 'that address waits');
-    assert.equal(await from('203.0.113.2', 'ed@example.com', 'editor-password'), 429, 'so does that account, from anywhere');
-    assert.equal(await from('203.0.113.3', 'boss@example.com', 'admin-password-1'), 200, 'everybody else signs in');
+    return await fn();
   } finally {
     config.production = false;
   }
-});
+}
+const from = (address, email, password) =>
+  fetch(`${base}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'masterapp', 'do-connecting-ip': address },
+    body: JSON.stringify({ email, password }),
+  }).then((r) => r.status);
+
+test('failed sign-ins count per person and per account — not for everybody behind the same proxy', () => inProduction(async () => {
+  for (let i = 0; i < 10; i += 1) assert.equal(await from('203.0.113.1', 'ed@example.com', 'wrong-password'), 401);
+  assert.equal(await from('203.0.113.1', 'boss@example.com', 'admin-password-1'), 429, 'that address waits');
+  assert.equal(await from('203.0.113.2', 'ed@example.com', 'editor-password'), 200, 'the owner of that account still signs in, from their own');
+  // That account is failing from everywhere: each other address gets three tries at it, not ten.
+  for (let i = 0; i < 3; i += 1) assert.equal(await from('203.0.113.4', 'ed@example.com', 'wrong-password'), 401);
+  assert.equal(await from('203.0.113.4', 'ed@example.com', 'editor-password'), 429, 'three, from there');
+  assert.equal(await from('203.0.113.4', 'boss@example.com', 'admin-password-1'), 200, 'another account from there is not held up');
+  assert.equal(await from('203.0.113.3', 'boss@example.com', 'admin-password-1'), 200, 'everybody else signs in');
+}));
+
+test('sign-ins sent all at once get no more tries than one after another', () => inProduction(async () => {
+  const sent = await Promise.all(Array.from({ length: 30 }, () => from('198.51.100.7', 'nobody@example.com', 'wrong-password')));
+  assert.equal(sent.filter((s) => s === 401).length, 10, 'ten passwords checked');
+  assert.equal(sent.filter((s) => s === 429).length, 20, 'the rest refused before any was checked');
+}));
+
+test('the sign-in limit holds no long keys, and only so many', () => inProduction(async () => {
+  const { reserveAttempt, attemptKeys } = await import('../src/web/server.js');
+  assert.equal(await from('198.51.100.8', `${'x'.repeat(500_000)}@example.com`, 'wrong-password'), 401);
+  assert.ok(attemptKeys().every((k) => k.length < 50), 'an email is held as a short hash, however long');
+  for (let i = 0; i < 12_000; i += 1) reserveAttempt(`198.18.${i >> 8}.${i & 255}`, 'flood@example.com');
+  assert.ok(attemptKeys().length <= 20_000, `bounded: ${attemptKeys().length} keys`);
+}));

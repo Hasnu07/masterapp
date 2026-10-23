@@ -17,14 +17,15 @@ const COLUMNS = FIELDS.map((f) => f.key);
 
 /* ── reading ─────────────────────────────────────────────────────── */
 
-const SORTS = {
+// No prototype, as FIELD: the sort comes from the request and its value goes into SQL.
+const SORTS = Object.assign(Object.create(null), {
   newest: 'w.stock_no_n DESC NULLS LAST, w.id DESC',
   oldest: 'w.stock_no_n ASC NULLS LAST, w.id ASC',
   updated: 'w.updated_at DESC',
   price_high: 'w.sort_price DESC NULLS LAST',
   price_low: 'w.sort_price ASC NULLS LAST',
   brand: 'lower(w.brand), lower(w.model), w.stock_no_n DESC NULLS LAST',
-};
+});
 
 /**
  * A page of watches, with the counts the filters show.
