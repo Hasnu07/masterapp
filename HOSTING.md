@@ -18,7 +18,7 @@ Passwords never go into this repository.
 | What | Where | Notes |
 |---|---|---|
 | The app | DigitalOcean App Platform, app **`coral-app`**, Bangalore (BLR1) | 1 container, $12/month. Deploys itself on every push to `main` of `Hasnu07/masterapp`. |
-| The database | DigitalOcean Managed PostgreSQL **`masterapp-db`**, Bangalore | PostgreSQL 18, Basic 1 GB, $15.15/month, daily backups + a week of point-in-time restore. Only `coral-app` may connect (Network Access → trusted sources) — plus Hasnain's PC until the move is finished. |
+| The database | DigitalOcean Managed PostgreSQL **`masterapp-db`**, Bangalore | PostgreSQL 18, Basic 1 GB, $15.15/month, daily backups + a week of point-in-time restore. Only `coral-app` may connect (Network Access → trusted sources). To reach it from a PC (another move, a backup), add that PC's IP there for the job and remove it after. |
 | Photos (and later PDFs) | Cloudflare R2 bucket **`purosangue-masterapp-apac`**, Asia-Pacific | Private — served only through the app, behind the sign-in. API token `masterapp` (Object Read & Write, this bucket only). |
 | Secrets | coral-app's environment variables (encrypted), and `data\move.env` on Hasnain's PC | R2 keys, Chrono Key login, vault key, database address. **Never in git.** |
 | The old local copy | `data\` on Hasnain's PC | Database + photos as of the move, 23 Oct 2026 — the backup. **Do not run it alongside the live site** (`start-masterapp.cmd`): it would keep a separate copy that drifts apart. |
@@ -26,9 +26,11 @@ Passwords never go into this repository.
 **What was moved (23 Oct 2026), and how it was checked:** 1,671 watches,
 4,529 photo records, 8,358 history entries, 1,662 Chrono Key records, 816
 vault records and the accounts — every table byte-for-byte identical on
-DigitalOcean (row fingerprints compared). Photo files: being uploaded to R2
-on 23 Oct, each checked by size when done. Then the Chrono Key / vault sync is
-switched on in the live app (`SYNC`), every 15 minutes until the switch-over.
+DigitalOcean (row fingerprints compared). Photo files: all 8,640 (originals +
+thumbnails, 1.5 GB) uploaded to R2, and every one of the 4,320 photos with a
+file checked there at its exact size. The Chrono Key / vault sync is ON in the
+live app (`SYNC=on`), every 15 minutes until the switch-over; new photos it
+copies go straight to R2. Move finished 23 Oct 2026, ~16:30 PKT.
 
 **Logins for the services** (Cloudflare, DigitalOcean, GitHub) are Hasnain's
 own accounts — with two-factor sign-in.
