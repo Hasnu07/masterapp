@@ -158,6 +158,40 @@ function expensePage(id) {
     <textarea id="Description" name="Description">\r\n${e.description}</textarea></form>`;
 }
 
+/*
+ * Chrono Key's own lists — where a watch IS (src/import/chronokey/lists.js),
+ * in the shape of the first live read, 23 Oct 2026: the Inventory tab's feed
+ * as <li> cards, the Inventory page declaring its count only in its script,
+ * Returned consignments as a table with a RETURN DATE column. Exported so a
+ * test can move a watch between them, or break a read:
+ *   declared   the count the Inventory page states (default: the cards;
+ *              'none' — a page whose script no longer states one)
+ *   broken     'card' — one card without a readable stock number;
+ *              'returned' — the Returned page without its table
+ */
+export const LISTS = { inventory: ['1700'], incoming: ['1701'], returned: [], declared: null, broken: null };
+const pageId = (stock) => Number(Object.entries(DETAILS).find(([, d]) => d.stock === stock)?.[0]) || 40000 + Number(stock);
+
+function inventoryFeed() {
+  const card = (s, i) => `<li class=" pb-3"><div class="card card2 article-item"><div class="overflw">
+      <a href="/stock/InstockDetailPage/${pageId(s)}"><img class="card-img-box" src="../../CardImages//x.jpeg" /></a>
+      <div class="badge-on-image"><span class="availability-badge availability-${i === 1 ? 'T' : 'A'}">${i === 1 ? 'Checked Out' : 'Available'}</span></div></div>
+      <div class="card-body"><a href="/stock/InstockDetailPage/${pageId(s)}"><h5 class="card-title">Watch ${s}</h5></a>
+      <p class="shipping">Referenza: &#x9;X${s} </p><p class="shipping">STOCK NUMBER: ${s} </p>
+      <div class="shipping" style="margin-bottom:1rem;"> Owner: INVENTORY </div><p class="shipping">Category: Dubai</p></div></div></li>`;
+  const cards = LISTS.inventory.map(card);
+  if (LISTS.broken === 'card') cards.push('<li><a href="/stock/InstockDetailPage/1"><h5>a card in another template</h5></a></li>');
+  return cards.join('\n');
+}
+
+function returnedPage() {
+  if (LISTS.broken === 'returned') return '<html><h1>Something went wrong</h1></html>';
+  return `<table><thead><tr><th>PRODUCT PHOTO</th><th>RETURN DATE</th><th>STOCK NUMBER</th><th>Serial Number</th><th>Actions</th></tr></thead>
+    <tbody>${LISTS.returned
+      .map((s) => `<tr><td></td><td data-sort="2026-10-16">16/10/2026</td><td><a href="/Stock/InstockDetailPage/${pageId(s)}">${s}</a></td><td>S${s}</td><td>Restore into stock</td></tr>`)
+      .join('')}</tbody></table>`;
+}
+
 /* What each watch's own page says. Euro figures as Chrono Key computes them. */
 export const DETAILS = {
   // a1-again is a1 under a second name, as Chrono Key's own galleries do.
@@ -287,8 +321,18 @@ export async function startChronoKey({ username = 'ck-user', password = 'ck-pass
       const ex = url.pathname.match(/^\/Stock\/AddEditExpense\/(\d+)$/);
       if (ex && req.method === 'GET') return res.end(expensePage(Number(ex[1])));
       if (url.pathname === '/Stock/ToBeShippedList') {
-        return res.end('<table><thead><tr><th>Image</th><th>STOCK NUMBER</th><th>Tracking Status</th></tr></thead><tbody><tr><td></td><td>1701</td><td>In transit</td></tr></tbody></table>');
+        return res.end(`<table><thead><tr><th>Image</th><th>STOCK NUMBER</th><th>Tracking Status</th></tr></thead><tbody>${LISTS.incoming
+          .map((s) => `<tr><td></td><td>${s}</td><td>In transit</td></tr>`)
+          .join('')}</tbody></table>`);
       }
+      // The Inventory tab's feed: the client asks for it with a lower-case path, as Chrono Key's page does.
+      if (url.pathname.toLowerCase() === '/stock/filterinstock') return res.end(inventoryFeed());
+      if (url.pathname === '/Stock/InstockPage') {
+        if (LISTS.declared === 'none') return res.end('<html><ul id="listBody"></ul><script>/* redesigned */</script></html>');
+        const n = LISTS.declared ?? LISTS.inventory.length;
+        return res.end(`<html><ul id="listBody"></ul><script>if (itemCount < '${n}') {} if ($('#listBody li').length >= '${n}') {}</script></html>`);
+      }
+      if (url.pathname === '/Stock/ReturnedConsignments') return res.end(returnedPage());
       if (url.pathname === '/api/cms/AutoCompleteProduct') {
         const term = url.searchParams.get('term');
         const hits = Object.entries(DETAILS)
@@ -331,7 +375,11 @@ export async function startVault({ token = 'vault-key' } = {}) {
     ],
     londonStock: [],
     hkStock: [],
-    soldStocks: [{ id: 'v-1700-old', stockNumber: '1700', brand: 'Patek Philippe', b2bUsd: 1, caseDiameter: '41mm', bezel: 'Smooth' }],
+    soldStocks: [
+      { id: 'v-1700-old', stockNumber: '1700', brand: 'Patek Philippe', b2bUsd: 1, caseDiameter: '41mm', bezel: 'Smooth' },
+      // A sale only the vault records: Chrono Key never listed 1801.
+      { id: 'v-1801', stockNumber: '1801', brand: 'Rolex', watchModel: 'Explorer', soldPrice: 9000, soldCurrency: 'USD' },
+    ],
     incomings: [{ id: 'v-1900', stockNumber: '1900', status: 'cancelled', brand: 'Rolex', watchModel: 'GMT' }],
   });
   const dropped = new Set();

@@ -1,5 +1,4 @@
 import zlib from 'node:zlib';
-import * as cheerio from 'cheerio';
 import { pool, query } from '../../db/index.js';
 import { config } from '../../config.js';
 import { chronokey } from './client.js';
@@ -13,6 +12,7 @@ import {
   assetPath,
 } from './parse.js';
 import { importProductList, startRun, finishRun, progressRun } from '../listimport.js';
+import { readStockLists, listsSummary } from './lists.js';
 import { applyToWatch } from '../apply.js';
 import { addPhotos } from '../../watches/index.js';
 
@@ -31,27 +31,7 @@ import { addPhotos } from '../../watches/index.js';
  */
 
 const PRODUCTS = { page: '/Stock/AllProducts', data: '/Stock/ProductsDataTable' };
-const INCOMING = '/Stock/ToBeShippedList';
 const GRID_ROWS = 2000;
-
-/** Stock numbers on the incoming page. */
-async function incomingStockNumbers() {
-  const html = await chronokey().getListHtml(INCOMING, { pageSize: 200, pageNumber: 1 });
-  const headers = tableHeaders(html);
-  const at = headers.findIndex((h) => /stock\s*(no|number)/i.test(h));
-  if (at === -1) return null;
-  const $ = cheerio.load(html);
-  const out = new Set();
-  $('table').each((_, t) => {
-    $(t)
-      .find('tbody tr')
-      .each((__, tr) => {
-        const v = $(tr).find('td').eq(at).text().trim();
-        if (/^\d+$/.test(v)) out.add(v);
-      });
-  });
-  return out;
-}
 
 /**
  * The product grid, read into our watches.
@@ -65,6 +45,8 @@ async function incomingStockNumbers() {
 export async function syncList({ user } = {}) {
   const run = await startRun('chronokey', 'list', user);
   try {
+    // Where Chrono Key's own lists put each watch — read BEFORE the grid (see lists.js).
+    const lists = await readStockLists();
     const pageHtml = await chronokey().getListHtml(PRODUCTS.page, { pageSize: 10, pageNumber: 1 });
     const headers = tableHeaders(pageHtml);
     if (!headers.length) throw new Error(`${PRODUCTS.page} carried no table headings — signed out, or redesigned`);
@@ -100,21 +82,27 @@ export async function syncList({ user } = {}) {
     const stockAt = gridHeaders.findIndex((h) => /^\s*stock\s*(no|number)/i.test(h) || /^stockno$/i.test(h));
     for (const r of rows) if (r.ckId && stockAt !== -1) ckIds[String(r.values[stockAt]).trim()] = r.ckId;
 
-    let incoming = null;
-    try {
-      incoming = await incomingStockNumbers();
-    } catch (err) {
-      console.warn(`[chronokey] incoming page not read: ${err.message}`);
+    // Every watch on the tab and the Returned list names its page: ids the grid does not carry.
+    for (const list of [lists.inventory, lists.returned, lists.incoming]) {
+      for (const [stock, v] of list || []) if (v.ck_id || v.ckId) ckIds[stock] ??= v.ck_id || v.ckId;
     }
+    if (!lists.trusted) console.warn(`[chronokey] lists not trusted this pass — statuses left as they are: ${lists.why.join('; ')}`);
 
     const stats = await importProductList(
       gridHeaders,
       rows.map((r) => r.values),
       // Only a read that holds every row Chrono Key counts may say a watch is gone.
-      { via: 'grid', ckIds, incoming, mirror: Boolean(total) && rows.length >= total }
+      {
+        via: 'grid',
+        ckIds,
+        incoming: lists.incoming ? new Set(lists.incoming.keys()) : null,
+        lists: lists.trusted ? lists : null,
+        mirror: Boolean(total) && rows.length >= total,
+      }
     );
     stats.gridTotal = total;
-    stats.incoming = incoming ? incoming.size : null;
+    stats.incoming = lists.incoming ? lists.incoming.size : null;
+    stats.lists = listsSummary(lists);
     await finishRun(run, { ok: true, stats });
     return stats;
   } catch (err) {

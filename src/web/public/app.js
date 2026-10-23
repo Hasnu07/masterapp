@@ -337,6 +337,46 @@ function tile(w) {
   </button>`;
 }
 
+/*
+ * Why a watch has its status, under its chip: where Chrono Key's own lists
+ * put it (the Inventory tab, To-be-shipped, Returned consignments), or that
+ * only the vault holds it — and what its Chrono Key page says.
+ */
+const VAULT_LIST = { dubaiStock: 'Dubai stock', londonStock: 'London stock', hkStock: 'HK stock', soldStocks: 'sold', incomings: 'incoming' };
+function statusLine(w) {
+  const y = w.status_why;
+  if (!y || w.origin === 'manual') return '';
+  const bits = [];
+  const l = y.ck?.live ? y.ck.lists : null;
+  const sold = w.status === 'sold';
+  if (y.ck?.live && l) {
+    // A sale on the grid is newer than any list: a sold watch is not described as on the shelf.
+    if (l.inventory && !sold) {
+      bits.push(
+        `On Chrono Key's Inventory tab${l.inventory.badge && l.inventory.badge !== 'Available' ? ` — marked “${esc(l.inventory.badge)}”` : ''}${
+          l.inventory.owner && l.inventory.owner !== 'INVENTORY' ? ` · owner ${esc(l.inventory.owner)}` : ''
+        }`
+      );
+    }
+    if (l.incoming) bits.push(w.status === 'sold' ? 'Sold, and still on Chrono Key’s To-be-shipped list' : 'On Chrono Key’s To-be-shipped list — on its way');
+    if (l.returned && !sold) bits.push(`Returned to its client on Chrono Key${l.returned.date ? ` on ${esc(fmtDate(l.returned.date))}` : ''} (its Returned consignments)`);
+    if (l.none && !sold) bits.push('On none of Chrono Key’s lists — not on its Inventory tab, nor to be shipped, sold or returned');
+    // When those lists were read: if reads have not been trusted for a while, it says so.
+    if (bits.length && y.ck.at) bits[bits.length - 1] += ` <span title="Chrono Key's lists, last read in full">(as of ${esc(fmtWhen(y.ck.at))})</span>`;
+  } else if (!y.ck?.live && y.vault.length) {
+    bits.push(
+      `Only in the Watch vault (${esc(y.vault.map((v) => VAULT_LIST[v] || v).join(', '))}) — Chrono Key does not list it${
+        y.same_serial.length
+          ? ` · same serial as Chrono Key’s ${y.same_serial.map((o) => `<a href="#/watch/${o.id}">${esc(o.stock_no)}</a>`).join(', ')}`
+          : ''
+      }`
+    );
+  }
+  if (y.ck?.item_status) bits.push(`its Chrono Key page says “${esc(y.ck.item_status)}”`);
+  if (y.locked) bits.push('✎ status set here — the sync leaves it');
+  return bits.length ? `<p class="count status-why" style="margin:6px 0 0">${bits.join(' · ')}</p>` : '';
+}
+
 /* ── one watch ────────────────────────────────────────────────────── */
 
 let current = null;
@@ -365,6 +405,7 @@ function renderWatch() {
         <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
           ${w.location ? `<span>${esc(w.location)}</span>` : ''}
           <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
+        ${statusLine(w)}
         <div class="figures">${[
           ['Purchase', w.purchase_price, w.purchase_currency],
           ['B2B', w.b2b_price, w.b2b_currency],

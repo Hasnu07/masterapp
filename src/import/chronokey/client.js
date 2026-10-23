@@ -200,10 +200,15 @@ class ChronoKeyClient {
     return this.retryIfLoggedOut(run, (rows) => !rows.length);
   }
 
-  getInventoryCards(searchText, pageSize = 24, pageNumber = 1) {
+  /*
+   * `filterBy`: the Inventory page itself asks with 'A' (ALL — its default);
+   * '0' answered the same 134 cards on 23 Oct 2026. The status sync uses 'A',
+   * so its count matches the one the page declares.
+   */
+  getInventoryCards(searchText, pageSize = 24, pageNumber = 1, { filterBy = '0' } = {}) {
     const params = new URLSearchParams({
       searchText,
-      filterBy: '0',
+      filterBy,
       PageSize: String(pageSize),
       PageNumber: String(pageNumber),
       sortColumnNo: '0',

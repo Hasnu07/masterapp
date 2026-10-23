@@ -115,6 +115,62 @@ clears the DEAL — a sale taken back on Chrono Key is cleared here. So handing
 back ("use Chrono Key's") a spec field the list leaves empty clears it at
 once, for the page or the vault to fill (`unlockField`, `leftBlank`).
 
+## A watch's status = where Chrono Key's own lists put it (23 Oct 2026)
+
+Reported: stock 1722 showed "In stock" here; Chrono Key's page said RETURNED
+TO CLIENT and its Inventory tab did not list it. The old rule (a sale on the
+grid = sold, anything else = in stock) could not see it: **the grid row of a
+returned watch is identical to one on the shelf** (no sale, order type R).
+Checked against every watch that day: 72 shown in stock/incoming here were
+not on the tab — 37 returned to their client, 29 incoming (already right),
+6 only in the vault. Nothing on the tab was missing here.
+
+`import/chronokey/lists.js` reads, each pass, back to back and BEFORE the
+grid: To-be-shipped, the Inventory tab's feed (`/stock/FilterInstock`,
+filterBy 'A', PageSize 1000 — its cards: "STOCK NUMBER: n", badge, Owner,
+page id), Returned consignments (rows in the page, RETURN DATE `data-sort`),
+and the Inventory page for the count its script declares (`itemCount <
+'134'` — the feed itself states none). Then `listStatus` (listimport.js):
+
+1. a sale on the grid → **sold** — first: 1708 and 1737 were sold before
+   they arrived and are still on To-be-shipped
+2. To-be-shipped → **incoming**
+3. the Inventory tab → **in stock** (1271 "Checked Out", at a trade show,
+   stays in stock as Chrono Key counts it; its note says "Watch is sold" —
+   for a person to check)
+4. Returned consignments → **returned** (to the client)
+5. none of them → **other**, only after two trusted reads in a row
+
+- **The watch page's Item Status is not a place**: "Due Payment" is on 11
+  incoming watches and on 1590, on the shelf. Shown, never used.
+- **Trusted only when whole**: every table with its headings, every card
+  readable and none twice, fewer cards than the page size, the count within 2
+  of the declared one (or, if the page stops declaring it, within
+  max(10, 10%) of the last read), Returned / To-be-shipped not suddenly empty
+  after many. Sizes compare with the LAST read, trusted or not — against the
+  last trusted one only, one refusal repeats for ever.
+- **An untrusted pass, and any CSV, re-derives nothing**: only what the grid
+  proves (a sale; a sale taken back; To-be-shipped as before) moves a status.
+  Re-deriving would put every returned watch back on the shelf until the next
+  good read.
+- **More than GONE_LIMIT moves at once is refused** — unless the previous pass
+  proposed the same change (≥ 90% the same moves): a real change reads the
+  same twice, a glitch does not; without that a real one is refused for ever.
+  Locked statuses are never proposed.
+- A rejected sign-in stops the pass at the first attempt (signed in once,
+  before the reads).
+- **The vault**: a watch Chrono Key no longer (or never) lists gets 'other'
+  (or 'sold' from the vault's sold list) in 'own' mode — after a complete CK
+  read within a day, never for a watch added here by hand. A watch first seen
+  on the grid is decided afresh, so one the vault made first is not stuck.
+- Kept in `ck_records.ck_lists` / `lists_at`; the watch page says why under
+  the chip, with the read time, and names a Chrono Key watch with the same
+  serial for a vault-only one (1528 → 1515, 1617. → 1617).
+- Dry run on real data: in stock here 134 = the tab's 134, nothing different
+  either way; 37 returned; the 6 vault-only 'other'. On this PC's day-old copy
+  the first pass refused 63 moves and the next took them, as designed.
+- Load: 3 more requests a pass (~1.6 MB).
+
 ## Keeping in step with everything, until the switch-over (23 Oct 2026)
 
 Asked for: "auto sync on everything with watch vault and Chrono Key until we
@@ -230,7 +286,9 @@ Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):
 - The payment split (Cash, Card, Bank Transfer, Crypto, PayPal / Chrono24)
   appears **twice under identical headings** — purchase, then sale. Which is
   which is decided by position relative to "Sold To".
-- **Category is the location**: `Watch` = Europe, `Jewellery` = HK.
+- **Category is the location**: `Watch` = Europe, `Jewellery` = HK, and
+  `Dubai` / `UK` as named (the Inventory tab, 23 Oct 2026: Dubai 109, UK 20,
+  Watch 3, Jewellery 1).
 - Watch Month + Watch Year → `watch_date` "MM/YYYY".
 - Dates are day first (`21/04/2023`); a date that does not exist is refused.
 - Stock 238 appears four times (a sale recorded twice). The latest sale wins;
