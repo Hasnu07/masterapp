@@ -4,6 +4,9 @@ import multer from 'multer';
 import { config, ROOT } from '../config.js';
 import * as auth from '../auth/index.js';
 import * as watches from '../watches/index.js';
+import * as rates from '../rates/index.js';
+import * as clients from '../clients/index.js';
+import * as expenses from '../expenses/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -117,6 +120,9 @@ export function createServer() {
       locations: LOCATIONS,
       currencies: CURRENCIES,
       paymentKinds: PAYMENT_KINDS,
+      clientFields: clients.CLIENT_FIELDS,
+      clientTypes: clients.CLIENT_TYPES,
+      expenseFields: expenses.EXPENSE_FIELDS,
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
@@ -165,7 +171,109 @@ export function createServer() {
     })
   );
 
-  app.get('/api/watches/:id', need('viewer'), wrap(async (req, res) => res.json(await watches.getWatch(req.params.id))));
+  app.get(
+    '/api/watches/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const w = await watches.getWatch(req.params.id);
+      res.json({ ...w, clients: await clients.linksOf(w) });
+    })
+  );
+
+  /* Who a watch was bought from / sold to: { role: purchase|sale, client_id: n | null | "chronokey" }. */
+  app.put(
+    '/api/watches/:id/client',
+    need('editor'),
+    wrap(async (req, res) => {
+      const { role, client_id: id } = req.body || {};
+      res.json(await clients.linkWatch(req.params.id, role, id === 'chronokey' || id === null ? id : Number(id), req.user));
+    })
+  );
+
+  /* ── expenses ────────────────────────────────────────────────── */
+
+  app.get('/api/expenses', need('viewer'), wrap(async (req, res) => res.json(await expenses.listExpenses(req.query))));
+  app.get('/api/expenses/types', need('viewer'), wrap(async (req, res) => res.json({ types: await expenses.expenseTypes() })));
+  app.get('/api/expenses/:id', need('viewer'), wrap(async (req, res) => res.json(await expenses.getExpense(req.params.id))));
+  app.post(
+    '/api/expenses',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await expenses.createExpense(req.body || {}, req.user) }))
+  );
+  app.patch(
+    '/api/expenses/:id',
+    need('editor'),
+    wrap(async (req, res) => res.json(await expenses.updateExpense(req.params.id, req.body || {}, req.user)))
+  );
+  app.delete(
+    '/api/expenses/:id',
+    need('editor'),
+    wrap(async (req, res) => {
+      await expenses.deleteExpense(req.params.id, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.post(
+    '/api/expenses/:id/restore',
+    need('editor'),
+    wrap(async (req, res) => {
+      await expenses.deleteExpense(req.params.id, req.user, { restore: true });
+      res.json({ ok: true });
+    })
+  );
+  /* Payment copies: pictures or PDFs. */
+  app.post(
+    '/api/expenses/:id/files',
+    need('editor'),
+    photoUpload.array('files', expenses.MAX_FILES),
+    wrap(async (req, res) => {
+      const files = (req.files || []).map((f) => ({ buffer: f.buffer, name: f.originalname }));
+      if (!files.length) return res.status(400).json({ error: 'No file was sent' });
+      res.status(201).json({ ids: await expenses.addFiles(req.params.id, files, req.user) });
+    })
+  );
+  app.delete(
+    '/api/expenses/:id/files/:fid',
+    need('editor'),
+    wrap(async (req, res) => {
+      await expenses.removeFile(req.params.id, req.params.fid, req.user);
+      res.json({ ok: true });
+    })
+  );
+  /* Behind the sign-in, like the photos: a payment copy carries account numbers. */
+  app.get(
+    '/api/expense-files/:fid',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await expenses.expenseFile(req.params.fid, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such payment copy' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      const name = (f.name || `payment-copy-${Number(req.params.fid)}`).replace(/[^\w.\- ]+/g, '_');
+      res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${name}"`);
+      res.send(f.buffer);
+    })
+  );
+
+  /* ── clients ─────────────────────────────────────────────────── */
+
+  app.get(
+    '/api/clients',
+    need('viewer'),
+    wrap(async (req, res) => res.json(await clients.listClients(req.query)))
+  );
+  app.get('/api/clients/:id', need('viewer'), wrap(async (req, res) => res.json(await clients.getClient(req.params.id))));
+  app.post(
+    '/api/clients',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await clients.createClient(req.body || {}, req.user) }))
+  );
+  app.patch(
+    '/api/clients/:id',
+    need('editor'),
+    wrap(async (req, res) => res.json(await clients.updateClient(req.params.id, req.body || {}, req.user)))
+  );
 
   app.get(
     '/api/watches/:id/related',
@@ -181,6 +289,34 @@ export function createServer() {
       );
       res.json({ related: rows });
     })
+  );
+
+  /* Rates for the blue ▾ converter beside every price (public/fxchip.js). */
+  app.get(
+    '/api/rates',
+    need('viewer'),
+    wrap(async (req, res) => {
+      try {
+        const r = await rates.getRates();
+        res.json({
+          base: 'USD',
+          rates: r.rates,
+          currencies: rates.CURRENCIES,
+          sourceName: r.sourceName,
+          kind: r.kind, // "live" or "daily" — printed, so a daily fix is never read as live
+          cachedAt: r.cachedAt,
+          stale: r.stale,
+        });
+      } catch (err) {
+        res.status(502).json({ error: err.message });
+      }
+    })
+  );
+
+  app.get(
+    '/api/watches/:id/sold-for',
+    need('viewer'),
+    wrap(async (req, res) => res.json(await watches.soldFor(req.params.id)))
   );
 
   app.patch(

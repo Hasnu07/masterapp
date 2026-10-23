@@ -12,7 +12,13 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const esc = (v) =>
   String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const state = { user: null, meta: null, list: { q: '', status: '', location: '', brand: '', sort: 'newest', deleted: false } };
+const state = {
+  user: null,
+  meta: null,
+  list: { q: '', status: '', location: '', brand: '', sort: 'newest', deleted: false },
+  clients: { q: '', type: '' },
+  expenses: { q: '', type: '', from: '', to: '' },
+};
 
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'masterapp' } };
@@ -103,10 +109,16 @@ function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
   const [, page, id] = hash.split('/');
-  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === (page || 'inventory')));
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  menu(false);
   window.scrollTo(0, 0);
   if (!page) return showInventory();
   if (page === 'watch' && id) return showWatch(Number(id));
+  if (page === 'clients') return id === 'new' ? showNewClient() : showClients();
+  if (page === 'client' && id) return showClient(Number(id));
+  if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
+  if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -114,9 +126,31 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 
+/* The menu drawer, from the ☰. Closed by picking a page, the scrim, × or Esc;
+   `inert` while closed, so its links are not tabbed to off screen. */
+function menu(open, { focus = false } = {}) {
+  $('#drawer').classList.toggle('open', open);
+  $('#drawer').inert = !open;
+  $('#scrim').classList.toggle('hide', !open);
+  $('#menu').setAttribute('aria-expanded', String(open));
+  if (open && focus) ($('#nav a.on') || $('#nav a:not(.hide)'))?.focus();
+}
+// Into the menu only when it was opened from the keyboard (a click's detail is 0 then).
+$('#menu').addEventListener('click', (e) => menu(true, { focus: e.detail === 0 }));
+$('#menu-close').addEventListener('click', () => menu(false));
+$('#scrim').addEventListener('click', () => menu(false));
+$('#nav').addEventListener('click', () => menu(false)); // the same page again changes no hash
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#drawer').classList.contains('open')) {
+    menu(false);
+    $('#menu').focus();
+  }
+});
+
 /* ── sign-in ──────────────────────────────────────────────────────── */
 
 function showLogin() {
+  menu(false);
   $('#bar').classList.add('hide');
   $('#app').innerHTML = `
     <div class="login panel">
@@ -331,6 +365,15 @@ function renderWatch() {
         <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
           ${w.location ? `<span>${esc(w.location)}</span>` : ''}
           <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
+        <div class="figures">${[
+          ['Purchase', w.purchase_price, w.purchase_currency],
+          ['B2B', w.b2b_price, w.b2b_currency],
+          ['B2C', w.b2c_price, w.b2c_currency],
+          ['Chrono24', w.chrono24_price, w.chrono24_currency],
+        ]
+          .map(([k, n, cur]) => `<div><span>${k}</span><b>${money(n, cur) || '<span class="blank">—</span>'}</b></div>`)
+          .join('')}</div>
+        ${w.description ? `<p class="desc">${esc(w.description)}</p>` : ''}
       </div>
       <div class="row">
         ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
@@ -341,18 +384,18 @@ function renderWatch() {
     <div class="watch-layout">
       <div class="stack">
         <div class="panel gallery" id="gallery"></div>
+        <div class="panel" id="wclients"></div>
+        <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
-        <div class="panel"><h3>Chrono Key and the Watch vault</h3><div id="sources"></div></div>
       </div>
       <div class="stack">
         <form class="panel" id="details"></form>
-        <div class="panel"><h3>History</h3><ul class="events" id="events"><li class="count">Loading…</li></ul></div>
       </div>
     </div>`;
 
   renderGallery();
+  renderWatchClients();
   renderDetails(groups);
-  renderSources();
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
     renderWatch();
@@ -373,48 +416,12 @@ function renderWatch() {
 }
 
 async function loadSide(id) {
-  const [ev, rel] = await Promise.all([
-    api(`/api/watches/${id}/events`).catch(() => ({ events: [] })),
+  const [rel, sold] = await Promise.all([
     api(`/api/watches/${id}/related`).catch(() => ({ related: [] })),
+    api(`/api/watches/${id}/sold-for`).catch((err) => ({ error: err.message })),
   ]);
   if (current?.w.id !== id) return;
-  const label = (k) => state.meta.fields.find((f) => f.key === k)?.label || k;
-  const show = (v) => (v === null || v === '' || v === undefined ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v));
-  const words = {
-    create: 'Added',
-    update: 'Edited',
-    sync: 'Updated from',
-    delete: 'Deleted',
-    restore: 'Restored',
-    photo_add: 'Photos added',
-    photo_remove: 'Photo removed',
-    photo_order: 'Photos reordered',
-    unlock: 'Handed back to Chrono Key',
-  };
-  const src = { chronokey: 'Chrono Key', vault: 'the Watch vault', masterapp: 'masterapp', user: '' };
-  $('#events').innerHTML =
-    ev.events
-      .map((e) => {
-        const who = e.source === 'user' ? e.user_name || e.user_email || 'someone' : src[e.source] || e.source;
-        let ch = '';
-        if (e.action === 'update' || e.action === 'sync') {
-          ch = Object.entries(e.changes)
-            .map(([k, [a, b]]) => `${esc(label(k))}: ${esc(show(a))} → ${esc(show(b))}`)
-            .join('<br>');
-        } else if (e.action === 'unlock') {
-          ch = esc(label(e.changes.field));
-          if ('cleared' in e.changes) ch += ` — Chrono Key has none, so ${esc(show(e.changes.cleared))} was cleared`;
-        } else if (e.action === 'photo_add') ch = `${e.changes.count} photo${e.changes.count === 1 ? '' : 's'}`;
-        else if (e.action === 'photo_remove' && e.changes.placeholder) ch = "Chrono Key's 'no image' graphic, not a photo";
-        else if (e.action === 'photo_remove' && e.changes.duplicates) {
-          const n = e.changes.photos.length;
-          ch = `${n} photo${n === 1 ? '' : 's'} repeating another of this watch's photos`;
-        }
-        return `<li><b>${esc(words[e.action] || e.action)}</b> ${e.action === 'sync' ? '' : 'by'} ${esc(who)}
-          <span class="when">· ${esc(fmtWhen(e.at))}</span>${ch ? `<div class="ch">${ch}</div>` : ''}</li>`;
-      })
-      .join('') || '<li class="count">Nothing yet.</li>';
-
+  renderSoldFor(sold);
   const r = $('#related');
   if (rel.related.length) {
     r.hidden = false;
@@ -429,6 +436,39 @@ async function loadSide(id) {
         )
         .join('')}`;
   }
+}
+
+/*
+ * What this reference has sold for, under the photos: Chrono Key's euro
+ * figure (else the sale price as held), the vault's own figure beside it, and
+ * the examples still in stock.
+ */
+function renderSoldFor(s) {
+  const box = $('#sold-for');
+  if (!box || (!s.error && !s.reference)) return;
+  box.hidden = false;
+  if (s.error) {
+    box.innerHTML = `<h3>What it has sold for</h3><p class="count">Could not read the sales: ${esc(s.error)}</p>`;
+    return;
+  }
+  const line = (o) => {
+    const v = o.vault;
+    // A sale price with no currency, at the vault's figure, is that figure.
+    const deal = o.deal && !o.deal.currency && v && v.price === o.deal.price ? v : o.deal;
+    const main = o.eur !== null ? money(o.eur, 'EUR') : deal ? money(deal.price, deal.currency, { plain: true }) : money(v.price, v.currency);
+    const also = v && (o.eur !== null || (deal !== v && o.deal)) ? ` <span class="count">· vault: ${money(v.price, v.currency)}</span>` : '';
+    return `<div class="sold-row"><span><a href="#/watch/${o.id}"><b>${esc(o.stock_no)}</b></a>${o.self ? ' <span class="count">(this one)</span>' : ''} — ${main}${also}</span>
+      <span class="count">${esc(fmtDate(o.date))}</span></div>`;
+  };
+  const more = s.soldTotal > s.sold.length ? `${s.soldTotal} sold in all; showing the ${s.sold.length} most recent.` : '';
+  const stock = s.inStock.length
+    ? `${s.inStock.length} still in stock: ${s.inStock
+        .map((o) => `<a href="#/watch/${o.id}">${esc(o.stock_no)}</a>${o.self ? ' (this one)' : ''}`)
+        .join(', ')}.`
+    : 'None in stock.';
+  box.innerHTML = `<h3>What it has sold for <span class="count" style="text-transform:none;letter-spacing:0;font-weight:400">— ${esc(s.reference)}</span></h3>
+    ${s.sold.length ? s.sold.map(line).join('') : '<p class="count">No sale of this reference on record.</p>'}
+    <p class="count" style="margin-bottom:0">${[more ? esc(more) : '', stock].filter(Boolean).join(' ')}</p>`;
 }
 
 /* ── photos ──────────────────────────────────────────────────────── */
@@ -759,35 +799,584 @@ function readForm(form, w) {
   return patch;
 }
 
-function renderSources() {
-  const { w } = current;
-  const box = $('#sources');
-  const parts = [];
-  for (const ck of w.sources.chronokey) {
-    const sections = Object.entries(ck.sections || {})
+/* ── clients ──────────────────────────────────────────────────────── */
+
+const clientTypeLabel = (k) => state.meta.clientTypes.find((t) => t.key === k)?.label || '';
+const dealPrice = (w, side) =>
+  side === 'bought'
+    ? money(w.purchase_price, w.purchase_currency)
+    : w.sale_price_eur !== null && w.sale_price_eur !== undefined
+      ? money(w.sale_price_eur, 'EUR')
+      : money(w.sale_price, w.sale_currency);
+
+async function showClients() {
+  const C = state.clients;
+  $('#app').innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+      <div><h1>Clients</h1><p class="sub" style="margin:0">Who we buy from and sell to — from Chrono Key's client list, and added here.</p></div>
+      ${can('editor') ? '<a class="btn gold" href="#/clients/new">+ Add client</a>' : ''}
+    </div>
+    <div class="filters" style="grid-template-columns:1fr">
+      <input class="q" type="search" id="cq" placeholder="Name, nickname, company, email or phone…" value="${esc(C.q)}">
+    </div>
+    <div class="pills" id="ctypes" style="margin-bottom:10px"></div>
+    <div class="count" id="ccount"></div>
+    <div class="panel tscroll" style="padding:0"><table class="list clients"><thead><tr>
+      <th>Name</th><th>Type</th><th>Company</th><th>Phone</th><th>Email</th><th>Bought from them</th><th>Sold to them</th><th>Last deal</th>
+    </tr></thead><tbody id="crows"></tbody></table></div>
+    <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="cmore">Show more</button></div>`;
+  let timer;
+  $('#cq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      C.q = e.target.value;
+      loadClients();
+    }, 220);
+  });
+  $('#cmore').addEventListener('click', () => loadClients(true));
+  // A row opens its client; a link inside it (the email) does its own thing.
+  $('#crows').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (tr && !e.target.closest('a')) location.hash = `#/client/${tr.dataset.id}`;
+  });
+  loadClients();
+}
+
+let clientSeq = 0;
+let clientsShown = [];
+async function loadClients(more = false) {
+  const C = state.clients;
+  const seq = ++clientSeq;
+  const p = new URLSearchParams({ q: C.q, type: C.type, limit: 100, offset: more ? clientsShown.length : 0 });
+  let r;
+  try {
+    r = await api(`/api/clients?${p}`);
+  } catch (err) {
+    return flash(err.message, true);
+  }
+  if (seq !== clientSeq || !$('#crows')) return;
+  clientsShown = more ? [...clientsShown, ...r.clients] : r.clients;
+
+  const all = r.types.reduce((n, t) => n + t.n, 0);
+  $('#ctypes').innerHTML =
+    `<button class="pill ${C.type ? '' : 'on'}" data-v="">All<b>${all}</b></button>` +
+    r.types
+      .filter((t) => t.k)
+      .map((t) => `<button class="pill ${C.type === t.k ? 'on' : ''}" data-v="${esc(t.k)}">${esc(clientTypeLabel(t.k))}<b>${t.n}</b></button>`)
+      .join('');
+  $$('#ctypes .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      C.type = b.dataset.v;
+      loadClients();
+    })
+  );
+  $('#ccount').textContent = `${r.total.toLocaleString('en-GB')} client${r.total === 1 ? '' : 's'}${C.q ? ` matching “${C.q}”` : ''}`;
+  $('#crows').innerHTML =
+    clientsShown
       .map(
-        ([name, fields]) =>
-          `<div style="margin-top:8px"><b style="font-size:13px">${esc(name)}</b><div class="kv">${Object.entries(fields)
-            .map(([k, v]) => `<div>${esc(k)}</div><div>${esc(v)}</div>`)
-            .join('')}</div></div>`
+        (c) => `<tr data-id="${c.id}">
+          <td><a href="#/client/${c.id}"><b>${esc(c.name)}</b></a>${c.nickname && c.nickname !== c.name ? `<div class="count" style="margin:0">${esc(c.nickname)}</div>` : ''}</td>
+          <td>${esc(clientTypeLabel(c.type))}</td>
+          <td>${esc(c.company)}</td>
+          <td style="white-space:nowrap">${esc(c.phone)}</td>
+          <td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ''}</td>
+          <td>${c.bought || '<span class="blank">—</span>'}</td>
+          <td>${c.sold || '<span class="blank">—</span>'}</td>
+          <td style="white-space:nowrap">${esc(fmtDate(c.last_deal))}</td>
+        </tr>`
       )
-      .join('');
-    const tags = Object.entries(ck.tags || {})
-      .map(([k, v]) => `${v ? '✓' : '✗'} ${esc(k)}`)
-      .join(' · ');
-    parts.push(`<details class="src"><summary>Chrono Key's page${ck.ck_id ? ` (id ${ck.ck_id})` : ''}</summary>
-      <p class="count">Read ${esc(fmtWhen(ck.fetched_at)) || 'not yet'}. Prices on this page are labelled £ by Chrono Key and are euros.</p>
-      ${ck.currencyNote ? `<p><b>Note:</b> ${esc(ck.currencyNote)}</p>` : ''}${tags ? `<p>${tags}</p>` : ''}${sections || '<p class="count">The page has not been read yet — only the product list.</p>'}</details>`);
+      .join('') || `<tr><td colspan="8" class="count">No client matches.</td></tr>`;
+  $('#cmore').classList.toggle('hide', clientsShown.length >= r.total);
+}
+
+async function showClient(id) {
+  let c;
+  try {
+    c = await api(`/api/clients/${id}`);
+  } catch (err) {
+    $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/clients">Back to the clients</a>`;
+    return;
   }
-  for (const v of w.sources.vault) {
-    const rows = Object.entries(v.data || {})
-      .filter(([, val]) => val !== '' && val !== null && !(Array.isArray(val) && !val.length))
-      .map(([k, val]) => `<div>${esc(k)}</div><div>${esc(typeof val === 'object' ? JSON.stringify(val) : val)}</div>`)
-      .join('');
-    parts.push(`<details class="src"><summary>Watch vault record (${esc(v.list)})</summary>
-      <p class="count">Read ${esc(fmtWhen(v.fetched_at))}.</p><div class="kv">${rows}</div></details>`);
+  renderClient(c, false);
+}
+
+function renderClient(c, editing) {
+  const editor = can('editor');
+  const F = state.meta.clientFields;
+  const shown = (f) => (f.key === 'type' ? clientTypeLabel(c.type) : c[f.key]);
+  const watchRows = (list, side) =>
+    list
+      .map(
+        (w) => `<a class="cw-row" href="#/watch/${w.id}" data-text="${esc(
+          [w.stock_no, w.title, w.reference, w.serial].join(' ').toLowerCase()
+        )}">
+          ${w.photo_id ? `<img src="/api/photos/${w.photo_id}?thumb=1" alt="" loading="lazy">` : '<span class="cw-none"></span>'}
+          <span class="cw-main"><b>${esc(w.stock_no || '')}</b> ${esc(w.title)}<span class="count" style="display:block;margin:0">${chip(w.status)} ${esc(
+            fmtDate(side === 'bought' ? w.purchase_date : w.sale_date)
+          )}</span></span>
+          <span class="cw-price">${dealPrice(w, side) || '<span class="blank">—</span>'}</span>
+        </a>`
+      )
+      .join('') || '<p class="count">None.</p>';
+
+  $('#app').innerHTML = `
+    <div class="watch-head">
+      <div>
+        <a href="#/clients" class="count" style="text-decoration:none">← Clients</a>
+        <h1>${esc(c.name)}</h1>
+        <div class="row">${c.type ? `<b>${esc(clientTypeLabel(c.type))}</b>` : ''}${c.company ? `<span>${esc(c.company)}</span>` : ''}
+          <span class="count" style="margin:0">${c.origin === 'chronokey' ? 'From Chrono Key' : 'Added in masterapp'}</span></div>
+        <div class="figures">
+          <div><span>Bought from them</span><b>${c.bought.length}</b></div>
+          <div><span>Sold to them</span><b>${c.sold.length}</b></div>
+        </div>
+      </div>
+      <div class="row">${editor && !editing ? '<button class="btn primary" id="cedit">Edit</button>' : ''}</div>
+    </div>
+    <div class="watch-layout">
+      <div class="stack">
+        <div class="panel">
+          <input type="search" id="cwq" placeholder="Search this client's watches — stock, model, reference, serial…" style="width:100%">
+        </div>
+        <div class="panel"><h3>Bought from them · ${c.bought.length}</h3><div class="cw" id="cw-bought">${watchRows(c.bought, 'bought')}</div></div>
+        <div class="panel"><h3>Sold to them · ${c.sold.length}</h3><div class="cw" id="cw-sold">${watchRows(c.sold, 'sold')}</div></div>
+      </div>
+      <div class="stack">
+        ${
+          editing
+            ? `<form class="panel" id="cform"><h3>Client</h3><div class="form-grid">${F.map((f) =>
+                f.type === 'enum'
+                  ? `<label>${esc(f.label)}<select name="${f.key}">${f.options
+                      .map((o) => `<option value="${esc(o)}"${c[f.key] === o ? ' selected' : ''}>${esc(o ? clientTypeLabel(o) : '—')}</option>`)
+                      .join('')}</select></label>`
+                  : f.type === 'longtext'
+                    ? `<label class="wide">${esc(f.label)}<textarea name="${f.key}" rows="3">${esc(c[f.key])}</textarea></label>`
+                    : `<label>${esc(f.label)}<input name="${f.key}" value="${esc(c[f.key])}"></label>`
+              ).join('')}</div>
+              <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" id="ccancel">Cancel</button></div></form>`
+            : `<div class="panel"><h3>Client</h3><dl class="fields">${F.map(
+                (f) => `<dt>${esc(f.label)}</dt><dd>${shown(f) ? esc(shown(f)).replace(/\n/g, '<br>') : '<span class="blank">—</span>'}${
+                  c.locked_fields.includes(f.key) ? ' <span class="count" style="margin:0" title="Edited here; the copy from Chrono Key leaves it alone">✎ edited here</span>' : ''
+                }</dd>`
+              ).join('')}</dl></div>`
+        }
+      </div>
+    </div>`;
+
+  $('#cwq').addEventListener('input', (e) => {
+    const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
+    $$('.cw-row').forEach((a) => (a.hidden = !words.every((w) => a.dataset.text.includes(w))));
+  });
+  $('#cedit')?.addEventListener('click', () => renderClient(c, true));
+  $('#ccancel')?.addEventListener('click', () => renderClient(c, false));
+  $('#cform')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const patch = {};
+    for (const f of F) {
+      const v = e.target.elements[f.key].value.trim();
+      if (v !== (c[f.key] ?? '')) patch[f.key] = v;
+    }
+    try {
+      if (Object.keys(patch).length) await api(`/api/clients/${c.id}`, { method: 'PATCH', body: patch });
+      flash('Saved');
+      showClient(c.id);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  });
+}
+
+function showNewClient() {
+  if (!can('editor')) return (location.hash = '#/clients');
+  const F = state.meta.clientFields;
+  $('#app').innerHTML = `
+    <a href="#/clients" class="count" style="text-decoration:none">← Clients</a>
+    <h1>Add a client</h1>
+    <form class="panel" id="nform" style="max-width:760px"><div class="form-grid">${F.map((f) =>
+      f.type === 'enum'
+        ? `<label>${esc(f.label)}<select name="${f.key}">${f.options.map((o) => `<option value="${esc(o)}">${esc(o ? clientTypeLabel(o) : '—')}</option>`).join('')}</select></label>`
+        : f.type === 'longtext'
+          ? `<label class="wide">${esc(f.label)}<textarea name="${f.key}" rows="3"></textarea></label>`
+          : `<label>${esc(f.label)}<input name="${f.key}"></label>`
+    ).join('')}</div>
+    <div class="row" style="margin-top:12px"><button class="btn primary">Add client</button></div></form>`;
+  $('#nform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {};
+    for (const f of F) if (e.target.elements[f.key].value.trim()) body[f.key] = e.target.elements[f.key].value.trim();
+    try {
+      const r = await api('/api/clients', { method: 'POST', body });
+      location.hash = `#/client/${r.id}`;
+    } catch (err) {
+      flash(err.message, true);
+    }
+  });
+}
+
+/*
+ * A watch's two clients, on its page: who it was bought from and who it was
+ * sold to, each a link to the client. An editor can change either — the link
+ * is then locked against the sync — or hand it back to Chrono Key.
+ */
+function renderWatchClients() {
+  const { w } = current;
+  const box = $('#wclients');
+  if (!box) return;
+  const editor = can('editor') && !w.deleted_at;
+  const side = (role, label, typed) => {
+    const l = w.clients[role];
+    return `<div class="wc" data-role="${role}">
+      <div class="wc-line"><span class="wc-label">${label}</span>
+        <span>${l.id ? `<a href="#/client/${l.id}"><b>${esc(l.name)}</b></a>` : `<span class="blank">Not linked</span>${typed ? ` <span class="count" style="margin:0">· typed “${esc(typed)}”</span>` : ''}`}
+        ${l.locked ? ' <span class="count" style="margin:0">✎ set here</span>' : ''}</span>
+        ${editor ? `<span class="wc-act"><button type="button" class="btn small" data-change>Change</button>${
+          l.locked && w.origin !== 'manual' ? '<button type="button" class="btn small" data-back title="Use the client Chrono Key names">Use Chrono Key’s</button>' : ''
+        }</span>` : ''}
+      </div>
+      <div class="wc-pick hide"><input type="search" placeholder="Search clients…"><div class="wc-hits"></div></div>
+    </div>`;
+  };
+  box.innerHTML = `<h3>Clients</h3>${side('purchase', 'Bought from', w.purchased_from)}${side('sale', 'Sold to', w.sold_to)}`;
+
+  const set = async (role, clientId) => {
+    try {
+      await api(`/api/watches/${w.id}/client`, { method: 'PUT', body: { role, client_id: clientId } });
+      showWatch(w.id, { keepEdit: true });
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $$('.wc', box).forEach((el) => {
+    const role = el.dataset.role;
+    const pick = $('.wc-pick', el);
+    const input = $('input', pick);
+    let timer;
+    const search = async () => {
+      const r = await api(`/api/clients?${new URLSearchParams({ q: input.value, limit: 8 })}`).catch(() => ({ clients: [] }));
+      $('.wc-hits', pick).innerHTML =
+        r.clients
+          .map((c) => `<button type="button" class="wc-hit" data-id="${c.id}"><b>${esc(c.name)}</b> <span class="count" style="margin:0">${esc(
+            [clientTypeLabel(c.type), c.company, c.phone].filter(Boolean).join(' · ')
+          )}</span></button>`)
+          .join('') + (w.clients[role].id ? '<button type="button" class="wc-hit" data-id="">No client</button>' : '');
+    };
+    $('[data-change]', el)?.addEventListener('click', () => {
+      pick.classList.toggle('hide');
+      if (!pick.classList.contains('hide')) {
+        input.value = (role === 'purchase' ? w.purchased_from : w.sold_to) || '';
+        input.focus();
+        search();
+      }
+    });
+    $('[data-back]', el)?.addEventListener('click', () => set(role, 'chronokey'));
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(search, 200);
+    });
+    pick.addEventListener('click', (e) => {
+      const b = e.target.closest('.wc-hit');
+      if (b) set(role, b.dataset.id ? Number(b.dataset.id) : null);
+    });
+  });
+}
+
+/* ── expenses ─────────────────────────────────────────────────────── */
+
+const payLabel = (k) => state.meta.paymentKinds.find((p) => p.key === k)?.label || '';
+const expenseCost = (e) => money(e.amount, e.currency);
+
+async function showExpenses() {
+  const X = state.expenses;
+  $('#app').innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+      <div><h1>Expenses</h1><p class="sub" style="margin:0">What the business spends — from Chrono Key's expense list, and added here.</p></div>
+      ${can('editor') ? '<a class="btn gold" href="#/expenses/new">+ Add expense</a>' : ''}
+    </div>
+    <div class="filters" style="grid-template-columns:1fr auto auto auto">
+      <input class="q" type="search" id="xq" placeholder="Title, type, description or amount…" value="${esc(X.q)}">
+      <select id="xtype"><option value="">All types</option></select>
+      <label class="count" style="margin:0">From <input type="date" id="xfrom" value="${esc(X.from)}"></label>
+      <label class="count" style="margin:0">to <input type="date" id="xto" value="${esc(X.to)}"></label>
+    </div>
+    <div class="figures" id="xsum" style="margin:0 0 12px"></div>
+    <div class="panel tscroll" style="padding:0"><table class="list clients"><thead><tr>
+      <th>Date</th><th>Title</th><th>Type</th><th>Cost</th><th>In EUR</th><th>Paid by</th><th title="Payment copies">Copy</th>
+    </tr></thead><tbody id="xrows"></tbody></table></div>
+    <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="xmore">Show more</button></div>`;
+  let timer;
+  $('#xq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      X.q = e.target.value;
+      loadExpenses();
+    }, 220);
+  });
+  for (const [id, key] of [
+    ['#xtype', 'type'],
+    ['#xfrom', 'from'],
+    ['#xto', 'to'],
+  ]) {
+    $(id).addEventListener('change', (e) => {
+      X[key] = e.target.value;
+      loadExpenses();
+    });
   }
-  box.innerHTML = parts.join('<div style="height:8px"></div>') || '<p class="count">Added in masterapp — neither system holds it.</p>';
+  $('#xmore').addEventListener('click', () => loadExpenses(true));
+  $('#xrows').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (tr && !e.target.closest('a')) location.hash = `#/expense/${tr.dataset.id}`;
+  });
+  loadExpenses();
+}
+
+let expenseSeq = 0;
+let expensesShown = [];
+async function loadExpenses(more = false) {
+  const X = state.expenses;
+  const seq = ++expenseSeq;
+  const p = new URLSearchParams({ q: X.q, type: X.type, from: X.from, to: X.to, limit: 100, offset: more ? expensesShown.length : 0 });
+  let r;
+  try {
+    r = await api(`/api/expenses?${p}`);
+  } catch (err) {
+    return flash(err.message, true);
+  }
+  if (seq !== expenseSeq || !$('#xrows')) return;
+  expensesShown = more ? [...expensesShown, ...r.expenses] : r.expenses;
+
+  $('#xtype').innerHTML =
+    `<option value="">All types</option>` +
+    r.types
+      .filter((t) => t.k)
+      .map((t) => `<option value="${esc(t.k)}"${X.type === t.k ? ' selected' : ''}>${esc(t.k)} (${t.n})</option>`)
+      .join('') +
+    (X.type && !r.types.some((t) => t.k === X.type) ? `<option selected value="${esc(X.type)}">${esc(X.type)} (0)</option>` : '');
+  $('#xsum').innerHTML = `
+    <div><span>Expenses</span><b>${r.total.toLocaleString('en-GB')}</b></div>
+    <div><span>Total in EUR</span><b>${money(r.sum_eur, 'EUR')}</b></div>
+    ${r.without_eur ? `<div><span>Not in the total</span><b title="No euro figure: the cost is in its own currency only">${r.without_eur} without a euro figure</b></div>` : ''}`;
+  $('#xrows').innerHTML =
+    expensesShown
+      .map(
+        (e) => `<tr data-id="${e.id}">
+          <td style="white-space:nowrap">${esc(fmtDate(e.expense_date))}</td>
+          <td><a href="#/expense/${e.id}"><b>${esc(e.title || 'Untitled')}</b></a></td>
+          <td>${esc(e.type)}</td>
+          <td style="white-space:nowrap">${expenseCost(e) || '<span class="blank">—</span>'}</td>
+          <td style="white-space:nowrap">${money(e.cost_eur, 'EUR') || '<span class="blank">—</span>'}</td>
+          <td>${esc(payLabel(e.payment_method))}</td>
+          <td>${e.files ? `📎 ${e.files}` : ''}</td>
+        </tr>`
+      )
+      .join('') || `<tr><td colspan="7" class="count">No expense matches.</td></tr>`;
+  $('#xmore').classList.toggle('hide', expensesShown.length >= r.total);
+}
+
+/* The form, for a new expense and an edit. */
+function expenseForm(e) {
+  const F = state.meta.expenseFields;
+  const input = (f) => {
+    const v = e[f.key];
+    switch (f.type) {
+      case 'date':
+        return `<input type="date" name="${f.key}" value="${esc(v || '')}">`;
+      case 'currency': {
+        const codes = [...new Set([...state.meta.currencies, ...(v ? [v] : [])])];
+        return `<select name="${f.key}"><option value="">—</option>${codes.map((c) => `<option${c === v ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+      }
+      case 'enum':
+        return `<select name="${f.key}">${f.options.map((o) => `<option value="${esc(o)}"${o === (v || '') ? ' selected' : ''}>${esc(o ? payLabel(o) : '—')}</option>`).join('')}</select>`;
+      case 'longtext':
+        return `<textarea name="${f.key}" rows="4">${esc(v || '')}</textarea>`;
+      case 'bool':
+        return `<input type="checkbox" name="${f.key}"${v ? ' checked' : ''} style="justify-self:start">`;
+      default:
+        return `<input name="${f.key}" value="${esc(v ?? '')}"${f.key === 'type' ? ' list="xtypes" autocomplete="off"' : ''}${
+          f.type === 'money' || f.type === 'rate' ? ' inputmode="decimal"' : ''
+        }>`;
+    }
+  };
+  return `<div class="form-grid">${F.map(
+    (f) => `<label class="${f.type === 'longtext' ? 'wide' : ''}">${esc(f.label)}${input(f)}</label>`
+  ).join('')}</div><datalist id="xtypes"></datalist>`;
+}
+
+function readExpenseForm(form, e) {
+  const patch = {};
+  for (const f of state.meta.expenseFields) {
+    const el = form.elements[f.key];
+    const v = f.type === 'bool' ? el.checked : el.value.trim();
+    const was = e[f.key];
+    if (f.type === 'bool' ? Boolean(was) !== v : String(v) !== (was === null || was === undefined ? '' : String(was))) patch[f.key] = v;
+  }
+  return patch;
+}
+
+async function fillTypeSuggestions() {
+  const r = await api('/api/expenses/types').catch(() => ({ types: [] }));
+  const dl = $('#xtypes');
+  if (dl) dl.innerHTML = r.types.map((t) => `<option value="${esc(t)}">`).join('');
+}
+
+async function showExpense(id) {
+  let e;
+  try {
+    e = await api(`/api/expenses/${id}`);
+  } catch (err) {
+    $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/expenses">Back to the expenses</a>`;
+    return;
+  }
+  renderExpense(e, false);
+}
+
+function renderExpense(e, editing) {
+  const editor = can('editor');
+  const fileTile = (f) => `<div class="xfile">
+      <a href="/api/expense-files/${f.id}" target="_blank" rel="noopener">${
+        f.has_thumb ? `<img src="/api/expense-files/${f.id}?thumb=1" alt="">` : '<span class="xpdf">PDF</span>'
+      }<span class="xname">${esc(f.name || (f.content_type === 'application/pdf' ? 'Document.pdf' : 'Picture'))}</span></a>
+      ${editor && !e.deleted_at ? `<button type="button" class="btn small danger" data-rm="${f.id}">Remove</button>` : ''}
+    </div>`;
+  $('#app').innerHTML = `
+    <div class="watch-head">
+      <div>
+        <a href="#/expenses" class="count" style="text-decoration:none">← Expenses</a>
+        <h1>${esc(e.title || 'Untitled expense')}</h1>
+        <div class="row">${e.type ? `<b>${esc(e.type)}</b>` : ''}<span>${esc(fmtDate(e.expense_date))}</span>
+          ${e.deleted_at ? chip('deleted') : ''}
+          <span class="count" style="margin:0">${e.origin === 'chronokey' ? 'From Chrono Key' : 'Added in masterapp'}</span></div>
+        <div class="figures">
+          <div><span>Cost</span><b>${expenseCost(e) || '<span class="blank">—</span>'}</b></div>
+          <div><span>In EUR</span><b>${money(e.cost_eur, 'EUR') || '<span class="blank">—</span>'}</b></div>
+          ${e.exchange_rate ? `<div><span>Rate</span><b>${esc(Number(e.exchange_rate))}</b></div>` : ''}
+          <div><span>Paid by</span><b>${esc(payLabel(e.payment_method)) || '<span class="blank">—</span>'}</b></div>
+        </div>
+        ${e.exclude_from_profit ? '<p class="count" style="margin:8px 0 0">Left out of profit (Loan Book on Chrono Key).</p>' : ''}
+      </div>
+      <div class="row">
+        ${editor && !editing && !e.deleted_at ? '<button class="btn primary" id="xedit">Edit</button>' : ''}
+        ${editor ? (e.deleted_at ? '<button class="btn" id="xrestore">Restore</button>' : '<button class="btn danger" id="xdel">Delete</button>') : ''}
+      </div>
+    </div>
+    <div class="watch-layout">
+      <div class="stack">
+        <div class="panel"><h3>Payment copy</h3>
+          <div class="xfiles">${e.files.map(fileTile).join('') || '<p class="count" style="margin:0">None attached yet.</p>'}</div>
+          ${editor && !e.deleted_at ? `<label class="drop" id="xdrop" style="margin-top:12px">Drop a receipt or a transfer slip here, or <u>choose files</u> — pictures or PDFs
+            <input type="file" id="xfile" multiple accept="image/*,application/pdf" hidden></label>` : ''}
+        </div>
+      </div>
+      <div class="stack">
+        ${
+          editing
+            ? `<form class="panel" id="xform"><h3>Expense</h3>${expenseForm(e)}
+                <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" id="xcancel">Cancel</button></div></form>`
+            : `<div class="panel"><h3>Description</h3><div style="white-space:pre-wrap;overflow-wrap:anywhere">${
+                e.description ? esc(e.description) : '<span class="blank">—</span>'
+              }</div>${
+                e.locked_fields.length
+                  ? `<p class="count" style="margin:10px 0 0">✎ Edited here: ${esc(
+                      e.locked_fields.map((k) => state.meta.expenseFields.find((f) => f.key === k)?.label || k).join(', ')
+                    )} — the copy from Chrono Key leaves ${e.locked_fields.length === 1 ? 'it' : 'them'} alone.</p>`
+                  : ''
+              }</div>`
+        }
+      </div>
+    </div>`;
+
+  const upload = async (files) => {
+    if (!files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f, f.name);
+    try {
+      await api(`/api/expenses/${e.id}/files`, { method: 'POST', body: fd });
+      flash(files.length === 1 ? 'Payment copy added' : `${files.length} payment copies added`);
+      showExpense(e.id);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $('#xfile')?.addEventListener('change', (ev) => upload([...ev.target.files]));
+  const drop = $('#xdrop');
+  if (drop) {
+    drop.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      drop.classList.add('over');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      drop.classList.remove('over');
+      upload([...ev.dataTransfer.files]);
+    });
+  }
+  $$('[data-rm]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this payment copy?')) return;
+      await api(`/api/expenses/${e.id}/files/${b.dataset.rm}`, { method: 'DELETE' }).then(
+        () => showExpense(e.id),
+        (err) => flash(err.message, true)
+      );
+    })
+  );
+  $('#xedit')?.addEventListener('click', () => renderExpense(e, true));
+  $('#xcancel')?.addEventListener('click', () => renderExpense(e, false));
+  $('#xdel')?.addEventListener('click', async () => {
+    if (!confirm(`Delete “${e.title}”? It can be restored later.`)) return;
+    await api(`/api/expenses/${e.id}`, { method: 'DELETE' }).then(() => showExpense(e.id), (err) => flash(err.message, true));
+  });
+  $('#xrestore')?.addEventListener('click', async () => {
+    await api(`/api/expenses/${e.id}/restore`, { method: 'POST' }).then(() => showExpense(e.id), (err) => flash(err.message, true));
+  });
+  $('#xform')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const patch = readExpenseForm(ev.target, e);
+    try {
+      if (Object.keys(patch).length) await api(`/api/expenses/${e.id}`, { method: 'PATCH', body: patch });
+      flash('Saved');
+      showExpense(e.id);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  });
+  if (editing) fillTypeSuggestions();
+}
+
+function showNewExpense() {
+  if (!can('editor')) return (location.hash = '#/expenses');
+  const blank = { expense_date: new Date().toISOString().slice(0, 10), payment_method: '', exclude_from_profit: false };
+  $('#app').innerHTML = `
+    <a href="#/expenses" class="count" style="text-decoration:none">← Expenses</a>
+    <h1>Add an expense</h1>
+    <form class="panel" id="xnew" style="max-width:820px">${expenseForm(blank)}
+      <label class="drop" style="margin-top:14px">Payment copy — a receipt or a transfer slip, pictures or PDFs: <u>choose files</u>
+        <input type="file" name="files" multiple accept="image/*,application/pdf" hidden></label>
+      <div class="count" id="xpicked"></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary">Add expense</button></div></form>`;
+  fillTypeSuggestions();
+  const form = $('#xnew');
+  form.elements.files.addEventListener('change', (ev) => {
+    $('#xpicked').textContent = [...ev.target.files].map((f) => f.name).join(', ');
+  });
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = readExpenseForm(form, {});
+    let id;
+    try {
+      id = (await api('/api/expenses', { method: 'POST', body })).id;
+    } catch (err) {
+      return flash(err.message, true);
+    }
+    const files = [...form.elements.files.files];
+    if (files.length) {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f, f.name);
+      await api(`/api/expenses/${id}/files`, { method: 'POST', body: fd }).catch((err) =>
+        flash(`The expense is added, but the payment copy was not: ${err.message}`, true)
+      );
+    }
+    location.hash = `#/expense/${id}`;
+  });
 }
 
 /* ── new watch ────────────────────────────────────────────────────── */
@@ -841,6 +1430,8 @@ async function showImport() {
     ({
       'chronokey/csv': 'Product list (CSV upload)',
       'chronokey/list': 'Product list (live)',
+      'chronokey/clients': 'Client list',
+      'chronokey/expenses': 'Expenses',
       'chronokey/details-new': 'Watch pages & photos — new',
       'chronokey/details-active': 'Watch pages & photos — unsold and recent',
       'chronokey/details-full': 'Watch pages & photos — everything',
@@ -915,6 +1506,8 @@ async function showImport() {
         <p class="sub">Each watch's own page brings its photos, Chrono Key's euro figures and the box / papers ticks. The first full read is about 1,700 pages at a polite pace — a couple of hours. It carries on where it stopped if interrupted.</p>
         <div class="row">
           <button class="btn" data-job="chronokey-list">Read the product list now</button>
+          <button class="btn" data-job="chronokey-clients">Read the client list now</button>
+          <button class="btn" data-job="chronokey-expenses">Read expenses now</button>
           <button class="btn gold" data-job="chronokey-new">Read new watch pages & photos</button>
           <button class="btn" data-job="chronokey-active">Re-read unsold & recent</button>
           <button class="btn" data-job="chronokey-full">Re-read every page</button>
@@ -923,7 +1516,7 @@ async function showImport() {
       <div class="panel">
         <h2>3 · The Watch vault</h2>
         ${s.configured.vault ? '' : '<p class="note">Not configured — set VAULT_TOKEN (the worker’s WORKER_TOKEN) on the server.</p>'}
-        <p class="sub">Brings in B2B and B2C prices, the vault's photos, and watches only the vault holds.</p>
+        <p class="sub">Brings in B2B, B2C and Chrono24 prices, the vault's photos, and watches only the vault holds.</p>
         <button class="btn gold" data-job="vault">Import the Watch vault</button>
       </div>`
           : ''

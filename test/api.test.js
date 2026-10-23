@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import pg from 'pg';
 import sharp from 'sharp';
 
@@ -12,11 +13,27 @@ import sharp from 'sharp';
  */
 
 const DB = process.env.TEST_DATABASE_URL || 'postgres://postgres@localhost:5433/masterapp_test';
-let server, base, pool, dataDir;
+let server, base, pool, dataDir, rateSource;
 
 before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-api-'));
+  // Stand-ins for the two rate sources: the "live" one answers without AED.
+  rateSource = http
+    .createServer((req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify(
+          req.url === '/live'
+            ? { data: { rates: { USD: '1', EUR: '0.86', GBP: '0.75' } } }
+            : { result: 'success', rates: { USD: 1, EUR: 0.86, GBP: 0.75, AED: 3.6725, BTC: 'x' } }
+        )
+      );
+    })
+    .listen(0);
+  const rateBase = `http://127.0.0.1:${rateSource.address().port}`;
   Object.assign(process.env, {
+    RATES_LIVE_URL: `${rateBase}/live`,
+    RATES_DAILY_URL: `${rateBase}/daily`,
     DATABASE_URL: DB,
     DATA_DIR: dataDir,
     ADMIN_EMAIL: 'boss@example.com',
@@ -37,6 +54,7 @@ before(async () => {
 
 after(async () => {
   server.close();
+  rateSource.close();
   await pool.end();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
@@ -152,6 +170,112 @@ test('search: a bare number is a stock number, exactly', async () => {
   assert.equal((await viewer.call('GET', '/api/watches?q=aquanaut%20blue')).body.total, 1, 'words narrow together');
   const f = (await viewer.call('GET', '/api/watches?brand=Rolex')).body.facets.brand;
   assert.ok(f.some((b) => b.k === 'Patek Philippe'), 'the brand counts ignore the brand filter itself');
+});
+
+test('what a reference has sold for: newest first, the vault beside it, the ones in stock', async () => {
+  const add = async (w) => (await editor.call('POST', '/api/watches', { brand: 'Rolex', reference: '278271', ...w })).body.id;
+  const old = await add({ stock_no: '6001', status: 'sold', sale_date: '2026-05-09', sale_price: '22500', sale_price_eur: '19080' });
+  const recent = await add({ stock_no: '6002', status: 'sold', sale_date: '2026-10-06', sale_price: '71000' });
+  await add({ stock_no: '6003', status: 'sold', sale_date: '2026-10-07' });
+  const shelf = await add({ stock_no: '6004', status: 'in_stock' });
+  const gone = await add({ stock_no: '6005', status: 'in_stock' });
+  await editor.call('DELETE', `/api/watches/${gone}`);
+  await add({ stock_no: '6006', status: 'in_stock', reference: '126334' });
+  await pool.query(
+    `INSERT INTO vault_records(vault_id, list, stock_no, data, watch_id) VALUES
+       ('v-6002', 'soldStocks', '6002', '{"soldPrice": 71000, "soldCurrency": "AED", "soldDate": "2026-10-06"}', $1),
+       ('v-6001', 'soldStocks', '6001', '{"soldPrice": 1, "soldCurrency": "USD"}', $2)`,
+    [recent, old]
+  );
+
+  const s = (await viewer.call('GET', `/api/watches/${shelf}/sold-for`)).body;
+  assert.equal(s.reference, '278271');
+  assert.deepEqual(s.sold.map((x) => x.stock_no), ['6002', '6001'], 'newest first; a sale with no figure is not listed');
+  assert.equal(s.soldTotal, 3, 'but it is counted');
+  assert.deepEqual(s.sold[0].vault, { price: 71000, currency: 'AED' });
+  assert.equal(s.sold[1].eur, 19080);
+  assert.equal(s.sold[1].vault, null, "the vault's 1 is a placeholder, not a sale");
+  assert.deepEqual(s.inStock.map((x) => [x.stock_no, x.self]), [['6004', true]], 'deleted and other references left out');
+});
+
+test('clients: added, searched, tied to a watch, and the watch listed on the client', async () => {
+  assert.equal((await viewer.call('POST', '/api/clients', { forename: 'Viewer' })).status, 403, 'editors add clients');
+  assert.equal((await editor.call('POST', '/api/clients', { email: 'x@example.com' })).status, 400, 'a client needs a name');
+  const c = await editor.call('POST', '/api/clients', { forename: 'Ahmed', surname: 'Khan', type: 'dealer', phone: '+92 300 1234567' });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const found = (await viewer.call('GET', '/api/clients?q=khan')).body;
+  assert.deepEqual(found.clients.map((x) => x.name), ['Ahmed Khan']);
+  assert.equal((await viewer.call('GET', '/api/clients?q=3001234567')).body.total, 1, 'by phone digits');
+
+  const w = (await editor.call('POST', '/api/watches', { stock_no: '7001', brand: 'Rolex', purchase_date: '2026-10-01' })).body.id;
+  assert.equal((await viewer.call('PUT', `/api/watches/${w}/client`, { role: 'purchase', client_id: c.body.id })).status, 403);
+  assert.equal((await editor.call('PUT', `/api/watches/${w}/client`, { role: 'purchase', client_id: c.body.id })).status, 200);
+  assert.equal((await editor.call('PUT', `/api/watches/${w}/client`, { role: 'sale', client_id: 999999 })).status, 404);
+  const page = (await viewer.call('GET', `/api/watches/${w}`)).body;
+  assert.deepEqual(page.clients.purchase, { id: c.body.id, name: 'Ahmed Khan', locked: false }, 'a watch added here locks nothing');
+  assert.equal(page.clients.sale.id, null);
+  const client = (await viewer.call('GET', `/api/clients/${c.body.id}`)).body;
+  assert.deepEqual(client.bought.map((x) => x.stock_no), ['7001']);
+  assert.equal((await viewer.call('GET', '/api/clients?q=khan')).body.clients[0].bought, 1);
+
+  assert.equal((await editor.call('PATCH', `/api/clients/${c.body.id}`, { type: 'wholesale' })).status, 400);
+  assert.deepEqual((await editor.call('PATCH', `/api/clients/${c.body.id}`, { nickname: 'AK' })).body.changed, ['nickname']);
+});
+
+test('expenses: added with a payment copy, searched, totalled in euros, deleted', async () => {
+  assert.equal((await viewer.call('POST', '/api/expenses', { title: 'x', amount: 1, currency: 'EUR' })).status, 403);
+  assert.equal((await editor.call('POST', '/api/expenses', { title: 'Rent', amount: '5000' })).status, 400, 'a currency is said, never assumed');
+  const rent = await editor.call('POST', '/api/expenses', {
+    title: 'Dubai office rent | October', type: 'RENT', amount: '5,000', currency: 'aed', payment_method: 'bank', expense_date: '2026-10-01',
+  });
+  assert.equal(rent.status, 201, JSON.stringify(rent.body));
+  const fuel = await editor.call('POST', '/api/expenses', { title: 'Petrol', type: 'Local Expense Petrol', amount: '80', currency: 'EUR', expense_date: '2026-10-02' });
+  assert.equal((await viewer.call('GET', `/api/expenses/${fuel.body.id}`)).body.cost_eur, 80, 'an amount in euros is its own euro figure');
+
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');
+  const fd = new FormData();
+  fd.append('files', new Blob([pdf], { type: 'application/pdf' }), 'transfer slip.pdf');
+  fd.append('files', new Blob([await sharp({ create: { width: 40, height: 30, channels: 3, background: '#c33' } }).jpeg().toBuffer()]), 'receipt.jpg');
+  const up = await editor.call('POST', `/api/expenses/${rent.body.id}/files`, fd);
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  const bad = new FormData();
+  bad.append('files', new Blob([Buffer.from('MZ not a document')]), 'evil.exe');
+  assert.equal((await editor.call('POST', `/api/expenses/${rent.body.id}/files`, bad)).status, 415);
+
+  const e = (await viewer.call('GET', `/api/expenses/${rent.body.id}`)).body;
+  assert.equal(e.currency, 'AED');
+  assert.equal(e.amount, 5000);
+  assert.equal(e.cost_eur, null, 'no euro figure is made up');
+  assert.deepEqual(e.files.map((f) => [f.name, f.content_type]), [['transfer slip.pdf', 'application/pdf'], ['receipt.jpg', 'image/jpeg']]);
+  const file = await viewer.call('GET', `/api/expense-files/${e.files[0].id}`);
+  assert.equal(file.type, 'application/pdf');
+  assert.ok(file.body.subarray(0, 5).equals(Buffer.from('%PDF-')));
+  assert.equal((await client().call('GET', `/api/expense-files/${e.files[0].id}`)).status, 401, 'behind the sign-in');
+
+  const found = (await viewer.call('GET', '/api/expenses?q=rent')).body;
+  assert.deepEqual(found.expenses.map((x) => x.title), ['Dubai office rent | October']);
+  assert.equal(found.expenses[0].files, 2);
+  assert.equal((await viewer.call('GET', '/api/expenses?q=5000')).body.total, 1, 'by its amount');
+  const all = (await viewer.call('GET', '/api/expenses?from=2026-10-01&to=2026-10-31')).body;
+  assert.equal(all.total, 2);
+  assert.equal(all.sum_eur, 80);
+  assert.equal(all.without_eur, 1, 'and says how many the total leaves out');
+  assert.deepEqual((await viewer.call('GET', '/api/expenses/types')).body.types.sort(), ['Local Expense Petrol', 'RENT']);
+
+  assert.equal((await editor.call('DELETE', `/api/expenses/${rent.body.id}/files/${e.files[1].id}`)).status, 200);
+  assert.equal((await editor.call('DELETE', `/api/expenses/${fuel.body.id}`)).status, 200);
+  assert.equal((await viewer.call('GET', '/api/expenses')).body.total, 1);
+});
+
+test('rates for the converter: a source without AED is refused, the daily one is used, and it says so', async () => {
+  assert.equal((await client().call('GET', '/api/rates')).status, 401, 'signed in only');
+  const r = (await viewer.call('GET', '/api/rates')).body;
+  assert.equal(r.base, 'USD');
+  assert.equal(r.kind, 'daily');
+  assert.equal(r.rates.AED, 3.6725);
+  assert.equal(r.rates.BTC, undefined, 'not a number, not passed on');
+  assert.equal(r.stale, false);
+  assert.ok(r.currencies.some((c) => c.code === 'HKD'));
 });
 
 test('an admin cannot lock themselves out', async () => {

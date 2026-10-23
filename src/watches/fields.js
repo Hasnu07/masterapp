@@ -67,6 +67,8 @@ export const FIELDS = [
   { key: 'b2b_currency', label: 'B2B currency', type: 'currency', group: 'Prices' },
   { key: 'b2c_price', label: 'B2C price', type: 'money', currency: 'b2c_currency', group: 'Prices' },
   { key: 'b2c_currency', label: 'B2C currency', type: 'currency', group: 'Prices' },
+  { key: 'chrono24_price', label: 'Chrono24 price', type: 'money', currency: 'chrono24_currency', group: 'Prices' },
+  { key: 'chrono24_currency', label: 'Chrono24 currency', type: 'currency', group: 'Prices' },
 
   { key: 'sale_date', label: 'Sale date', type: 'date', group: 'Sale' },
   { key: 'sold_to', label: 'Sold to', type: 'text', group: 'Sale' },

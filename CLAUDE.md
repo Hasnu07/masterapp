@@ -61,6 +61,26 @@ are kept for reference only.
 - `watch_events` — every change, by whom (a user, `chronokey`, `vault`), with
   old → new values.
 
+The watch page shows neither the history nor the raw Chrono Key / vault
+records (asked 23 Oct 2026). Both are still kept: the history at
+`/api/watches/:id/events`, the raw records in the tables.
+
+The watch page's header shows the purchase price, B2B, B2C and Chrono24 and
+Chrono Key's description; under the photos, **what the reference has sold
+for** (`soldFor`, `/api/watches/:id/sold-for`) — InvoiceWEB's box of the same
+name, but read from our own copy, so it costs Chrono Key nothing: Chrono Key's
+euro figure (else the sale price held), the vault's own sold figure beside it,
+newest ten, and the examples still in stock.
+
+**The blue ▾ converter beside every price** (asked 23 Oct 2026) is
+InvoiceWEB's, ported: `public/fxchip.js` watches the page and hangs an arrow
+after any amount written WITH its currency (`€16,800`, `AED 71,000`,
+`$110,000`); a bare figure ("currency not stated") gets none — converting it
+would be guessing. Rates: `src/rates` → `/api/rates` (Coinbase live, else
+open.er-api daily; held a minute; a stale copy says so). No Converter tab
+here, so the popup has no "Open converter". If InvoiceWEB's changes, port it
+again rather than letting the two drift.
+
 **One watch record = one STOCK NUMBER = one purchase.** The same physical
 watch bought back and sold again is two records, exactly as in Chrono Key;
 `ck_product_id` (Chrono Key's "Product ID") links them, and the watch page
@@ -82,7 +102,7 @@ marks it "✎ edited here · use Chrono Key's" (unlock). On a record added here
 - `SYNC=off` is the switch-over: nothing is copied any more.
 
 Source strengths (`apply.js`): **own** replaces (Chrono Key's product list for
-purchase and sale; Chrono Key's euro figures; the vault's B2B/B2C), **fill**
+purchase and sale; Chrono Key's euro figures; the vault's B2B, B2C and Chrono24 — its `b2chronoFinal`), **fill**
 only fills a blank (the detail page's spec; the vault's spec, place and
 status). A currency is never CLEARED by a source that simply does not state
 one.
@@ -94,6 +114,71 @@ fill it again (85 sizes and bezels on the first live read). The list still
 clears the DEAL — a sale taken back on Chrono Key is cleared here. So handing
 back ("use Chrono Key's") a spec field the list leaves empty clears it at
 once, for the page or the vault to fill (`unlockField`, `leftBlank`).
+
+## Clients (23 Oct 2026)
+
+Asked for: "connect each stock with each client … a new tab of that client,
+searchable." `src/clients`, `import/chronokey/clients.js`, migration 004.
+
+- Chrono Key's client list is `/User/ClientList`; its rows come from **POST
+  `/User/ClientListDatatable`** (PageSize, PageNumber, SearchBy,
+  `roleType=Client`). First read: **646 clients**, all in one answer of
+  PageSize 1000 — an object per client, `id` a GUID, `firstName` with stray
+  spaces, `clientType` D (499, Dealer) or I (147, Retail; the page shows any
+  other code as Retail-Company), `companyName`, `phoneNumber`, bill…/ship…
+  address, `isActive`. Kept whole in `ck_clients`; ours in `clients`; changes
+  in `client_events`. A field edited here is locked, as for watches.
+- **Linked by id, never by name.** The product grid names both sides of every
+  deal: `clientId` (bought from — the `purchasedFrom` column) and `soldToId`
+  (sold to). All 1,665 / 1,468 ids were on the client list. 505 watches have
+  a typed "Purchased from" that is NOT the client's name ("EVALUMASA (DieGO
+  GIMINEZ)" is the client "DieGO GIMINEZ"), and 8 names belong to two
+  clients — matching names would have been wrong both ways.
+- `watches.purchased_from_client_id` / `sold_to_client_id`, set by the sync
+  from `ck_records.list_row` (rows from the CSV export carry no ids: left
+  alone). A link changed on the watch page is locked
+  (`purchased_from_client` / `sold_to_client` in `locked_fields`); "Use Chrono
+  Key's" hands it back. A grid row with no buyer clears the sale's link.
+- The 15-minute pass reads the client list after the product list (one more
+  request). Dry run on this PC's copy, rolled back: 646 clients, 1,661 of
+  1,671 watches linked to who they were bought from, 1,464 of 1,467 sold ones
+  to their buyer.
+
+## Expenses (23 Oct 2026)
+
+Asked for: a separate Expenses tab — currency, title, type, cost, payment
+method, description, payment copy. `src/expenses`,
+`import/chronokey/expenses.js`, migration 005.
+
+- **`/Stock/ExpenseList` is not a data grid**: the page itself holds every
+  expense (915 rows, 3.6 MB — Title, Type, Description, Cost "£", Created
+  Date in `data-sort`, edit link `/Stock/AddEditExpense/{id}`). Each
+  expense's own page (its edit form, a GET) holds the rest: CurrencyID (the
+  `selected` option), ExchangeRate, Cost in that currency, typeId,
+  PaymentType (0 Cash · 1 Card · 2 Wire · 3 Crypto · 4 PayPal / Chrono24),
+  ExcludeFromProfit ("Loan Book"). Chrono Key has no place for a payment
+  copy: that is ours (`expense_files`, a picture or a PDF, checked by its
+  bytes, served behind the sign-in).
+- **The list's Cost is Chrono Key's booked figure** = cost × rate, in euros
+  in practice (AED 4,300 × 0.24 = "£1,032"): stored as `cost_eur`. Checked on
+  60 real pages: every one within 1%. Kept as Chrono Key booked it — where
+  somebody typed rate 1 on a dollar or pound cost (2012 "usd 1307", 2020
+  "gbp 636"), its euro figure is the bare amount, and so is ours.
+- **Its two European currency options are not what they say.** "GBP (£)" is
+  the BASE (rate fixed at 1) and the base is euros: "salva | COMMISION | eur
+  5,000" is GBP 5,000 at 1. "EUR (€)" is used for POUNDS at a pound-to-euro
+  rate: "kashan | salary | gbp 3,000" is EUR 3,000 at 1.18. So the currency
+  (`currencyOf`): what the title/description says with this same amount
+  (`currencyFromNote`, as the product list) → else "GBP" = EUR → else "EUR"
+  at rate 1 = EUR, at any other rate NOT STATED (pounds, most likely — not
+  guessed) → AED / USD / CHF / HKD as chosen (their rates fit).
+- Payment type is unset on Chrono Key for most expenses (55 of 60 read),
+  though titles often say "PAID IN CASH" — not read from the title.
+- The pass: the list every 15 minutes (one request); an expense's page only
+  when it is new or its line on the list changed (compared key-sorted —
+  jsonb reorders keys), at most 200 a pass, two at a time. A page that fails
+  is retried a day later, not never. First run on the live site: ~915 pages
+  over the first five passes.
 
 ## Chrono Key's product list — read it right
 
@@ -269,7 +354,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
   photos on the wrong watch in the source data (11 ↔ 1446, 1570, 739 ↔ 1346,
   1607 ↔ 1606); buy-backs not linked by `ck_product_id` (same serial: 126/330,
   537/1021, 683/1007, 813/1535, 1048/1433, 1149/1426, 1454/1645).
-- Documents (PDFs) per watch.
+- Documents (PDFs) per watch. Storage now takes PDFs (`saveDocument`, used
+  for expense payment copies); a watch's own documents are still to do.
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
-import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, picture } from './fakes.js';
+import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, EXPENSES, picture } from './fakes.js';
 
 /*
  * The import and sync, end to end, against stand-ins for Chrono Key and the
@@ -42,6 +42,10 @@ before(async () => {
     list: await import('../src/import/listimport.js'),
     watches: await import('../src/watches/index.js'),
     client: await import('../src/import/chronokey/client.js'),
+    ckClients: await import('../src/import/chronokey/clients.js'),
+    clients: await import('../src/clients/index.js'),
+    ckExpenses: await import('../src/import/chronokey/expenses.js'),
+    expenses: await import('../src/expenses/index.js'),
   };
   await m.migrate.migrate({ log: () => {} });
   db = m.db.query;
@@ -88,6 +92,110 @@ test('the live product grid becomes our watches, read by its own field names', a
   assert.equal(b.ck_id, null, 'the grid names no detail page; the search finds it later');
   assert.equal(b.purchase_currency, '', 'no description, no currency');
   assert.equal((await watch('1701')).status, 'incoming', 'on the incoming page and unsold');
+});
+
+test("Chrono Key's clients come across, and every watch is tied to both sides of its deals by id", async () => {
+  const s = await m.ckClients.syncClients();
+  assert.equal(s.clients, 4);
+  assert.equal(s.created, 4);
+  const byCk = async (id) => (await db('SELECT * FROM clients WHERE ck_id = $1', [id])).rows[0];
+  const one = await byCk('c-one');
+  const omar = await byCk('c-omar');
+  assert.equal(one.forename, 'Dealer One', 'stray spaces trimmed');
+  assert.equal(one.type, 'dealer');
+  assert.equal(one.company, 'One Watches LLC');
+  assert.equal(one.address, 'Gold Souk 4\nDubai');
+  assert.equal(one.country, 'United Arab Emirates');
+  assert.equal(omar.type, 'retail');
+  assert.equal((await byCk('c-idle')).type, 'retail_company', 'any type but D and I, as Chrono Key shows it');
+  assert.equal((await db("SELECT count(*)::int AS n FROM ck_clients")).rows[0].n, 4, 'the raw rows are kept');
+
+  assert.equal((await watch('1668')).purchased_from_client_id, one.id);
+  assert.equal((await watch('1668')).sold_to_client_id, omar.id);
+  assert.equal((await watch('1700')).sold_to_client_id, null);
+  const page = await m.clients.getClient(one.id);
+  assert.deepEqual(page.bought.map((w) => w.stock_no), ['1701', '1668'], 'newest purchase first');
+  assert.deepEqual((await m.clients.getClient(omar.id)).sold.map((w) => w.stock_no), ['1668']);
+
+  const find = async (q) => (await m.clients.listClients({ q })).clients.map((c) => c.name);
+  assert.deepEqual(await find('omar'), ['Omar F']);
+  assert.deepEqual(await find('collector'), ['Omar F'], 'by nickname');
+  assert.deepEqual(await find('+971501234567'), ['Dealer One'], 'a phone by its digits, however written');
+  assert.deepEqual(await find('one watches'), ['Dealer One'], 'by company');
+  const listed = (await m.clients.listClients({})).clients.find((c) => c.name === 'Dealer One');
+  assert.equal(listed.bought, 2);
+
+  // An edit here, and a link changed here, survive the next read of Chrono Key.
+  await m.clients.updateClient(one.id, { forename: 'Dealer One (Dubai)' }, null);
+  const w1700 = await watch('1700');
+  await m.clients.linkWatch(w1700.id, 'sale', omar.id, null);
+  const again = await m.ckClients.syncClients();
+  assert.equal(again.created, 0);
+  assert.equal(again.watchesLinked, 0, 'nothing moves the second time');
+  assert.equal((await byCk('c-one')).forename, 'Dealer One (Dubai)');
+  assert.equal((await watch('1700')).sold_to_client_id, omar.id);
+  assert.ok((await watch('1700')).locked_fields.includes('sold_to_client'));
+
+  // Handed back: Chrono Key's grid names no buyer for 1700.
+  await m.clients.linkWatch(w1700.id, 'sale', 'chronokey', null);
+  assert.equal((await watch('1700')).sold_to_client_id, null);
+  assert.ok(!(await watch('1700')).locked_fields.includes('sold_to_client'));
+  const ev = (await db("SELECT action, changes FROM watch_events WHERE watch_id = $1 ORDER BY id", [w1700.id])).rows;
+  assert.deepEqual(ev.find((e) => e.changes.sold_to_client)?.changes.sold_to_client, [null, 'Omar F'], 'the history names the client');
+});
+
+test("Chrono Key's expenses: the list, then each one's own page for its currency, rate and payment", async () => {
+  const pages = () => ck.calls.filter((c) => c.startsWith('GET /Stock/AddEditExpense/')).length;
+  const s = await m.ckExpenses.syncExpenses();
+  assert.equal(s.listed, 5);
+  assert.equal(s.created, 5);
+  assert.equal(s.pages, 5);
+  const byCk = async (id) => (await db('SELECT * FROM expenses WHERE ck_id = $1', [id])).rows[0];
+  const ferrari = await byCk(2044);
+  assert.equal(ferrari.amount, 4300, 'the cost in its own currency, from its page');
+  assert.equal(ferrari.currency, 'AED');
+  assert.equal(ferrari.exchange_rate, 0.24);
+  assert.equal(ferrari.cost_eur, 1032, "the list's booked figure: 4,300 × 0.24");
+  assert.equal(ferrari.payment_method, 'cash');
+  assert.equal(ferrari.type, 'Logistics Expense');
+  assert.equal(ferrari.expense_date, '2026-10-20');
+  const meta = await byCk(2041);
+  assert.equal(meta.currency, 'USD');
+  assert.equal(meta.payment_method, 'card');
+  const trip = await byCk(2030);
+  assert.equal(trip.currency, 'EUR', "Chrono Key's \"GBP\" is its base, which is euros");
+  assert.equal((await byCk(1987)).currency, 'GBP', 'booked under "EUR" at 1.18, and the title says gbp 3,000');
+  assert.equal((await byCk(1987)).cost_eur, 3540);
+  assert.equal((await byCk(2007)).currency, '', '"EUR" at 1.18 with nothing saying which: not stated, never guessed');
+  assert.equal(trip.payment_method, '', 'no payment type picked');
+  assert.equal(trip.exclude_from_profit, true);
+  assert.equal(trip.description, 'Complete\n2026-10-14 Flight / Ticket EUR 585\nTotal $1,701.8', 'its lines kept');
+
+  // Nothing changed: the list is read, no page is.
+  const n = pages();
+  const again = await m.ckExpenses.syncExpenses();
+  assert.equal(pages(), n, 'no page re-read when its line on the list is unchanged');
+  assert.equal(again.created + again.updated, 0);
+
+  // An edit here survives; a change on Chrono Key's list re-reads that one page.
+  await m.expenses.updateExpense(meta.id, { title: 'Meta ads — October' }, null);
+  EXPENSES[2041].booked = '£180.00';
+  EXPENSES[2041].cost = '200.00';
+  await m.ckExpenses.syncExpenses();
+  assert.equal(pages(), n + 1, 'only the changed expense');
+  const meta2 = await byCk(2041);
+  assert.equal(meta2.amount, 200);
+  assert.equal(meta2.cost_eur, 180);
+  assert.equal(meta2.title, 'Meta ads — October', 'the edit made here is kept');
+
+  // Deleted here, it stays deleted.
+  await m.expenses.deleteExpense(ferrari.id, null);
+  await m.ckExpenses.syncExpenses();
+  assert.ok((await byCk(2044)).deleted_at);
+  const list = await m.expenses.listExpenses({});
+  assert.equal(list.total, 4);
+  assert.equal(list.sum_eur, 180 + 1575.93 + 3540 + 590);
+  assert.deepEqual((await m.expenses.listExpenses({ q: 'salary' })).expenses.map((e) => e.ck_id), [1987]);
 });
 
 test('watch pages bring euro figures, ticks and photos — only from Chrono Key', async () => {
@@ -167,6 +275,8 @@ test('the vault adds prices, its photos and the watches only it holds', async ()
   assert.equal(a.b2b_currency, 'USD');
   assert.equal(a.b2c_price, 52000, 'a zero in the final prices is skipped, not taken');
   assert.equal(a.b2c_currency, 'AED');
+  assert.equal(a.chrono24_price, 14900);
+  assert.equal(a.chrono24_currency, 'USD');
   assert.equal(a.dial, 'Pink', "Chrono Key's value is not replaced by the vault's");
   assert.equal(a.location, 'Dubai');
   const vp = (await photos(a.id)).filter((p) => p.source === 'vault');

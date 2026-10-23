@@ -69,15 +69,94 @@ export const GRID = [
     wholeSalePrice: 11538, retailPrice: 11900, watchMonth: 3, watchYear: 2026, dial: 'Pink', size: '31', material: 'SS',
     description: 'aed 46,000 = usd 12,534 as of 23-09-2026', paperWork: true, servicePaper: false, box: false,
     condition: 'New', isSold: true, soldTo: 'Omar F', saleDate: '2026-09-25T00:00:00', salePrice: 14000, saleCash: 0,
-    saleCard: 0, saleWire: 0, saleCrypto: 14000, saleZellVenmo: 0, purchaseExchangeRate: 0.234, category: 'Dubai' }),
+    saleCard: 0, saleWire: 0, saleCrypto: 14000, saleZellVenmo: 0, purchaseExchangeRate: 0.234, category: 'Dubai',
+    clientId: 'c-one', soldToId: 'c-omar' }),
   gridRow({ id: 9002, stockNumber: 1700, serialNumber: 'S1700', makeName: 'Patek Philippe', model: 'Nautilus',
     subModel: '5711/1A-014', purchasedFrom: 'Dealer Two', purchaseDate: '2026-10-01T09:00:00', purchasePrice: 98000,
     purchaseWire: 98000, wholeSalePrice: 103000, retailPrice: null, watchMonth: 9, watchYear: 2026, paperWork: true,
-    box: true, condition: 'Unworn', category: 'Watch' }),
+    box: true, condition: 'Unworn', category: 'Watch', clientId: 'c-two' }),
   gridRow({ id: 9003, stockNumber: 1701, serialNumber: 'S1701', makeName: 'Rolex', model: 'Daytona',
     subModel: '126500LN', purchasedFrom: 'Dealer Three', purchaseDate: '2026-10-10T16:20:00.1234567',
-    purchasePrice: 30000, category: 'UK' }),
+    purchasePrice: 30000, category: 'UK', clientId: 'c-one' }),
 ];
+
+/*
+ * Chrono Key's client list (/User/ClientListDatatable), in the shape of the
+ * first live read, 23 Oct 2026: an object per client, a GUID id, names with
+ * stray spaces, clientType D or I, nulls for what is not filled in.
+ */
+const clientRow = (o) => ({
+  id: null, userName: 'user-1', firstName: null, lastName: null, email: null, phoneNumber: null, imgProfile: null,
+  roleName: 'Client', dob: '2026-05-20T00:00:00', address: null, imgProofOfId: null, imgProofOfAddress: null,
+  clientType: 'D', billFullName: '', billPhoneNumber: null, billAddress1: null, billAddress2: null, billZipCode: null,
+  billCity: null, billStateProvince: null, billCountry: null, billCountryName: null, shipFullName: '',
+  shipPhoneNumber: null, shipAddress1: null, shipAddress2: null, shipZipCode: null, shipCity: null,
+  shipStateProvince: null, shipCountry: null, shipCountryName: null, companyName: null, companyNumber: null,
+  xeroContactID: null, dealerName: 'luxurytime', qbCustomerID: null, qbVendorID: null, nickName: null, isActive: true,
+  ...o,
+});
+export const CLIENTS = [
+  clientRow({ id: 'c-one', firstName: ' Dealer One', companyName: 'One Watches LLC', phoneNumber: '+971 50 123 4567',
+    billAddress1: 'Gold Souk 4', billCity: 'Dubai', billCountryName: 'United Arab Emirates' }),
+  clientRow({ id: 'c-two', firstName: 'Dealer', lastName: 'Two ', email: 'two@example.com' }),
+  clientRow({ id: 'c-omar', firstName: ' Omar', lastName: 'F', clientType: 'I', nickName: 'Omar the collector' }),
+  clientRow({ id: 'c-idle', firstName: 'Nobody Yet', clientType: 'X' }),
+];
+
+/*
+ * Chrono Key's expenses, as first read 23 Oct 2026: the list page holds every
+ * row (booked cost in "£", the date in data-sort), each expense's own page its
+ * currency, rate, cost in that currency and payment type. Exported so a test
+ * can change one.
+ */
+export const EXPENSES = {
+  2044: { title: 'FERRARI | SHIPMENT EXPENSES | PAID IN CASH | aed 4,300', type: 'Logistics Expense', date: '2026-10-20',
+    description: 'FERRARI | SHIPMENT EXPENSES | PAID IN CASH | aed 4,300', booked: '£1,032.00',
+    currency: [7, 'AED (DHS)'], rate: '0.2400000000', cost: '4300.00', typeId: [134, 'Logistics Expense'], pay: 0 },
+  2041: { title: 'META EXPENSE | PKR 53,073', type: 'Meta Expense', date: '2026-10-21',
+    description: 'meta expense | pkr 53,073 = USD 192', booked: '£170.88',
+    currency: [2, 'USD ($)'], rate: '0.8900000000', cost: '192.00', typeId: [138, 'Meta Expense'], pay: 1 },
+  2030: { title: 'TRIP — Cristian', type: 'Logistics Expense', date: '2026-10-16',
+    description: 'Complete\r\n2026-10-14 Flight / Ticket EUR 585\r\n Total $1,701.8', booked: '£1,575.93',
+    currency: [1, 'GBP (&#xA3;)'], rate: '1.0000000000', cost: '1575.93', typeId: [134, 'Logistics Expense'], pay: null, loan: true },
+  // Pounds, booked under Chrono Key's "EUR" at a pound-to-euro rate; the title says so.
+  1987: { title: 'kashan | salary | september 2026 | gbp 3,000', type: 'SALARY', date: '2026-10-01',
+    description: 'kashan | salary | september 2026 | gbp 3,000', booked: '£3,540.00',
+    currency: [3, 'EUR (&#x20AC;)'], rate: '1.1800000000', cost: '3000.00', typeId: [64, 'SALARY'], pay: 2 },
+  // The same, with nothing saying so.
+  2007: { title: 'harissa | transfer to Balance', type: 'Commission', date: '2026-10-05',
+    description: '', booked: '£590.00', currency: [3, 'EUR (&#x20AC;)'], rate: '1.18', cost: '500.00', typeId: [109, 'Commission'], pay: 2 },
+};
+
+function expenseList() {
+  const row = ([id, e]) => `<tr><td> </td><td><div>${e.title}</div></td><td><div> ${e.type} </div></td>
+    <td><div>${e.description.replace(/\r\n/g, '&#xD;&#xA;')}</div></td><td><div>${e.booked.replace('£', '&#xA3;')}</div></td>
+    <td data-sort="${e.date}"><div> ${e.date.split('-').reverse().join('/')} </div></td>
+    <td><a class="menu-link px-3 " href="/Stock/AddEditExpense/${id}">Edit</a><a onclick="DeleteFromServer('${id}')">Delete</a></td></tr>`;
+  return `<table><thead><tr><th></th><th>Title</th><th>Type</th><th>Description</th><th>Cost</th><th>Created Date</th><th>Actions</th></tr></thead>
+    <tbody>${Object.entries(EXPENSES).sort(([a], [b]) => b - a).map(row).join('')}</tbody></table>`;
+}
+
+function expensePage(id) {
+  const e = EXPENSES[id];
+  if (!e) return '<html>Not found</html>';
+  const opts = (list, picked) => list.map(([v, txt]) => `<option${v === picked ? ' selected="selected"' : ''} value="${v}">${txt}</option>`).join('');
+  return `<form><select class="form-select" id="CurrencyID" name="CurrencyID">${opts(
+    [[1, 'GBP (&#xA3;)'], [3, 'EUR (&#x20AC;)'], [2, 'USD ($)'], [7, 'AED (DHS)']],
+    e.currency[0]
+  )}</select>
+    <input data-val="true" id="ExchangeRate" name="ExchangeRate" value="${e.rate}" />
+    <input id="Title" name="Title" type="text" value="${e.title}" />
+    <input id="InsertedDT" name="InsertedDT" type="date" value="${e.date}" />
+    <select id="typeId" name="typeId"><option value="">Select Expense Type</option>${opts([[134, 'Logistics Expense'], [138, 'Meta Expense'], [64, 'SALARY'], [109, 'Commission']], e.typeId[0])}</select>
+    <input id="Cost" name="Cost" type="text" value="${e.cost}" />
+    <select id="PaymentType" name="PaymentType"><option value="">Select Payment Type</option>${opts(
+      [[0, 'Cash'], [1, 'Card'], [2, 'Wire'], [3, 'Crypto'], [4, 'PayPal / Chrono24']],
+      e.pay
+    )}</select>
+    <input class="form-check-input" type="checkbox" id="ExcludeFromProfit" name="ExcludeFromProfit" value="true"${e.loan ? ' checked="checked"' : ''} />
+    <textarea id="Description" name="Description">\r\n${e.description}</textarea></form>`;
+}
 
 /* What each watch's own page says. Euro figures as Chrono Key computes them. */
 export const DETAILS = {
@@ -198,6 +277,15 @@ export async function startChronoKey({ username = 'ck-user', password = 'ck-pass
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.end(JSON.stringify({ draw: ['1'], recordsTotal: GRID.length, recordsFiltered: GRID.length, data: GRID }));
       }
+      if (url.pathname === '/User/ClientListDatatable' && req.method === 'POST') {
+        const f = new URLSearchParams(body);
+        if (f.get('roleType') !== 'Client') return res.end('{"data":[]}');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(JSON.stringify({ draw: 1, recordsTotal: CLIENTS.length, recordsFiltered: CLIENTS.length, data: CLIENTS }));
+      }
+      if (url.pathname === '/Stock/ExpenseList') return res.end(expenseList());
+      const ex = url.pathname.match(/^\/Stock\/AddEditExpense\/(\d+)$/);
+      if (ex && req.method === 'GET') return res.end(expensePage(Number(ex[1])));
       if (url.pathname === '/Stock/ToBeShippedList') {
         return res.end('<table><thead><tr><th>Image</th><th>STOCK NUMBER</th><th>Tracking Status</th></tr></thead><tbody><tr><td></td><td>1701</td><td>In transit</td></tr></tbody></table>');
       }
@@ -235,7 +323,7 @@ export async function startVault({ token = 'vault-key' } = {}) {
   const state = () => ({
     dubaiStock: [
       { id: 'v-1668', stockNumber: '1668', status: 'current', brand: 'Rolex', watchModel: 'Lady-Datejust', dial: 'Pink diamonds',
-        caseDiameter: '31mm', b2bFinal: { usd: 13500 }, b2cFinal: { usd: 0, aed: 52000 },
+        caseDiameter: '31mm', b2bFinal: { usd: 13500 }, b2cFinal: { usd: 0, aed: 52000 }, b2chronoFinal: { usd: 14900 },
         photos: [`${base}/photos/v1.jpg`, `${base}/photos/v3.jpg`] },
       { id: 'v-1800', stockNumber: '1800', status: 'current', brand: 'Audemars Piguet', watchModel: 'Royal Oak',
         watchReference: '15510ST', watchSerial: 'AP1800', b2bPrice: 41000, b2bCurrency: 'USD', b2cPrice: 1, b2cCurrency: 'ask first',

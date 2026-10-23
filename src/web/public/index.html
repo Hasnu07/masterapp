@@ -27,10 +27,30 @@ header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255
 .bar-in { max-width: 1320px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .brand { font: 600 21px/1 var(--serif); letter-spacing: .2px; margin-right: 6px; white-space: nowrap; }
 .brand small { font: 500 11px var(--sans); color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; margin-left: 6px; }
-nav { display: flex; gap: 4px; flex-wrap: wrap; }
-nav a { text-decoration: none; color: var(--muted); padding: 7px 11px; border-radius: 8px; font-weight: 500; }
+/* The menu: a ☰ in the bar, the pages in a drawer from the left. */
+.burger { width: 38px; height: 38px; margin-left: -6px; border: 0; border-radius: 8px; background: none; cursor: pointer;
+  display: grid; place-items: center; flex: none; }
+.burger:hover { background: var(--gold-soft); }
+.burger span, .burger span::before, .burger span::after { display: block; width: 18px; height: 2px; border-radius: 2px;
+  background: var(--ink); position: relative; content: ''; }
+.burger span::before { position: absolute; top: -6px; }
+.burger span::after { position: absolute; top: 6px; }
+.scrim { position: fixed; inset: 0; z-index: 55; background: rgba(29,27,24,.28); }
+.drawer { position: fixed; top: 0; bottom: 0; left: 0; z-index: 60; width: min(270px, 84vw); background: var(--card);
+  border-right: 1px solid var(--line); box-shadow: 4px 0 24px rgba(0,0,0,.08); display: flex; flex-direction: column;
+  padding: 10px 12px 16px; transform: translateX(-102%); transition: transform .18s ease; }
+.drawer.open { transform: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 14px; }
+.drawer-x { border: 0; background: none; font-size: 24px; line-height: 1; color: var(--muted); cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+.drawer-x:hover { background: var(--gold-soft); color: var(--ink); }
+nav { display: flex; flex-direction: column; gap: 2px; }
+nav a { text-decoration: none; color: var(--muted); padding: 10px 12px; border-radius: 8px; font-weight: 500; }
+nav a:hover { color: var(--ink); background: var(--paper); }
 nav a.on { color: var(--ink); background: var(--gold-soft); }
-.who { margin-left: auto; display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 13px; }
+.who { margin-top: auto; padding: 14px 4px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center;
+  justify-content: space-between; color: var(--muted); font-size: 13px; }
+.who span { min-width: 0; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
 
 main { max-width: 1320px; margin: 0 auto; padding: 18px 16px 60px; }
 h1 { font: 600 30px/1.15 var(--serif); margin: 0 0 4px; }
@@ -84,6 +104,37 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 
 /* the watch page */
 .watch-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+.figures { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 12px; }
+.figures > div > span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
+.figures b { font-size: 16px; font-weight: 600; }
+table.list.clients tbody tr { cursor: pointer; }
+table.list.clients tbody tr:hover { background: var(--paper); }
+table.list.clients a { text-decoration: none; }
+.xfiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.xfile { display: grid; gap: 6px; align-content: start; }
+.xfile a { display: grid; gap: 4px; color: inherit; text-decoration: none; font-size: 13px; }
+.xfile img, .xpdf { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: #f0ece4; }
+.xpdf { display: grid; place-items: center; font-weight: 700; letter-spacing: 1px; color: var(--bad); }
+.xname { overflow-wrap: anywhere; color: var(--muted); }
+.cw { display: grid; }
+.cw-row { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; padding: 7px 0;
+  border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; font-size: 14px; }
+.cw-row:hover { background: var(--paper); }
+.cw-row img, .cw-none { width: 44px; height: 44px; border-radius: 6px; object-fit: cover; background: #f0ece4; display: block; }
+.cw-price { white-space: nowrap; font-weight: 600; }
+.wc { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.wc:last-child { border-bottom: 0; }
+.wc-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 14px; }
+.wc-label { color: var(--muted); font-size: 13px; min-width: 84px; }
+.wc-act { margin-left: auto; display: flex; gap: 6px; }
+.wc-pick { margin-top: 8px; }
+.wc-pick input { width: 100%; }
+.wc-hits { display: grid; margin-top: 4px; }
+.wc-hit { text-align: left; border: 0; border-bottom: 1px solid var(--line); background: none; padding: 7px 4px; cursor: pointer; font-size: 14px; }
+.wc-hit:hover { background: var(--gold-soft); }
+.sold-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.sold-row .count { margin: 0; white-space: nowrap; }
+.desc { margin: 10px 0 0; color: var(--muted); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .watch-layout { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .gallery .main { aspect-ratio: 1/1; background: #f1ede6; border-radius: var(--radius); display: grid; place-items: center; overflow: hidden; position: relative; }
 .gallery .main img { width: 100%; height: 100%; object-fit: contain; background: #f1ede6; }
@@ -111,14 +162,6 @@ dl.fields dd { margin: 0; overflow-wrap: anywhere; }
 .pay label { font-size: 12px; }
 .sticky-save { position: sticky; bottom: 0; background: rgba(246,243,238,.96); padding: 10px 0; display: flex; gap: 10px; border-top: 1px solid var(--line); margin-top: 12px; }
 
-details.src { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fcfbf8; }
-details.src summary { cursor: pointer; font-weight: 600; }
-.kv { display: grid; grid-template-columns: minmax(120px, 40%) 1fr; gap: 3px 12px; font-size: 13px; margin-top: 8px; }
-.kv div:nth-child(odd) { color: var(--muted); }
-.events { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-.events li { padding: 8px 0; border-bottom: 1px solid var(--line); }
-.events .when { color: var(--muted); }
-.events .ch { color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
 
 table.list { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.list th, table.list td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -160,27 +203,62 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
   dl.fields { grid-template-columns: minmax(110px, 42%) 1fr; }
   h1 { font-size: 25px; }
   input, select, textarea { font-size: 16px !important; }
-  .who span { display: none; }
-  .bar-in { gap: 8px; padding: 8px 12px; }
-  .brand { order: 1; } .who { order: 2; } nav { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; }
-  nav a { white-space: nowrap; padding: 6px 10px; }
+  .bar-in { gap: 8px; padding: 6px 12px; }
 }
+
+/* The converter under every price (fxchip.js), as in InvoiceWEB. BLUE, and
+   only the converter wears it. The arrow is a pseudo-element, so it adds no
+   text to the price it sits beside. */
+.fx-p { white-space: nowrap; }
+.fx-chip { display: inline-block; vertical-align: middle; width: 16px; height: 16px; margin-left: 4px;
+  border-radius: 50%; background: #E8F0FC; border: 1px solid #C9DAF6; cursor: pointer; position: relative;
+  line-height: 0; font-size: 0; transform: translateY(-1px); }
+.fx-chip::before { content: ''; position: absolute; left: 50%; top: 55%; transform: translate(-50%, -50%);
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid #2D6BCF; }
+.fx-chip:hover { background: #D6E4FA; border-color: #2D6BCF; }
+.fx-chip:focus-visible { outline: 2px solid #2D6BCF; outline-offset: 2px; }
+.fx-pop { position: fixed; z-index: 400; width: min(300px, calc(100vw - 32px)); padding: 12px 14px;
+  background: var(--card); border: 1px solid #C9DAF6; border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgba(0,0,0,.12); font: 13.5px/1.45 var(--sans); color: var(--ink); text-transform: none; letter-spacing: 0; }
+.fx-pop-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px;
+  font-family: var(--serif); font-size: 18px; }
+.fx-pop-x { border: 0; background: none; font-size: 18px; line-height: 1; color: var(--muted); cursor: pointer; padding: 2px 4px; }
+.fx-pop-list { display: grid; gap: 3px; padding: 6px 0 8px; border-bottom: 1px solid var(--line); }
+.fx-pop-row { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.fx-pop-row span { color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+.fx-pop-bar { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px; align-items: center; margin-top: 10px; }
+.fx-pop-bar input, .fx-pop-bar select { min-width: 0; padding: 6px 8px; font: inherit; font-size: 13px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
+.fx-pop-bar span { color: var(--muted); }
+.fx-pop-out { margin-top: 8px; font-family: var(--serif); font-size: 19px; color: #2D6BCF; font-variant-numeric: tabular-nums; }
+.fx-pop-foot { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
 </style>
 </head>
 <body>
 <header class="bar hide" id="bar">
   <div class="bar-in">
+    <button class="burger" id="menu" type="button" aria-label="Open the menu" aria-controls="drawer" aria-expanded="false"><span></span></button>
     <div class="brand">Purosangue <small>ERP</small></div>
-    <nav id="nav">
-      <a href="#/" data-nav="inventory">Inventory</a>
-      <a href="#/new" data-nav="new" data-role="editor">New watch</a>
-      <a href="#/import" data-nav="import">Import</a>
-      <a href="#/users" data-nav="users" data-role="admin">Users</a>
-    </nav>
-    <div class="who"><span id="who"></span><button class="btn small" id="logout">Sign out</button></div>
   </div>
 </header>
+<div class="scrim hide" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Menu" inert>
+  <div class="drawer-head">
+    <div class="brand">Purosangue <small>ERP</small></div>
+    <button class="drawer-x" id="menu-close" type="button" aria-label="Close the menu">×</button>
+  </div>
+  <nav id="nav">
+    <a href="#/" data-nav="inventory">Inventory</a>
+    <a href="#/clients" data-nav="clients">Clients</a>
+    <a href="#/expenses" data-nav="expenses">Expenses</a>
+    <a href="#/new" data-nav="new" data-role="editor">New watch</a>
+    <a href="#/import" data-nav="import">Import</a>
+    <a href="#/users" data-nav="users" data-role="admin">Users</a>
+  </nav>
+  <div class="who"><span id="who"></span><button class="btn small" id="logout">Sign out</button></div>
+</aside>
 <main id="app"></main>
 <script src="/app.js"></script>
+<script src="/fxchip.js"></script>
 </body>
 </html>
