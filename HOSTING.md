@@ -35,6 +35,12 @@ copies go straight to R2. Move finished 23 Oct 2026, ~16:30 PKT.
 **Logins for the services** (Cloudflare, DigitalOcean, GitHub) are Hasnain's
 own accounts — with two-factor sign-in.
 
+**Logistics (from 24 Oct 2026).** The same `VAULT_TOKEN` now also copies the
+logistics app's records (CLAUDE.md, "Logistics"). Nothing new to set:
+`LOGISTICS_SYNC` follows `SYNC`. To stop only the logistics copy, set
+`LOGISTICS_SYNC=off`; `LOGISTICS_POLL_SEC=0` keeps it to the 15-minute pass.
+Its pictures go to the same R2 bucket.
+
 ---
 
 Decided 22 Oct 2026. Photos, PDFs and documents go to **Cloudflare R2**; the
