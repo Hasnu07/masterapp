@@ -84,6 +84,7 @@ const hits = {};
 
 before(async () => {
   const photo = await jpeg(60, 40, '#3a6');
+  const photo2 = await jpeg(50, 50, '#36a');
   worker = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     hits[url.pathname] = (hits[url.pathname] || 0) + 1;
@@ -106,9 +107,9 @@ before(async () => {
       if (url.pathname === '/api/vault-photos') return res.end('{"data":{}}');
       if (url.pathname === '/api/version') return res.end('{"version":1}');
     }
-    if (url.pathname === '/photos/p1.jpg') {
+    if (url.pathname === '/photos/p1.jpg' || url.pathname === '/photos/p2.jpg' || url.pathname === '/photos/notnamed.jpg') {
       res.setHeader('Content-Type', 'image/jpeg');
-      return res.end(photo);
+      return res.end(url.pathname === '/photos/p1.jpg' ? photo : photo2);
     }
     res.statusCode = 404;
     res.end();
@@ -478,6 +479,22 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const pic = await viewer.call('GET', `/api/logistics/files/${fileId}?thumb=1`);
   assert.equal(pic.status, 200);
   assert.equal(pic.type, 'image/jpeg');
+
+  // A picture still on the worker shows straight away: copied on first sight, behind the sign-in,
+  // and only an address on the worker that a record names.
+  const p2 = `${base}/photos/p2.jpg`;
+  await editor.call('POST', '/api/logistics/items', { kind: 'otherReceivingPics', data: { title: 'Arrival photos', notes: p2 } });
+  const proxied = `/api/logistics/worker-file?u=${encodeURIComponent(p2)}`;
+  assert.equal((await client().call('GET', proxied)).status, 401);
+  const shown = await viewer.call('GET', `${proxied}&thumb=1`);
+  assert.equal(shown.status, 200);
+  assert.equal(shown.type, 'image/jpeg');
+  assert.equal((await db('SELECT count(*)::int AS n FROM logistics_files WHERE source_ref = $1', [p2])).rows[0].n, 1, 'kept, not fetched again');
+  assert.equal((await viewer.call('GET', `/api/logistics/worker-file?u=${encodeURIComponent(`${base}/photos/notnamed.jpg`)}`)).status, 404, 'no record names it');
+  assert.equal((await viewer.call('GET', `/api/logistics/worker-file?u=${encodeURIComponent('http://example.invalid/photos/p2.jpg')}`)).status, 404, 'not the worker');
+  const pdf = (await db("SELECT id FROM logistics_files WHERE content_type = 'application/pdf'")).rows[0].id;
+  assert.equal((await viewer.call('GET', `/api/logistics/files/${pdf}?thumb=1`)).type, 'image/svg+xml', 'a PDF shows as a tile among the pictures');
+  assert.equal((await viewer.call('GET', '/api/meta')).body.logistics.photoPrefix, `${base}/photos/`);
 
   // A client added here can be chosen on a shipment, and its name shows.
   const cl = await editor.call('POST', '/api/logistics/items', { kind: 'clients', data: { name: 'New Dealer', country: 'UAE' } });

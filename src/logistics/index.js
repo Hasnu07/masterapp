@@ -2,7 +2,8 @@ import { query, tx } from '../db/index.js';
 import { parseMoney, realDate } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
 import { getRates } from '../rates/index.js';
-import { lastLogisticsRead, stockFor } from '../import/logistics/sync.js';
+import { config } from '../config.js';
+import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics/sync.js';
 import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
 import * as situation from './situation.js';
 
@@ -18,9 +19,19 @@ import * as situation from './situation.js';
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const notFound = () => Object.assign(new Error('No such logistics record'), { status: 404 });
 
+/* Where the logistics app keeps its pictures: an address there is shown as the picture, through workerFile. */
+const photoPrefix = () => {
+  try {
+    return `${new URL(config.vault.url).origin}/photos/`;
+  } catch {
+    return '';
+  }
+};
+
 /* What the page builds its tabs and forms from. */
 export function catalog() {
   return {
+    photoPrefix: photoPrefix(),
     groups: GROUPS,
     kinds: KINDS.map((k) => ({ key: k.key, label: k.label, group: k.group, fields: k.fields || [], place: k.place || '', theirs: Boolean(k.theirs) })),
   };
@@ -460,10 +471,32 @@ export async function overview() {
 
 /* ── files ───────────────────────────────────────────────────────── */
 
+/**
+ * A picture or PDF a record names on the worker's /photos/, shown before the
+ * pass has copied it: copied now, kept, and served like the rest. Only an
+ * address on the worker that some record names — not any address a request
+ * brings.
+ */
+export async function workerFile(url, { thumb = false } = {}) {
+  const prefix = photoPrefix();
+  if (!prefix || typeof url !== 'string' || !url.startsWith(prefix) || url.length > 1000) return null;
+  const { rows } = await query("SELECT 1 FROM logistics_items WHERE data::text LIKE '%' || $1 || '%' LIMIT 1", [JSON.stringify(url).slice(1, -1)]);
+  if (!rows.length) return null;
+  const id = await copyWorkerFile(url);
+  return id ? file(id, { thumb }) : null;
+}
+
+/* A document's tile among the pictures: a PDF has no thumbnail of its own. */
+const PDF_TILE = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><rect width="240" height="240" fill="#f0ece4"/>' +
+    '<text x="120" y="135" font-family="Arial, sans-serif" font-size="44" font-weight="700" fill="#a3332b" text-anchor="middle">PDF</text></svg>'
+);
+
 export async function file(fid, { thumb = false } = {}) {
   const { rows } = await query('SELECT * FROM logistics_files WHERE id = $1', [Number(fid) || 0]);
   const f = rows[0];
   if (!f) return null;
+  if (thumb && !f.thumb_key && f.content_type === 'application/pdf') return { buffer: PDF_TILE, type: 'image/svg+xml' };
   const key = thumb && f.thumb_key ? f.thumb_key : f.storage_key;
   const buffer = await (await storage()).get(key);
   if (!buffer) return null;

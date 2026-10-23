@@ -579,6 +579,19 @@ export function createServer() {
       res.send(f.buffer);
     })
   );
+  /* A picture still on the logistics app's worker: copied here on first sight, then served like the rest. */
+  app.get(
+    '/api/logistics/worker-file',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await logistics.workerFile(String(req.query.u || ''), { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.send(f.buffer);
+    })
+  );
   app.get('/api/watches/:id/logistics', need('viewer'), wrap(async (req, res) => res.json(await logistics.forWatch(req.params.id))));
 
   /* ── import ──────────────────────────────────────────────────── */

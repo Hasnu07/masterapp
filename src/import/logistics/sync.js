@@ -189,43 +189,59 @@ async function getWorkerFile(url) {
 const refused = new Map();
 const REFUSED_FOR = 24 * 3600_000;
 
+/**
+ * One of the worker's files, copied here once and kept: its logistics_files
+ * id, or null (not the worker's, not a picture or a PDF, gone). Shared by the
+ * pass and by a page that shows the file before the pass has reached it.
+ */
+export async function copyWorkerFile(url, now = Date.now()) {
+  const had = await copiedMap([url]);
+  if (had.has(url)) return had.get(url);
+  if (now - (refused.get(url) || 0) < REFUSED_FOR) return null;
+  try {
+    const buffer = await getWorkerFile(url);
+    if (buffer) return await storeFile(buffer, url);
+  } catch (err) {
+    console.warn(`[logistics] file ${url}: ${err.message}`);
+  }
+  refused.set(url, now);
+  if (refused.size > 20_000) refused.clear();
+  return null;
+}
+
 /*
  * The worker's files our records still point at, copied an allowance at a
- * time and swapped in. Not a change of the record — the same file, kept
- * here — so no history entry and no lock. The swap re-reads each record under
- * a lock: a person's edit made meanwhile is kept, never written over.
+ * time (four at once) and swapped in. Not a change of the record — the same
+ * file, kept here — so no history entry and no lock. The swap re-reads each
+ * record under a lock: a person's edit made meanwhile is kept, never written
+ * over.
  */
 async function copyWorkerPhotos(stats) {
   const origin = workerOrigin();
   if (!origin) return;
   const prefix = `${origin}/photos/`;
   const { rows } = await query(
-    "SELECT id, data FROM logistics_items WHERE data::text LIKE '%' || $1 || '%' ORDER BY updated_at DESC LIMIT 500",
+    "SELECT id, data FROM logistics_items WHERE data::text LIKE '%' || $1 || '%' ORDER BY updated_at DESC LIMIT 2000",
     [prefix]
   );
   if (!rows.length) return;
   const now = Date.now();
   const wanted = [...new Set(rows.flatMap((r) => [...workerUrls(r.data, prefix)]))];
   const map = await copiedMap(wanted);
-  let budget = config.logistics.photosPerPass;
-  for (const url of wanted) {
-    if (map.has(url) || budget <= 0) continue;
-    if (now - (refused.get(url) || 0) < REFUSED_FOR) continue;
-    budget -= 1;
-    try {
-      const buffer = await getWorkerFile(url);
-      if (!buffer) {
-        refused.set(url, now);
-        continue;
+  const todo = wanted.filter((url) => !map.has(url) && now - (refused.get(url) || 0) >= REFUSED_FOR).slice(0, config.logistics.photosPerPass);
+  let next = 0;
+  const worker = async () => {
+    while (next < todo.length) {
+      const url = todo[next];
+      next += 1;
+      const id = await copyWorkerFile(url, now);
+      if (id) {
+        map.set(url, id);
+        stats.photosCopied += 1;
       }
-      map.set(url, await storeFile(buffer, url));
-      stats.photosCopied += 1;
-    } catch (err) {
-      refused.set(url, now);
-      console.warn(`[logistics] file ${url}: ${err.message}`);
     }
-  }
-  if (refused.size > 20_000) refused.clear();
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
   for (const r of rows) {
     if (stable(localise(r.data, map)) === stable(r.data)) continue;
     await tx(async (db) => {
