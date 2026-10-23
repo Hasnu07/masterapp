@@ -77,6 +77,24 @@ const fmtDate = (iso) => {
   return `${d}/${m}/${y}`;
 };
 const fmtWhen = (ts) => (ts ? new Date(ts).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+
+/*
+ * A watch page panel that folds (asked 24 Oct 2026): closed until somebody
+ * opens it, the arrow on its heading. Opened, it stays open while the page
+ * stays on that watch — through a redraw or the logistics panel's refresh.
+ */
+function fold(key, heading, body) {
+  const open = current?.open?.[key] ? ' open' : '';
+  return `<details class="fold" data-fold="${esc(key)}"${open}><summary><h3>${heading}</h3></summary>${body}</details>`;
+}
+document.addEventListener(
+  'toggle',
+  (e) => {
+    const d = e.target;
+    if (d instanceof HTMLDetailsElement && d.matches('details.fold[data-fold]') && current) (current.open ||= {})[d.dataset.fold] = d.open;
+  },
+  true
+);
 const yesNo = (v) => (v === true ? '✓ Yes' : v === false ? '✗ No' : '');
 
 function display(f, w) {
@@ -392,7 +410,7 @@ async function showWatch(id, { keepEdit = false } = {}) {
     return;
   }
   const same = current?.w?.id === w.id;
-  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, logistics: same ? current.logistics : null };
+  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, logistics: same ? current.logistics : null, open: same ? current.open : {} };
   renderWatch();
   loadSide(w.id);
   loadWatchLogistics(w.id);
@@ -504,7 +522,7 @@ function renderSoldFor(s) {
   if (!box || (!s.error && !s.reference)) return;
   box.hidden = false;
   if (s.error) {
-    box.innerHTML = `<h3>What it has sold for</h3><p class="count">Could not read the sales: ${esc(s.error)}</p>`;
+    box.innerHTML = fold('sold-for', 'What it has sold for', `<p class="count">Could not read the sales: ${esc(s.error)}</p>`);
     return;
   }
   const line = (o) => {
@@ -522,9 +540,13 @@ function renderSoldFor(s) {
         .map((o) => `<a href="#/watch/${o.id}">${esc(o.stock_no)}</a>${o.self ? ' (this one)' : ''}`)
         .join(', ')}.`
     : 'None in stock.';
-  box.innerHTML = `<h3>What it has sold for <span class="count" style="text-transform:none;letter-spacing:0;font-weight:400">— ${esc(s.reference)}</span></h3>
-    ${s.sold.length ? s.sold.map(line).join('') : '<p class="count">No sale of this reference on record.</p>'}
-    <p class="count" style="margin-bottom:0">${[more ? esc(more) : '', stock].filter(Boolean).join(' ')}</p>`;
+  const total = s.soldTotal || s.sold.length;
+  box.innerHTML = fold(
+    'sold-for',
+    `What it has sold for <span class="fold-note">— ${esc(s.reference)}${total ? ` · ${total} sold` : ''}</span>`,
+    `${s.sold.length ? s.sold.map(line).join('') : '<p class="count">No sale of this reference on record.</p>'}
+    <p class="count" style="margin-bottom:0">${[more ? esc(more) : '', stock].filter(Boolean).join(' ')}</p>`
+  );
 }
 
 /* ── photos ──────────────────────────────────────────────────────── */

@@ -570,14 +570,17 @@ function renderWatchLogistics() {
     return;
   }
   const totals = Object.entries(L.costs.totals || {});
-  // The minute's refresh redraws the panel: the costs list someone opened stays open.
-  const open = Boolean(panel.querySelector('details')?.open);
+  // The minute's refresh redraws the panel: the costs list someone opened stays open (the panel's own fold, through fold()).
+  const open = Boolean(panel.querySelector('details.lg-cost')?.open);
   panel.hidden = false;
-  panel.innerHTML = `<h3>Logistics</h3>
-    ${
+  const records = L.items.length;
+  panel.innerHTML = fold(
+    'logistics',
+    `Logistics <span class="fold-note">· ${records} record${records === 1 ? '' : 's'}${L.costs.lines.length ? ' · costs' : ''}</span>`,
+    `${
       L.costs.lines.length
         ? `<div class="figures" style="margin:0 0 6px">${totals.map(([cur, n]) => `<div><span>Moving it, ${esc(cur)}</span><b>${money(n, cur === '?' ? '' : cur)}</b></div>`).join('')}</div>
-           <details><summary class="count" style="cursor:pointer;margin:0">What it cost — ${L.costs.lines.length} line${L.costs.lines.length === 1 ? '' : 's'}</summary>
+           <details class="lg-cost"><summary class="count" style="cursor:pointer;margin:0">What it cost — ${L.costs.lines.length} line${L.costs.lines.length === 1 ? '' : 's'}</summary>
            ${L.costs.lines
              .map((c) => `<div class="sold-row"><span><a href="#/lg/${c.itemId}">${esc(c.source)}</a> · ${esc(c.title || '')}${c.detail ? ` <span class="count" style="margin:0">${esc(c.detail)}</span>` : ''}</span><span>${money(c.amount, c.currency || '')} <span class="count">${esc(fmtDate(c.date))}</span></span></div>`)
              .join('')}</details>`
@@ -592,9 +595,10 @@ function renderWatchLogistics() {
     }</ul>
     ${L.timeline.length > 40 ? `<p class="count">and ${L.timeline.length - 40} earlier</p>` : ''}
     <h3 style="margin-top:14px">Records</h3>
-    ${L.items.map((i) => `<a class="lg-line" href="#/lg/${i.id}"><span class="count" style="margin:0;min-width:110px">${esc(i.kind_label)}</span><span class="grow">${esc(i.summary.title)}</span>${lgChip(i.summary.status)}</a>`).join('')}`;
-  const details = panel.querySelector('details');
-  if (details) details.open = open;
+    ${L.items.map((i) => `<a class="lg-line" href="#/lg/${i.id}"><span class="count" style="margin:0;min-width:110px">${esc(i.kind_label)}</span><span class="grow">${esc(i.summary.title)}</span>${lgChip(i.summary.status)}</a>`).join('')}`
+  );
+  const costs = panel.querySelector('details.lg-cost');
+  if (costs) costs.open = open;
 }
 
 /* Fetched with the rest of the watch's side panels, then again every minute while the page stays open. */
