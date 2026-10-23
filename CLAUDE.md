@@ -37,7 +37,13 @@ test/                       node:test against stand-ins and a real Postgres
 
 Node 20+, Express 5, Postgres, `sharp` for thumbnails.
 
-**Where it runs: this PC** (`npm run local`), not Railway — decided 22 Oct
+**LIVE since 23 Oct 2026: https://coral-app-7qthm.ondigitalocean.app**
+(DigitalOcean app `coral-app` + database `masterapp-db`, photos in R2 bucket
+`purosangue-masterapp-apac`, all Bangalore / Asia-Pacific). Read the top of
+`HOSTING.md` first: where everything is, how to sign in, what not to do.
+The local copy below is now the backup — not to be run alongside.
+
+**Where it ran until then: this PC** (`npm run local`), not Railway — decided 22 Oct
 2026, because of the sheer number of photos (thousands, GBs). Next: Cloudflare
 R2 for files + DigitalOcean App Platform and Managed Postgres, all in
 **Bangalore / Asia-Pacific** because it is used in Pakistan and Dubai — the

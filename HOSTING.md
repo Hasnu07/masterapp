@@ -1,5 +1,40 @@
 # Moving masterapp to Cloudflare R2 + DigitalOcean
 
+## Live now — read this first (23 Oct 2026)
+
+**masterapp is live at https://coral-app-7qthm.ondigitalocean.app** — use it
+from any PC (the office PC included) in a browser. Nothing to install.
+
+**Signing in.** The accounts were copied from the PC masterapp ran on until
+23 Oct (Hasnain's PC, folder `masterapp-to-take-home-2026-10-22\masterapp`).
+The first account is **`admin@local`**. Its password is **not in git, on
+purpose** — it is the `adminPassword` line in `data\local.json` on that PC.
+First thing on the live site: **Users** → make a personal admin account for
+yourself and an account for each colleague, then **disable `admin@local`**.
+Passwords never go into this repository.
+
+**Where everything is**
+
+| What | Where | Notes |
+|---|---|---|
+| The app | DigitalOcean App Platform, app **`coral-app`**, Bangalore (BLR1) | 1 container, $12/month. Deploys itself on every push to `main` of `Hasnu07/masterapp`. |
+| The database | DigitalOcean Managed PostgreSQL **`masterapp-db`**, Bangalore | PostgreSQL 18, Basic 1 GB, $15.15/month, daily backups + a week of point-in-time restore. Only `coral-app` may connect (Network Access → trusted sources) — plus Hasnain's PC until the move is finished. |
+| Photos (and later PDFs) | Cloudflare R2 bucket **`purosangue-masterapp-apac`**, Asia-Pacific | Private — served only through the app, behind the sign-in. API token `masterapp` (Object Read & Write, this bucket only). |
+| Secrets | coral-app's environment variables (encrypted), and `data\move.env` on Hasnain's PC | R2 keys, Chrono Key login, vault key, database address. **Never in git.** |
+| The old local copy | `data\` on Hasnain's PC | Database + photos as of the move, 23 Oct 2026 — the backup. **Do not run it alongside the live site** (`start-masterapp.cmd`): it would keep a separate copy that drifts apart. |
+
+**What was moved (23 Oct 2026), and how it was checked:** 1,671 watches,
+4,529 photo records, 8,358 history entries, 1,662 Chrono Key records, 816
+vault records and the accounts — every table byte-for-byte identical on
+DigitalOcean (row fingerprints compared). Photo files: being uploaded to R2
+on 23 Oct, each checked by size when done. Then the Chrono Key / vault sync is
+switched on in the live app (`SYNC`), every 15 minutes until the switch-over.
+
+**Logins for the services** (Cloudflare, DigitalOcean, GitHub) are Hasnain's
+own accounts — with two-factor sign-in.
+
+---
+
 Decided 22 Oct 2026. Photos, PDFs and documents go to **Cloudflare R2**; the
 app and its database to **DigitalOcean** (App Platform + Managed PostgreSQL).
 About $25–30 a month at 50 GB of files (prices as known in Oct 2026 — check).
