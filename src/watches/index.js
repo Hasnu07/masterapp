@@ -146,13 +146,51 @@ export async function getWatch(id) {
   const w = rows[0];
   if (!w) throw notFound();
 
-  const photos = await query(
-    `SELECT id, caption, source, width, height, bytes, content_type, sort, created_at
-       FROM watch_photos WHERE watch_id = $1 AND deleted_at IS NULL ORDER BY sort, id`,
-    [w.id]
-  );
+  const [photos, why] = await Promise.all([
+    query(
+      `SELECT id, caption, source, width, height, bytes, content_type, sort, created_at
+         FROM watch_photos WHERE watch_id = $1 AND deleted_at IS NULL ORDER BY sort, id`,
+      [w.id]
+    ),
+    statusWhy(w),
+  ]);
 
-  return { ...w, display_title: displayTitle(w), photos: photos.rows };
+  return { ...w, display_title: displayTitle(w), photos: photos.rows, status_why: why };
+}
+
+/*
+ * Why a watch has its status, for its page: where Chrono Key's own lists put
+ * it at the last trusted read, the Item Status on its Chrono Key page (shown,
+ * never used — "Due Payment" is a payment, not a place), and, when Chrono Key
+ * does not list it, the vault lists it is in and any Chrono Key watch with
+ * the same serial (1528 / 1515, 1617. / 1617).
+ */
+async function statusWhy(w) {
+  const [ck, vault] = await Promise.all([
+    query(
+      `SELECT ck_lists, lists_at, detail->>'status' AS item_status, detail_at, list_row IS NOT NULL AND gone_at IS NULL AS live
+         FROM ck_records WHERE watch_id = $1`,
+      [w.id]
+    ),
+    query('SELECT list FROM vault_records WHERE watch_id = $1 AND gone_at IS NULL ORDER BY list', [w.id]),
+  ]);
+  const c = ck.rows[0];
+  const out = {
+    ck: c ? { live: c.live, lists: c.ck_lists, at: c.lists_at, item_status: c.item_status, item_status_at: c.detail_at } : null,
+    vault: vault.rows.map((r) => r.list),
+    same_serial: [],
+    locked: w.locked_fields.includes('status'),
+  };
+  // A serial that means something — not "xxxx", "-" or a placeholder of a few characters.
+  if (!c?.live && /[0-9]/.test(w.serial) && w.serial.replace(/[^0-9a-z]/gi, '').length >= 5) {
+    const { rows } = await query(
+      `SELECT w.id, w.stock_no FROM watches w JOIN ck_records r ON r.watch_id = w.id AND r.list_row IS NOT NULL AND r.gone_at IS NULL
+        WHERE w.id <> $1 AND w.deleted_at IS NULL AND lower(regexp_replace(w.serial, '\\s', '', 'g')) = lower(regexp_replace($2, '\\s', '', 'g'))`,
+      [w.id, w.serial]
+    );
+    out.same_serial = rows;
+  }
+  return out;
 }
 
 /**

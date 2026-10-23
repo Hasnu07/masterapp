@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
-import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, EXPENSES, CLIENTS, picture } from './fakes.js';
+import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, EXPENSES, CLIENTS, LISTS, picture } from './fakes.js';
 
 /*
  * The import and sync, end to end, against stand-ins for Chrono Key and the
@@ -90,9 +90,120 @@ test('the live product grid becomes our watches, read by its own field names', a
   const b = await watch('1700');
   assert.equal(b.location, 'Europe', 'Category "Watch" is Europe');
   assert.deepEqual(b.purchase_payments, { bank: 98000 }, 'purchaseWire is a bank transfer');
-  assert.equal(b.ck_id, null, 'the grid names no detail page; the search finds it later');
+  assert.equal(b.ck_id, 26002, "the grid names no page, but the Inventory tab's card does");
+  assert.equal(s.lists.trusted, true, JSON.stringify(s.lists));
+  assert.equal(s.statusFrom, 'lists');
+  assert.equal(b.status, 'in_stock', 'on the Inventory tab');
   assert.equal(b.purchase_currency, '', 'no description, no currency');
   assert.equal((await watch('1701')).status, 'incoming', 'on the incoming page and unsold');
+});
+
+test("a watch returned to its client is not in stock here: Chrono Key's own lists decide", async () => {
+  const w = await watch('1700');
+  const statusEvents = async () =>
+    (await db("SELECT changes->'status' AS s FROM watch_events WHERE watch_id = $1 AND action = 'sync' AND changes ? 'status' ORDER BY id", [w.id])).rows.map((r) => r.s);
+  const why = async () => (await m.watches.getWatch(w.id)).status_why;
+  assert.equal((await why()).ck.lists.inventory.badge, 'Available');
+
+  // 1722's case: off the Inventory tab, on Returned consignments. (An empty
+  // tab is never real, and is refused: another watch stays on it.)
+  LISTS.inventory = ['1999'];
+  LISTS.returned = ['1700'];
+  try {
+  let s = await m.ck.syncList();
+  assert.equal(s.statusFrom, 'lists');
+  assert.deepEqual(s.statusMoves, { 'in_stock→returned': 1 });
+  assert.equal((await watch('1700')).status, 'returned');
+  assert.deepEqual((await why()).ck.lists.returned, { date: '2026-10-16', ck_id: 26002 });
+  assert.deepEqual(await statusEvents(), [['in_stock', 'returned']]);
+
+  // A sold watch still on To-be-shipped (1708, 1737) stays sold.
+  LISTS.incoming.push('1668');
+  await m.ck.syncList();
+  assert.equal((await watch('1668')).status, 'sold');
+  LISTS.incoming.pop();
+
+  // Reads that cannot be trusted change no status — they never put it back on the shelf.
+  for (const [broken, declared, reason] of [
+    ['card', null, /cards without a readable stock number/],
+    ['returned', null, /no table with STOCK NUMBER and RETURN DATE/],
+    [null, 5, /the page declares 5/],
+  ]) {
+    Object.assign(LISTS, { broken, declared });
+    s = await m.ck.syncList();
+    assert.equal(s.lists.trusted, false);
+    assert.match(s.lists.why.join(' '), reason);
+    assert.equal(s.statusFrom, 'no trusted lists: statuses kept');
+    assert.equal((await watch('1700')).status, 'returned', `still returned (${reason})`);
+    assert.equal((await watch('1701')).status, 'incoming', 'To-be-shipped still read');
+  }
+  Object.assign(LISTS, { broken: null, declared: null });
+  const csv = [HEADERS, ...PRODUCTS].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  await m.list.importProductCsv(csv);
+  assert.equal((await watch('1700')).status, 'returned', 'nor does a CSV upload');
+  assert.deepEqual(await statusEvents(), [['in_stock', 'returned']], 'no flip back and forth in the history');
+
+  // On no list: kept for one pass (it may be moving between two), then 'other'.
+  // (Several returned last time and none now would be refused: only one was.)
+  LISTS.returned = [];
+  await m.ck.syncList();
+  assert.equal((await watch('1700')).status, 'returned', 'one pass on no list: kept');
+  await m.ck.syncList();
+  assert.equal((await watch('1700')).status, 'other', 'two in a row: other');
+  assert.equal((await why()).ck.lists.none, 2);
+
+  // A status set here stands, and the page says so.
+  await m.watches.updateWatch(w.id, { status: 'reserved' }, null);
+  LISTS.inventory = ['1700', '1999'];
+  await m.ck.syncList();
+  assert.equal((await watch('1700')).status, 'reserved');
+  assert.equal((await why()).locked, true);
+  await m.watches.unlockField(w.id, 'status', null);
+  await m.ck.syncList();
+  assert.equal((await watch('1700')).status, 'in_stock', 'handed back: on the tab again');
+  } finally {
+    Object.assign(LISTS, { inventory: ['1700'], incoming: ['1701'], returned: [], declared: null, broken: null });
+  }
+});
+
+test('a mass change of statuses is refused once, and taken when the next read says the same', () => {
+  const sixty = Array.from({ length: 60 }, (_, i) => ({ fields: { stock_no: String(5000 + i), status: 'in_stock' } }));
+  const known = new Map(sixty.map(({ fields: f }) => [f.stock_no, { status: 'in_stock', locked: false }]));
+  known.set('5000', { status: 'reserved', locked: true });
+  const lists = { incoming: new Map(), inventory: new Map(), returned: new Map(sixty.map(({ fields: f }) => [f.stock_no, { date: null, ckId: null }])) };
+
+  const first = m.list.planStatuses(sixty, { lists, known });
+  assert.match(first.statusFrom, /^refused: 59 statuses/, 'the locked one is not even proposed');
+  assert.equal(first.proposal.length, 59);
+  assert.ok([...first.statuses.values()].every((s) => s === undefined), 'nothing moves');
+  assert.equal(first.onLists.size, 0, 'nor is the read kept');
+
+  const second = m.list.planStatuses(sixty, { lists, known, previous: first.proposal });
+  assert.match(second.statusFrom, /the same change on two reads in a row/);
+  assert.equal(second.statuses.get('5001'), 'returned');
+  assert.equal(second.statuses.get('5000'), undefined, 'a status set here stays theirs');
+  assert.equal(second.proposal, null);
+
+  // A different change the second time is still a glitch.
+  const other = m.list.planStatuses(sixty, { lists, known, previous: first.proposal.slice(0, 20) });
+  assert.match(other.statusFrom, /^refused/);
+});
+
+test('without a declared total, the Inventory tab is compared with the last read', async () => {
+  try {
+    LISTS.declared = 'none';
+    let s = await m.ck.syncList();
+    assert.equal(s.lists.trusted, true, 'the same count as the read before');
+    LISTS.inventory = ['1700', ...Array.from({ length: 12 }, (_, i) => String(3000 + i))];
+    s = await m.ck.syncList();
+    assert.equal(s.lists.trusted, false);
+    assert.match(s.lists.why.join(' '), /13 cards, 1 last time, and the page declares no total/);
+    s = await m.ck.syncList();
+    assert.equal(s.lists.trusted, true, 'seen twice: accepted, not refused for ever');
+  } finally {
+    Object.assign(LISTS, { inventory: ['1700'], declared: null });
+  }
+  await m.ck.syncList();
 });
 
 test("Chrono Key's clients come across, and every watch is tied to both sides of its deals by id", async () => {
@@ -366,6 +477,30 @@ test('the vault adds prices, its photos and the watches only it holds', async ()
 });
 
 test('a watch only the vault held goes when the vault drops it; one Chrono Key still lists stays', async () => {
+  // While it is there: not in stock — Chrono Key, the master, does not list it.
+  const only = await m.watches.getWatch((await watch('1800')).id);
+  assert.equal(only.status, 'other');
+  assert.deepEqual(only.status_why.vault, ['dubaiStock']);
+  assert.equal(only.status_why.ck, null);
+  assert.equal((await watch('1801')).status, 'sold', "a sale only the vault records is a sale");
+
+  // Without a complete Chrono Key read in the last day, the vault does not decide this.
+  await db('UPDATE watches SET status = $1 WHERE stock_no = $2', ['in_stock', '1800']);
+  await db("UPDATE import_runs SET finished_at = finished_at - interval '2 days' WHERE source = 'chronokey' AND mode = 'list'");
+  await m.vault.syncVault({ photos: false });
+  assert.equal((await watch('1800')).status, 'in_stock', 'left as it was');
+  await db("UPDATE import_runs SET finished_at = finished_at + interval '2 days' WHERE source = 'chronokey' AND mode = 'list'");
+  await m.vault.syncVault({ photos: false });
+  assert.equal((await watch('1800')).status, 'other');
+
+  // A watch added here by hand that the vault also holds keeps the status a
+  // person gave it (a manual watch locks nothing, so 'own' would overwrite it).
+  await db("UPDATE watches SET origin = 'manual', status = 'reserved' WHERE stock_no = '1800'");
+  await m.vault.syncVault({ photos: false });
+  assert.equal((await watch('1800')).status, 'reserved', 'a person’s record');
+  await db("UPDATE watches SET origin = 'vault' WHERE stock_no = '1800'");
+  await m.vault.syncVault({ photos: false });
+  assert.equal((await watch('1800')).status, 'other');
   vault.dropped.add('v-1800').add('v-1668');
   const s = await m.vault.syncVault({ photos: false });
   assert.equal(s.goneFromVault.gone, 2);
@@ -462,6 +597,8 @@ test('a sale taken back on Chrono Key is cleared here — the deal is not spec',
   const sold = { ...GRID[0] };
   Object.assign(GRID[0], { isSold: false, soldTo: '', saleDate: null, salePrice: null, saleCrypto: 0 });
   try {
+    // Chrono Key puts a watch whose sale was taken back on its Inventory tab.
+    LISTS.inventory.push('1668');
     await m.ck.syncList();
     const a = await watch('1668');
     assert.equal(a.status, 'in_stock');
@@ -470,8 +607,18 @@ test('a sale taken back on Chrono Key is cleared here — the deal is not spec',
     assert.equal(a.sale_price, null);
     assert.deepEqual(a.sale_payments, {});
     assert.equal(a.dial, 'Pink', 'the spec is untouched');
+    // Sold again, then the sale taken back with the watch on no list: not kept as sold.
+    Object.assign(GRID[0], sold);
+    LISTS.inventory.pop();
+    await m.ck.syncList();
+    Object.assign(GRID[0], { isSold: false, soldTo: '', saleDate: null, salePrice: null, saleCrypto: 0 });
+    await m.ck.syncList();
+    assert.equal((await watch('1668')).status, 'sold', 'one pass on no list: it may be on its way back to the tab');
+    await m.ck.syncList();
+    assert.equal((await watch('1668')).status, 'other', 'its sale gone, and on none of the lists twice');
   } finally {
     Object.assign(GRID[0], sold);
+    if (LISTS.inventory.at(-1) === '1668') LISTS.inventory.pop();
   }
   await m.ck.syncList();
   assert.equal((await watch('1668')).status, 'sold');
@@ -480,6 +627,15 @@ test('a sale taken back on Chrono Key is cleared here — the deal is not spec',
 test('a wrong Chrono Key password and a wrong vault key are said, not read as empty', async () => {
   const bad = new m.client.ChronoKeyClient('ck-user', 'wrong');
   await assert.rejects(bad.login(), /rejected the sign-in/);
+  // A pass with a password that no longer works tries it once, not once per list.
+  const ckc = m.client.chronokey();
+  const keep = ckc.password;
+  Object.assign(ckc, { password: 'wrong', loggedIn: false, cookies: {} });
+  const posts = () => ck.calls.filter((c) => c === 'POST /').length;
+  const n = posts();
+  await assert.rejects(m.ck.syncList(), /rejected the sign-in/);
+  assert.equal(posts() - n, 1, 'one rejected sign-in, then the pass stops');
+  Object.assign(ckc, { password: keep, loggedIn: false, cookies: {} });
   process.env.VAULT_TOKEN = 'nope';
   const { config } = await import('../src/config.js');
   config.vault.token = 'nope';

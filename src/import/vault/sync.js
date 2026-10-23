@@ -220,6 +220,13 @@ export async function syncVault({ user, photos = true } = {}) {
       throw new Error('The vault answered without any of its stock lists — not reading that as an empty vault');
     }
 
+    // A complete read of Chrono Key's grid in the last day (one that could mirror deletions).
+    const ckComplete = (
+      await query(
+        `SELECT 1 FROM import_runs WHERE source = 'chronokey' AND mode = 'list' AND ok AND stats ? 'goneFromList'
+            AND finished_at > now() - interval '1 day' LIMIT 1`
+      )
+    ).rows.length > 0;
     const byStock = new Map();
     const client = await pool.connect();
     try {
@@ -256,6 +263,30 @@ export async function syncVault({ user, photos = true } = {}) {
           }
         }
         const { own, fill } = fieldsOf(p.w, p.list);
+        /*
+         * A watch Chrono Key does not list (never did, or no longer does) is
+         * not in stock on Chrono Key, whatever vault list it sits in: the
+         * master's Inventory tab is what "in stock" means until the
+         * switch-over (23 Oct 2026 — 0000, 00000, 0-0-0-0, Not For Sale; 1617.
+         * and 1528, the same watches as Chrono Key's 1617 and 1515). Decided
+         * by the live Chrono Key row, never by where the record came from,
+         * and only after a complete Chrono Key read — before one, every vault
+         * watch would look like that. Written in 'own' mode so it replaces
+         * the status it had (a person's edit, locked, still stands).
+         */
+        if (ckComplete) {
+          const { rows: live } = await client.query(
+            'SELECT 1 FROM ck_records WHERE stock_no = $1 AND list_row IS NOT NULL AND gone_at IS NULL',
+            [stockNo]
+          );
+          // A watch added here by hand is a person's record: its status is theirs
+          // (a manual watch never locks a field, so 'own' would overwrite it).
+          const { rows: mine } = await client.query("SELECT 1 FROM watches WHERE stock_no = $1 AND origin = 'manual'", [stockNo]);
+          if (!live.length && !mine.length) {
+            own.status = p.list.key === 'soldStocks' ? 'sold' : 'other';
+            delete fill.status;
+          }
+        }
         await client.query('BEGIN');
         try {
           // On a watch Chrono Key knows, the vault's place and status only

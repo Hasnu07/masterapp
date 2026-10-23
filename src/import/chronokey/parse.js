@@ -230,3 +230,89 @@ export const stockNoOfLabel = (label) => {
   const m = String(label || '').match(/stock\s*[:#]?\s*(\d+)/i);
   return m ? m[1] : null;
 };
+
+/* ── Chrono Key's own lists: where a watch IS (lists.js) ─────────────── */
+
+/**
+ * The Inventory tab's feed (/stock/FilterInstock): one card per watch on the
+ * shelf — `<li>` with "STOCK NUMBER: 770", an availability badge
+ * ("Available", "Checked Out"), "Owner: INVENTORY" and the watch's page.
+ * `broken` counts cards with a watch link but no readable stock number: a
+ * card template this cannot read must fail the read, not drop the watch.
+ */
+export function inventoryCards(html) {
+  const $ = cheerio.load(html);
+  const cards = [];
+  let broken = 0;
+  $('li').each((_, li) => {
+    const el = $(li);
+    // A card holds no list of its own; an <li> wrapping others is not one.
+    if (el.find('li').length) return;
+    const link = el.find('a[href*="InstockDetailPage/"]').first().attr('href');
+    if (!link) return;
+    let stock = null;
+    el.find('p.shipping').each((__, p) => {
+      const m = $(p).text().replace(/\s+/g, ' ').match(/^\s*STOCK\s*NUMBER\s*:\s*(\S+)\s*$/i);
+      if (m) stock = m[1];
+    });
+    if (!stock) {
+      broken += 1;
+      return;
+    }
+    const text = el.text().replace(/\s+/g, ' ');
+    cards.push({
+      stock,
+      ckId: Number(link.match(/InstockDetailPage\/(\d+)/i)?.[1]) || null,
+      badge: el.find('.availability-badge').first().text().trim(),
+      owner: (text.match(/Owner:\s*(.+?)\s*(?:Category:|$)/) || [])[1]?.trim() || '',
+    });
+  });
+  return { cards, broken };
+}
+
+/**
+ * How many watches the Inventory page says it has. Only its script says so —
+ * its "Load More" checks `itemCount < '134'` and `length >= '134'` — and the
+ * number is believed only when every mention agrees.
+ */
+export function declaredInStock(html) {
+  const n = [...String(html).matchAll(/(?:itemCount|length)\s*[<>]=?\s*'(\d+)'/g)].map((m) => Number(m[1]));
+  return n.length && n.every((x) => x === n[0]) ? n[0] : null;
+}
+
+/**
+ * A list page whose rows are all in the page (To-be-shipped, Returned
+ * consignments …): stock number → {ckId, date}, from the table whose
+ * headings carry a STOCK NUMBER column — and every heading `need` names.
+ * null when there is no such table (a sign-in page, an error page, a
+ * redesign): never taken as an empty list.
+ */
+export function listTableRows(html, { need = [] } = {}) {
+  const $ = cheerio.load(html);
+  let out = null;
+  $('table').each((_, table) => {
+    if (out) return;
+    const heads = $(table)
+      .find('thead th')
+      .map((__, th) => $(th).text().replace(/\s+/g, ' ').trim())
+      .get();
+    const at = heads.findIndex((h) => /^stock\s*(no|number)/i.test(h));
+    if (at === -1 || need.some((re) => !heads.some((h) => re.test(h)))) return;
+    const dateAt = heads.findIndex((h) => /date/i.test(h));
+    out = new Map();
+    $(table)
+      .find('tbody tr')
+      .each((__, tr) => {
+        const td = $(tr).children('td');
+        const stock = td.eq(at).text().replace(/\s+/g, ' ').trim();
+        if (!/^\d+$/.test(stock)) return;
+        const href = $(tr).find('a[href*="DetailPage/"]').first().attr('href') || '';
+        const date = dateAt === -1 ? null : td.eq(dateAt).attr('data-sort') || null;
+        out.set(stock, {
+          ckId: Number(href.match(/DetailPage\/(\d+)/i)?.[1]) || null,
+          date: date && /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : null,
+        });
+      });
+  });
+  return out;
+}
