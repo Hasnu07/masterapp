@@ -274,8 +274,9 @@ async function copyPhotos(watchId, urls) {
   const { rows } = await query("SELECT source_ref FROM watch_photos WHERE watch_id = $1 AND source = 'vault'", [watchId]);
   const have = new Set(rows.map((r) => r.source_ref));
   let copied = 0;
-  for (const url of urls.slice(0, 30)) {
-    if (have.has(url)) continue;
+  // At most 30 new ones a pass, the rest the next: counted after what is held,
+  // or a watch with more than 30 never got past its first 30.
+  for (const url of urls.filter((u) => !have.has(u)).slice(0, 30)) {
     try {
       const buffer = await getPhoto(url);
       if (!buffer) continue;

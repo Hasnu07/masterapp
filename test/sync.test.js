@@ -800,3 +800,34 @@ test('a vault photo over 50 MB is dropped as it arrives, even when its length is
     worker.close();
   }
 });
+
+test('a vault watch with more than 30 photos gets them all, 30 a pass', async () => {
+  const http = await import('node:http');
+  const pics = await Promise.all(Array.from({ length: 35 }, (_, i) => picture(100 + i, { width: 240 })));
+  let at;
+  const record = () => ({ id: 'v-many', stockNumber: '9100', brand: 'Rolex', photos: pics.map((_, i) => `${at}/p/${i}.jpg`) });
+  const worker = http
+    .createServer((req, res) => {
+      if (req.url === '/api/state') return res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ dubaiStock: [record()] }));
+      if (req.url === '/api/vault-photos') return res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}');
+      const n = Number(req.url.match(/^\/p\/(\d+)\.jpg$/)?.[1]);
+      if (pics[n]) return res.writeHead(200, { 'Content-Type': 'image/jpeg' }).end(pics[n]);
+      res.writeHead(404).end();
+    })
+    .listen(0, '127.0.0.1');
+  await new Promise((r) => worker.once('listening', r));
+  at = `http://127.0.0.1:${worker.address().port}`;
+  const { config } = await import('../src/config.js');
+  const keep = config.vault.url;
+  config.vault.url = `${at}/api/state`;
+  try {
+    await m.vault.syncVault();
+    const w = await watch('9100');
+    assert.equal((await photos(w.id)).length, 30, 'thirty on the first pass');
+    await m.vault.syncVault();
+    assert.equal((await photos(w.id)).length, 35, 'and the rest on the next — not stuck behind the first thirty');
+  } finally {
+    config.vault.url = keep;
+    worker.close();
+  }
+});
