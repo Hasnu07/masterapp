@@ -2,6 +2,8 @@ import { query, tx } from '../db/index.js';
 import { parseMoney, realDate } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
 import { getRates } from '../rates/index.js';
+import { listWatches } from '../watches/index.js';
+import { listClients } from '../clients/index.js';
 import { config } from '../config.js';
 import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics/sync.js';
 import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
@@ -149,6 +151,140 @@ async function watchesFor(stockNos) {
     [stockNos]
   );
   return rows;
+}
+
+/*
+ * Our watches, for a page of logistics records: each record's stock numbers
+ * point at OUR watch where we hold it — one watch, never a second copy.
+ */
+async function withWatches(views) {
+  const nos = [...new Set(views.flatMap((v) => v.stock_nos || []))];
+  const ours = await watchesFor(nos);
+  const by = new Map(ours.map((w) => [w.stock_no, { id: w.id, stock_no: w.stock_no }]));
+  return views.map((v) => ({ ...v, watches: (v.stock_nos || []).map((s) => by.get(s)).filter(Boolean) }));
+}
+
+/* ── search everything ───────────────────────────────────────────── */
+
+/*
+ * The Overview's search, across masterapp's own watches and clients and the
+ * logistics app's records — without a thing twice (asked 24 Oct 2026: "make
+ * sure everything is aligned with our stock and clients, not making
+ * duplicates"):
+ *   - a watch is OUR watch. A logistics stock row (London, Dubai, sold …) of a
+ *     watch we hold is that watch — found through it, shown once, as ours,
+ *     with where it is right now
+ *   - a client is OUR client. A logistics contact whose name is one of ours is
+ *     not shown again. (Names only decide what is shown twice; nothing is
+ *     linked by name.)
+ *   - the rest — shipments, transactions, costs, a stock row for a watch we do
+ *     not hold — as the logistics records they are
+ */
+const STOCK_KINDS = ['londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'hkSituation', 'checkoutStock', 'soldStocks', 'readyForDelivery', 'incomings', 'fobPicked'];
+const CLIENT_KINDS = ['clients', 'companies'];
+export const SEARCH_SCOPES = Object.assign(Object.create(null), {
+  all: { watchStatus: '', stockKinds: STOCK_KINDS, clients: true, otherKinds: null },
+  stock: { watchStatus: 'in_stock', stockKinds: ['londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'hkSituation', 'checkoutStock'], clients: false, otherKinds: [] },
+  sold: { watchStatus: 'sold', stockKinds: ['soldStocks', 'readyForDelivery'], clients: false, otherKinds: [] },
+  incoming: { watchStatus: 'incoming', stockKinds: ['incomings', 'fobPicked'], clients: false, otherKinds: [] },
+  shipments: { watchStatus: null, stockKinds: [], clients: false, otherKinds: ['shipments', 'thirdPartyShipments', 'driverDeliveries'] },
+  clients: { watchStatus: null, stockKinds: [], clients: true, otherKinds: [] },
+  transactions: { watchStatus: null, stockKinds: [], clients: false, otherKinds: ['transactions', 'settlements', 'swaps', 'accCollect', 'accGive'] },
+});
+
+const norm = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+export async function search({ q = '', scope = 'all' } = {}) {
+  const S = SEARCH_SCOPES[scope] || SEARCH_SCOPES.all;
+  const term = String(q).trim();
+  if (!term) return { q: term, scope, watches: [], clients: [], records: [] };
+  const words = term.split(/\s+/).slice(0, 6);
+  const match = (params) => {
+    const conds = words.map((w) => {
+      params.push(w);
+      return `(i.data::text ILIKE '%'||$${params.length}||'%' OR array_to_string(i.stock_nos, ' ') ILIKE '%'||$${params.length}||'%')`;
+    });
+    return conds.join(' AND ');
+  };
+  const ctx = await context();
+
+  // Watches: ours that match, and ours that a matching logistics stock row names.
+  let watches = [];
+  if (S.watchStatus !== null) {
+    const direct = (await listWatches({ q: term, status: S.watchStatus, limit: 40 })).watches;
+    const p = [S.stockKinds];
+    const cond = match(p);
+    if (S.watchStatus) p.push(S.watchStatus);
+    const { rows: via } = await query(
+      `SELECT DISTINCT w.id FROM logistics_items i JOIN watches w ON w.stock_no = ANY(i.stock_nos) AND w.deleted_at IS NULL
+        WHERE i.deleted_at IS NULL AND i.kind = ANY($1) AND ${cond} ${S.watchStatus ? `AND w.status = $${p.length}` : ''}
+        LIMIT 40`,
+      p
+    );
+    const have = new Set(direct.map((w) => w.id));
+    const more = via.map((r) => r.id).filter((id) => !have.has(id));
+    const extra = more.length
+      ? (
+          await query(
+            `SELECT w.*, (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id
+               FROM watches w WHERE w.id = ANY($1)`,
+            [more]
+          )
+        ).rows.map((w) => ({ id: w.id, stock_no: w.stock_no, title: [w.brand, w.model, w.reference].filter(Boolean).join(' ') || `Stock ${w.stock_no}`, status: w.status, location: w.location, photo_id: w.photo_id }))
+      : [];
+    watches = [...direct, ...extra].slice(0, 40);
+    // Where each is right now, from the logistics app.
+    const nos = watches.map((w) => w.stock_no).filter(Boolean);
+    if (nos.length) {
+      const { rows: its } = await query('SELECT id, kind, data, stock_nos, deleted_at FROM logistics_items WHERE stock_nos && $1::text[]', [nos]);
+      for (const w of watches) {
+        const mine = its.filter((i) => i.stock_nos.includes(w.stock_no));
+        const n = mine.length ? situation.now(mine, { clientName: ctx.client }) : null;
+        w.now = n && n.headline ? { headline: n.headline, tone: n.tone } : null;
+      }
+    }
+  }
+
+  // Clients: ours; and a logistics contact only when none of ours has its name.
+  let clients = [];
+  let ourNames = null;
+  if (S.clients) {
+    clients = (await listClients({ q: term, limit: 25 })).clients;
+    const { rows } = await query("SELECT forename, surname, company, nickname FROM clients WHERE deleted_at IS NULL");
+    ourNames = new Set(rows.flatMap((c) => [`${c.forename || ''} ${c.surname || ''}`, c.company, c.nickname].map(norm).filter(Boolean)));
+  }
+
+  // Logistics records: stock rows of watches we do not hold, logistics-only contacts, and the rest of the scope's lists.
+  const p = [];
+  const parts = [];
+  if (S.stockKinds.length) {
+    p.push(S.stockKinds);
+    parts.push(`(i.kind = ANY($${p.length}) AND NOT EXISTS (SELECT 1 FROM watches w WHERE w.stock_no = ANY(i.stock_nos) AND w.deleted_at IS NULL))`);
+  }
+  if (S.clients) {
+    p.push(CLIENT_KINDS);
+    parts.push(`i.kind = ANY($${p.length})`);
+  }
+  if (S.otherKinds === null) {
+    p.push([...STOCK_KINDS, ...CLIENT_KINDS]);
+    parts.push(`NOT (i.kind = ANY($${p.length}))`);
+  } else if (S.otherKinds.length) {
+    p.push(S.otherKinds);
+    parts.push(`i.kind = ANY($${p.length})`);
+  }
+  let records = [];
+  if (parts.length) {
+    const { rows } = await query(
+      `SELECT i.* FROM logistics_items i WHERE i.deleted_at IS NULL AND (${parts.join(' OR ')}) AND ${match(p)}
+        ORDER BY COALESCE(i.happened_at, i.created_at) DESC, i.id DESC LIMIT 60`,
+      p
+    );
+    records = rows
+      .filter((r) => !(CLIENT_KINDS.includes(r.kind) && ourNames?.has(norm(r.data?.name))))
+      .map((r) => view(r, ctx));
+    records = await withWatches(records);
+  }
+  return { q: term, scope, watches, clients, records };
 }
 
 export async function getItem(id) {
@@ -343,6 +479,104 @@ export async function unlockField(id, field, user) {
   });
 }
 
+/*
+ * Polish, as the logistics app does it (its Send / Done):
+ *   send  the stock row gets `polish` (who has it, from when, expected back,
+ *         the cost) and needPolish; a cost becomes a logistic cost line for
+ *         the watch, marked with the polish's id
+ *   done  the polish moves to the row's polishHistory with the day it came
+ *         back and the notes; needPolish is cleared
+ * Fields changed on a row copied from the logistics app are locked, as any
+ * edit: the next copy does not undo the polish.
+ */
+const POLISH_KINDS = ['londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'soldStocks', 'readyForDelivery'];
+const PLACE_LABEL = { londonStock: 'London Stock', dubaiStock: 'Dubai Stock', hkStock: 'HK Stock', safeStock: 'Safe', soldStocks: 'Sold Stock', readyForDelivery: 'Ready for delivery' };
+
+export async function polishAction(id, body, user) {
+  const action = String(body?.action || '');
+  if (action !== 'send' && action !== 'done') throw bad('Say send or done');
+  const text = (v, max = 500) => String(v ?? '').trim().slice(0, max);
+  const day = (v, label) => {
+    const s = text(v, 10) || localToday();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !realDate(s)) throw bad(`${label}: "${v}" is not a date`);
+    return s;
+  };
+  return tx(async (db) => {
+    const { rows } = await db.query('SELECT * FROM logistics_items WHERE id = $1 FOR UPDATE', [Number(id) || 0]);
+    const it = rows[0];
+    if (!it || it.deleted_at) throw notFound();
+    if (!POLISH_KINDS.includes(it.kind)) throw bad('Only a watch in stock, sold or waiting for delivery goes to polish');
+    const d = it.data;
+    const next = { ...d };
+    let cost = null;
+    if (action === 'send') {
+      if (d.polish && d.polish.status !== 'done') throw bad(`Already at polish with ${d.polish.sentTo || 'someone'}`);
+      const sentTo = text(body.sentTo, 200);
+      if (!sentTo) throw bad('Say who the watch is going to for polishing');
+      const amount = body.costAmount === undefined || body.costAmount === '' ? 0 : parseMoney(body.costAmount);
+      if (!Number.isFinite(amount) || amount < 0 || amount > 1e9) throw bad(`Cost: "${body.costAmount}" is not an amount`);
+      const currency = text(body.costCurrency, 4).toUpperCase() || 'AED';
+      if (!/^[A-Z]{3,4}$/.test(currency)) throw bad(`"${body.costCurrency}" is not a currency code`);
+      next.polish = {
+        id: `ma${Date.now().toString(36)}`,
+        status: 'at_polish',
+        sentTo,
+        takenBy: text(body.takenBy, 200),
+        itemDescription: text(body.itemDescription, 200) || 'Full Watch',
+        sentDate: day(body.sentDate, 'Sent'),
+        expectedBack: body.expectedBack ? day(body.expectedBack, 'Expected back') : '',
+        costCurrency: currency,
+        costAmount: Math.round(amount * 100) / 100,
+        notes: text(body.notes, 2000),
+        sentPhotos: [],
+        createdAt: Date.now(),
+      };
+      next.needPolish = true;
+      if (amount > 0) {
+        cost = {
+          stockNumber: d.stockNumber || '',
+          title: `Polish — ${sentTo}`,
+          date: next.polish.sentDate,
+          currency,
+          amount: next.polish.costAmount,
+          fromName: PLACE_LABEL[it.kind] || '',
+          toName: sentTo,
+          notes: next.polish.notes ? `Polish: ${next.polish.notes}` : 'Polish cost',
+          polishId: next.polish.id,
+          ts: Date.now(),
+          createdAt: Date.now(),
+        };
+      }
+    } else {
+      if (!d.polish || d.polish.status === 'done') throw bad('This watch is not at polish');
+      next.polishHistory = [...(Array.isArray(d.polishHistory) ? d.polishHistory : []), { ...d.polish, returnedDate: day(body.returnedDate, 'Back'), returnNotes: text(body.returnNotes, 2000), donePhotos: [] }];
+      delete next.polish;
+      next.needPolish = false;
+    }
+    const keys = [...new Set([...Object.keys(d), ...Object.keys(next)])].filter((k) => JSON.stringify(d[k] ?? null) !== JSON.stringify(next[k] ?? null));
+    const locks = it.origin === 'manual' ? it.locked_fields : [...new Set([...it.locked_fields, ...keys])];
+    await db.query('UPDATE logistics_items SET data = $2, locked_fields = $3, updated_at = now() WHERE id = $1', [it.id, next, locks]);
+    await log(db, it.id, {
+      userId: user?.id,
+      action: 'update',
+      changes: Object.fromEntries(keys.map((k) => [k, [k === 'polish' || k === 'polishHistory' ? (d[k] ? '(details)' : null) : d[k] ?? null, k === 'polish' || k === 'polishHistory' ? (next[k] ? '(details)' : null) : next[k] ?? null]])),
+    });
+    if (cost) {
+      const { rows: ins } = await db.query(
+        "INSERT INTO logistics_items(kind, data, stock_nos, happened_at, origin, created_by) VALUES ('logisticCosts',$1,$2,$3,'manual',$4) RETURNING id",
+        [cost, it.stock_nos, situation.happenedAt('logisticCosts', cost), user?.id ?? null]
+      );
+      await log(db, ins[0].id, { userId: user?.id, action: 'create', changes: { title: cost.title, amount: cost.amount, currency: cost.currency } });
+    }
+    return { changed: keys, cost: Boolean(cost) };
+  });
+}
+
+/* Today as a day on the calendar of the business (Dubai), for a date left blank. */
+function localToday() {
+  return new Date(Date.now() + 4 * 3600_000).toISOString().slice(0, 10);
+}
+
 /* Deleting is soft: one from the logistics app stays deleted however often the sync meets it. */
 export async function deleteItem(id, user, { restore = false } = {}) {
   return tx(async (db) => {
@@ -459,14 +693,121 @@ export async function overview() {
     asOf(),
   ]);
   const withStage = (r) => ({ ...view(r, ctx), stage: situation.stage(r.data).key });
+  const [dash, polish] = await Promise.all([dashboard(), needPolish(ctx)]);
   return {
     as_of: at,
-    shipments: shipments.rows.filter((r) => situation.shipmentOpen(r.data)).map(withStage),
-    ready: ready.rows.map((r) => view(r, ctx)),
-    incoming: incoming.rows.map((r) => view(r, ctx)),
+    ...dash,
+    need_polish: await withWatches(polish),
+    shipments: await withWatches(shipments.rows.filter((r) => situation.shipmentOpen(r.data)).map(withStage)),
+    ready: await withWatches(ready.rows.map((r) => view(r, ctx))),
+    incoming: await withWatches(incoming.rows.map((r) => view(r, ctx))),
     places: counts.rows.map((r) => ({ ...r, label: kindOf(r.kind).label })),
     recent: recent.rows.map((r) => ({ at: r.at, source: r.source, action: r.action, changes: r.changes, user_name: r.user_name, item: view(r, ctx) })),
   };
+}
+
+const RATE_TARGETS = ['USD', 'EUR', 'GBP', 'AED', 'HKD', 'CHF'];
+
+/*
+ * The logistics app's dashboard, figure for figure (its renderDashboard):
+ *   shipments  in motion = pending or in transit; delivered = delivered (all
+ *              time); delayed = in motion past its delivery date; ready for
+ *              delivery = sold, awaiting handover. The donut: delivered, in
+ *              progress, delayed.
+ *   accessories  pending items on accessory transactions: to give, and owed
+ *              to us (the app's other direction), counted by quantity
+ *   costs      every logistic cost, by currency (a cost with none is the
+ *              app's OTHER), how many lines; and in one currency at the
+ *              converter's rates — not the app's fixed table. A currency
+ *              with no rate is left out and named.
+ */
+async function dashboard() {
+  const [ships, txs, costRows] = await Promise.all([
+    query("SELECT data->>'status' AS status, data->>'deliveryDate' AS due FROM logistics_items WHERE kind = 'shipments' AND deleted_at IS NULL"),
+    query("SELECT data->'items' AS items FROM logistics_items WHERE kind = 'transactions' AND deleted_at IS NULL"),
+    query("SELECT data->>'currency' AS currency, data->>'amount' AS amount FROM logistics_items WHERE kind = 'logisticCosts' AND deleted_at IS NULL"),
+  ]);
+  const today = new Date();
+  const todayAt = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const active = ships.rows.filter((s) => s.status === 'pending' || s.status === 'in_transit');
+  const delivered = ships.rows.filter((s) => s.status === 'delivered').length;
+  // Past its delivery date — read as a day whichever way it was typed (the app compares the text).
+  const delayed = active.filter((s) => {
+    const t = situation.when(s.due);
+    return t !== null && t < todayAt;
+  }).length;
+  const { rows: readyRows } = await query("SELECT count(*)::int AS n FROM logistics_items WHERE kind = 'readyForDelivery' AND deleted_at IS NULL");
+
+  let give = 0;
+  let owed = 0;
+  for (const { items } of txs.rows) {
+    for (const it of Array.isArray(items) ? items : []) {
+      if (it?.status !== 'pending') continue;
+      const qty = Number(it.qty) || 1;
+      if (it.direction === 'give') give += qty;
+      else owed += qty;
+    }
+  }
+
+  const byCurrency = {};
+  for (const c of costRows.rows) {
+    const cur = /^[A-Za-z]{3,4}$/.test(c.currency || '') ? c.currency.toUpperCase() : 'OTHER';
+    byCurrency[cur] ||= { amount: 0, count: 0 };
+    byCurrency[cur].amount += Number(c.amount) || 0;
+    byCurrency[cur].count += 1;
+  }
+  for (const v of Object.values(byCurrency)) v.amount = Math.round(v.amount * 100) / 100;
+  let rates = null;
+  try {
+    const r = await getRates();
+    const want = new Set([...Object.keys(byCurrency), ...RATE_TARGETS]);
+    rates = { kind: r.kind, stale: Boolean(r.stale), table: Object.fromEntries([...want].filter((c) => r.rates[c]).map((c) => [c, r.rates[c]])) };
+  } catch {
+    rates = null;
+  }
+  return {
+    deliveries: { in_motion: active.length, delivered, delayed, in_progress: active.length - delayed, ready: readyRows[0].n },
+    accessories: { give, owed },
+    costs: { by_currency: byCurrency, rates, targets: RATE_TARGETS },
+  };
+}
+
+/*
+ * Watches flagged for polish (the app's Need Polish list): a London, Dubai or
+ * HK stock row marked "needs polish" — the moved copies a move leaves behind
+ * left out — and HK situation rows whose description or notes say so. A row
+ * at polish carries who has it and since when.
+ */
+async function needPolish(ctx) {
+  const { rows } = await query(
+    `SELECT * FROM logistics_items
+      WHERE deleted_at IS NULL AND (
+            (kind IN ('londonStock','dubaiStock','hkStock') AND data->>'needPolish' = 'true'
+              AND COALESCE(data->>'status','current') <> 'moved')
+         OR (kind = 'hkSituation' AND (COALESCE(data->>'description','') || ' ' || COALESCE(data->>'notes','')) ~* 'needs?\\s*polish'))
+      ORDER BY kind, id`
+  );
+  const where = (d, kind) =>
+    kind === 'londonStock'
+      ? d.inMayfair ? 'Mayfair' : d.inNcl ? 'NCL' : 'London'
+      : kind === 'dubaiStock'
+        ? d.inOffice ? 'Dubai office' : d.inSafe ? 'Dubai safe' : 'Dubai'
+        : kind === 'hkStock'
+          ? 'Hong Kong'
+          : `HK — ${String(d.section || '').replace(/_/g, ' ')}`;
+  return rows.map((r) => {
+    const d = r.data || {};
+    return {
+      ...view(r, ctx),
+      source: kindOf(r.kind).label,
+      reference: d.watchReference || d.reference || '',
+      model: d.watchModel || d.description || '',
+      from: d.from || d.holder || '',
+      place: where(d, r.kind),
+      polish: d.polish && d.polish.status !== 'done' ? { sentTo: d.polish.sentTo || '', sentDate: d.polish.sentDate || '' } : null,
+      can_polish: r.kind !== 'hkSituation',
+    };
+  });
 }
 
 /* ── files ───────────────────────────────────────────────────────── */

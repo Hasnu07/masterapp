@@ -199,6 +199,44 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 .lg-section { margin-top: 14px; }
 .lg-section > h3 { margin-bottom: 6px; }
 
+/* the logistics Overview: the app's dashboard */
+.ov-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.ov-card { display: grid; gap: 2px; padding: 14px 16px; border-radius: var(--radius); text-decoration: none; color: var(--ink); border: 1px solid var(--line); background: var(--card); box-shadow: var(--shadow); }
+.ov-card span { font-size: 13px; font-weight: 600; }
+.ov-card b { font: 600 34px/1.1 var(--serif); }
+.ov-card small { font-size: 12px; color: var(--muted); }
+.ov-card.moving { background: var(--blue-soft); border-color: #cddcf0; } .ov-card.moving b { color: var(--blue); }
+.ov-card.good { background: var(--good-soft); border-color: #cfe3d6; } .ov-card.good b { color: var(--good); }
+.ov-card.late { background: var(--warn-soft); border-color: #f0dcbf; } .ov-card.late b { color: var(--warn); }
+.ov-card.ready { background: var(--gold-soft); border-color: #e6d6b5; } .ov-card.ready b { color: var(--gold); }
+.ov-card:hover { border-color: #cdbf9f; }
+.ov-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; margin-bottom: 14px; align-items: start; }
+.ov-live { font-size: 11px; font-weight: 700; letter-spacing: .8px; color: var(--good); background: var(--good-soft); border: 1px solid #cfe3d6; border-radius: 999px; padding: 2px 9px 2px 20px; position: relative; }
+.ov-live::before { content: ''; position: absolute; left: 8px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: var(--good); animation: ov-pulse 1.6s ease-in-out infinite; }
+@keyframes ov-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .ov-live::before { animation: none; } }
+.ov-donut { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-top: 8px; }
+.ov-legend { display: grid; gap: 8px; flex: 1; min-width: 180px; }
+.ov-legend div { display: grid; grid-template-columns: 12px 1fr auto auto; gap: 8px; align-items: center; font-size: 14px; }
+.ov-legend i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+.ov-legend small { color: var(--muted); min-width: 28px; text-align: right; }
+.ov-acc { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px 18px; align-items: center; }
+.ov-acc > div:first-child { flex: 1 1 100%; }
+.ov-acc-nums { display: flex; gap: 18px; }
+.ov-acc-nums span { display: block; font-size: 12px; color: var(--muted); }
+.ov-acc-nums b { font: 600 26px var(--serif); }
+.ov-acc-nums .give { color: var(--bad); } .ov-acc-nums .owed { color: var(--good); }
+.ov-cost { background: #fffaf0; border-color: #ecd9b0; }
+.ov-cost-total { font: 600 34px/1.2 var(--serif); color: var(--gold); margin: 6px 0; }
+.ov-curs { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 10px; }
+.ov-curs div { background: #fcfbf8; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; }
+.ov-curs span { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+.ov-curs b { font: 600 22px var(--serif); }
+.ov-curs small { color: var(--muted); font-size: 12px; }
+.ov-form { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 10px 0; }
+#ov-results .lg-line { gap: 10px; }
+@media (max-width: 900px) { .ov-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ov-grid { grid-template-columns: 1fr; } }
+
 /* logistics: its own tabs across the top, its lists' kinds in a row under them */
 .lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
 .lg-head h1 { margin: 0; }

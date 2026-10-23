@@ -244,23 +244,311 @@ async function loadLogistics(more = false) {
 
 /* ── the overview ───────────────────────────────────────────────── */
 
+/*
+ * The logistics app's dashboard, in masterapp: its four counters, the
+ * deliveries donut, Search everything, accessories, what logistics has cost
+ * (one currency, and each), Need Polish with Send and Done — and what is
+ * moving now. Every watch it names is OUR watch, linked to its page.
+ * Refreshed every minute while open; the search and an open polish form are
+ * left alone by the refresh.
+ */
+const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, timer: null, data: null };
+
+/* A record's stock numbers: to our watch's page where we hold it, else to the record. */
+const stockLinksOf = (i) =>
+  (i.stock_nos || [])
+    .map((s) => {
+      const w = (i.watches || []).find((x) => x.stock_no === s);
+      return w ? `<a class="lg-stock" href="#/watch/${w.id}">#${esc(s)}</a>` : `<span class="lg-stock">#${esc(s)}</span>`;
+    })
+    .join(' ');
+
 async function showLogisticsOverview() {
   const seq = ++lgPage;
   const still = () => seq === lgPage && (location.hash === '#/logistics' || location.hash === '#/logistics/overview');
-  $('#app').innerHTML = `${lgHeader('overview')}<p class="sub">Reading…</p>`;
+  clearTimeout(ov.timer);
+  ov.form = null;
+  $('#app').innerHTML = `${lgHeader('overview', '<span id="ov-asof"></span>')}
+    <div class="ov-cards" id="ov-cards"></div>
+    <div class="ov-grid">
+      <div class="panel" id="ov-donut"></div>
+      <div class="panel" id="ov-search"></div>
+    </div>
+    <div class="ov-grid">
+      <div class="panel ov-acc" id="ov-acc"></div>
+      <div class="panel ov-cost" id="ov-cost"></div>
+    </div>
+    <div class="panel" id="ov-costcards" style="margin-top:14px"></div>
+    <div class="panel" id="ov-polish" style="margin-top:14px"></div>
+    <div id="ov-lists" style="margin-top:14px"><p class="sub">Reading…</p></div>`;
+  renderOverviewSearch();
+  await loadOverview(still);
+}
+
+async function loadOverview(still) {
+  clearTimeout(ov.timer);
   let o;
   try {
     o = await api('/api/logistics/overview');
   } catch (err) {
-    if (still()) $('#app').innerHTML = `${lgHeader('overview')}<p class="err">${esc(err.message)}</p>`;
+    if (still() && $('#ov-lists')) $('#ov-lists').innerHTML = `<p class="err">${esc(err.message)}</p>`;
     return;
   }
   if (!still()) return;
-  const row = (i, extra = '') => `<a class="lg-line" href="#/lg/${i.id}">
-      <span>${stockTags(i.stock_nos)}</span>
-      <span class="grow"><b>${esc(i.summary.title)}</b>${i.summary.sub ? ` <span class="count" style="margin:0">${esc(i.summary.sub)}</span>` : ''}</span>
-      ${extra || lgChip(i.summary.status)}</a>`;
-  const places = o.places.map((p) => `<div><b>${p.n}</b><span>${esc(p.label)}${p.consignment ? ` · ${p.consignment} on consignment` : ''}${p.polish ? ` · ${p.polish} at polish` : ''}${p.need_polish ? ` · ${p.need_polish} need polish` : ''}</span></div>`).join('');
+  ov.data = o;
+  renderOverview(o);
+  ov.timer = setTimeout(() => {
+    if (still() && state.user) loadOverview(still);
+  }, 60_000);
+}
+
+function renderOverview(o) {
+  $('#ov-asof').textContent = o.as_of ? `the logistics app as of ${fmtWhen(o.as_of)}` : 'the logistics app has not been read yet';
+  const D = o.deliveries;
+  $('#ov-cards').innerHTML = [
+    ['moving', 'Shipments in motion', D.in_motion, 'pending + in transit', '#/logistics/shipments'],
+    ['good', 'Delivered', D.delivered, 'all time', '#/logistics/shipments'],
+    ['late', 'Delayed', D.delayed, 'past their delivery date', '#/logistics/shipments'],
+    ['ready', 'Ready for delivery', D.ready, 'sold, awaiting handover', '#/logistics/sales'],
+  ]
+    .map(([tone, label, n, sub, href]) => `<a class="ov-card ${tone}" href="${href}"><span>${esc(label)}</span><b>${esc(n)}</b><small>${esc(sub)}</small></a>`)
+    .join('');
+
+  /* The deliveries donut: delivered, in progress, delayed — the app's three. */
+  const segs = [
+    ['Delivered', D.delivered, 'var(--good)'],
+    ['In progress', D.in_progress, 'var(--warn)'],
+    ['Delayed', D.delayed, 'var(--bad)'],
+  ];
+  const sum = segs.reduce((a, s) => a + s[1], 0);
+  const r = 62;
+  const C = 2 * Math.PI * r;
+  let off = 0;
+  const arcs = sum
+    ? segs
+        .filter((s) => s[1] > 0)
+        .map(([, n, color]) => {
+          const len = C * (n / sum);
+          const arc = `<circle cx="80" cy="80" r="${r}" fill="none" style="stroke:${color}" stroke-width="20" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 80 80)"/>`;
+          off += len;
+          return arc;
+        })
+        .join('')
+    : `<circle cx="80" cy="80" r="${r}" fill="none" style="stroke:var(--line)" stroke-width="20"/>`;
+  $('#ov-donut').innerHTML = `<div class="row" style="justify-content:space-between"><h3 style="margin:0">Deliveries</h3><span class="ov-live" title="Refreshed every minute">LIVE</span></div>
+    <div class="ov-donut"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="${esc(`${sum} shipments`)}">${arcs}
+      <text x="80" y="80" text-anchor="middle" font-size="28" font-weight="700" style="fill:var(--ink)">${sum}</text>
+      <text x="80" y="100" text-anchor="middle" font-size="12" style="fill:var(--muted)">shipments</text></svg>
+      <div class="ov-legend">${segs
+        .map(([name, n, color]) => `<div><i style="background:${color}"></i><span>${esc(name)}</span><b style="color:${color}">${sum ? Math.round((n / sum) * 100) : 0}%</b><small>${esc(n)}</small></div>`)
+        .join('')}</div></div>`;
+
+  $('#ov-acc').innerHTML = `<div><h3 style="margin:0 0 4px">Accessories</h3><p class="count" style="margin:0">Pending accessory transfers — what to give and what clients owe us.</p></div>
+    <div class="ov-acc-nums"><div><span>To give to clients</span><b class="give">${esc(o.accessories.give)}</b></div><div><span>Clients owe us</span><b class="owed">${esc(o.accessories.owed)}</b></div></div>
+    <a class="btn" href="#/logistics/accessories">Open accessories →</a>`;
+
+  renderOverviewCost(o.costs);
+  if (!ov.form) renderOverviewPolish(o.need_polish);
+  renderOverviewLists(o);
+}
+
+/* What logistics has cost: one figure in a currency of your choosing, at the converter's rates, and each currency's own. */
+function renderOverviewCost(c) {
+  const parts = Object.entries(c.by_currency).sort(([a], [b]) => a.localeCompare(b));
+  const R = c.rates?.table || {};
+  const target = R[ov.costIn] ? ov.costIn : 'USD';
+  let total = 0;
+  const left = [];
+  const lines = parts.map(([cur, v]) => {
+    if (!R[cur] || !R[target]) {
+      left.push(cur);
+      return `<b>${esc(cur)}</b> ${esc(v.amount.toLocaleString('en-GB'))} — no rate`;
+    }
+    const conv = (v.amount / R[cur]) * R[target];
+    total += conv;
+    return `<b>${esc(cur)}</b> ${esc(v.amount.toLocaleString('en-GB', { maximumFractionDigits: 2 }))} ≈ ${money(Math.round(conv), target)}`;
+  });
+  $('#ov-cost').innerHTML = parts.length
+    ? `<div class="row" style="justify-content:space-between;align-items:flex-start">
+         <div><h3 style="margin:0 0 4px">Total logistic cost</h3><p class="count" style="margin:0">Every currency in one, at today’s ${esc(c.rates?.kind || '')} rates${c.rates?.stale ? ' (not fresh)' : ''}${left.length ? ` — ${esc(left.join(', '))} left out, no rate` : ''}.</p></div>
+         <label class="count" style="margin:0">in <select id="ov-costin" style="width:auto;min-height:30px;padding:2px 6px">${c.targets
+           .filter((t) => R[t])
+           .map((t) => `<option${t === target ? ' selected' : ''}>${esc(t)}</option>`)
+           .join('')}</select></label></div>
+       <div class="ov-cost-total" data-nofx>${c.rates ? money(Math.round(total * 100) / 100, target) : '—'}</div>
+       <p class="count" style="margin:0" data-nofx>${lines.join(' · ')}</p>`
+    : '<h3>Total logistic cost</h3><p class="count" style="margin:0">No logistic costs yet.</p>';
+  $('#ov-costin')?.addEventListener('change', (e) => {
+    ov.costIn = e.target.value;
+    renderOverviewCost(c);
+  });
+  $('#ov-costcards').innerHTML = parts.length
+    ? `<div class="row" style="justify-content:space-between"><h3 style="margin:0">Logistic cost — all time, per currency</h3><a class="btn small" href="#/logistics/costs">Open costs →</a></div>
+       <div class="ov-curs">${parts
+         .map(([cur, v]) => `<div><span>${esc(cur)}</span><b>${money(v.amount, cur === 'OTHER' ? null : cur)}</b><small>${esc(v.count)} cost line${v.count === 1 ? '' : 's'}</small></div>`)
+         .join('')}</div>`
+    : '';
+}
+
+/* Need Polish: the flagged watches, Send for one that is not at polish yet, Done for one that is. */
+function renderOverviewPolish(rows) {
+  const box = $('#ov-polish');
+  if (!box) return;
+  const editor = can('editor');
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><h3 style="margin:0">Need polish</h3><span class="count" style="margin:0">${
+    rows.length ? `${rows.length} watch${rows.length === 1 ? '' : 'es'} need polish` : 'none — all clean'
+  }</span></div>
+    <div id="ov-polish-form"></div>
+    ${
+      rows.length
+        ? `<div class="tscroll"><table class="list"><thead><tr><th>Where</th><th>Stock</th><th>Reference</th><th>Watch</th><th>From</th><th>Place</th><th></th></tr></thead><tbody>${rows
+            .map(
+              (r) => `<tr>
+                <td><span class="chip lg-muted">${esc(r.source)}</span></td>
+                <td>${stockLinksOf(r) || '<span class="blank">—</span>'}</td>
+                <td>${esc(r.reference || '—')}</td>
+                <td><a href="#/lg/${r.id}">${esc(r.model || r.summary.title)}</a></td>
+                <td>${esc(r.from || '—')}</td>
+                <td>${esc(r.place)}${r.polish ? `<div><span class="chip lg-warn" title="${esc(r.polish.sentDate ? `Since ${r.polish.sentDate}` : '')}">at polish · ${esc(r.polish.sentTo)}</span></div>` : ''}</td>
+                <td style="white-space:nowrap">${
+                  editor && r.can_polish
+                    ? r.polish
+                      ? `<button class="btn small" data-pdone="${r.id}">Done</button>`
+                      : `<button class="btn small" data-psend="${r.id}">Send</button>`
+                    : ''
+                }</td></tr>`
+            )
+            .join('')}</tbody></table></div>`
+        : ''
+    }`;
+  $$('[data-psend]', box).forEach((b) => b.addEventListener('click', () => polishForm('send', rows.find((r) => String(r.id) === b.dataset.psend))));
+  $$('[data-pdone]', box).forEach((b) => b.addEventListener('click', () => polishForm('done', rows.find((r) => String(r.id) === b.dataset.pdone))));
+}
+
+function polishForm(action, r) {
+  ov.form = action;
+  const today = localDay();
+  const host = $('#ov-polish-form');
+  const title = `${r.stock_nos.length ? `#${r.stock_nos.join(', #')} · ` : ''}${r.model || r.summary.title}`;
+  host.innerHTML =
+    action === 'send'
+      ? `<form class="ov-form" id="ov-pform"><b>Send to polish — ${esc(title)}</b>
+          <div class="form-grid" style="margin-top:8px">
+            <label>Sent to (polisher) *<input type="text" name="sentTo" required></label>
+            <label>Taken by<input type="text" name="takenBy"></label>
+            <label>What<select name="itemDescription"><option>Full Watch</option><option>Bracelet</option><option>Case</option><option>Clasp</option><option>Other</option></select></label>
+            <label>Sent<input type="date" name="sentDate" value="${today}"></label>
+            <label>Expected back<input type="date" name="expectedBack"></label>
+            <label>Cost<span class="row" style="flex-wrap:nowrap"><input type="text" inputmode="decimal" name="costAmount" placeholder="0"><input type="text" name="costCurrency" value="AED" maxlength="4" style="width:80px"></span></label>
+            <label class="wide">Notes<textarea name="notes" rows="2"></textarea></label>
+          </div>
+          <div class="err" id="ov-perr"></div>
+          <div class="row"><button class="btn primary">Send to polish</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`
+      : `<form class="ov-form" id="ov-pform"><b>Back from polish — ${esc(title)}</b> <span class="count">with ${esc(r.polish?.sentTo || '')}${r.polish?.sentDate ? ` since ${esc(r.polish.sentDate)}` : ''}</span>
+          <div class="form-grid" style="margin-top:8px">
+            <label>Back on<input type="date" name="returnedDate" value="${today}"></label>
+            <label class="wide">Notes<textarea name="returnNotes" rows="2"></textarea></label>
+          </div>
+          <div class="err" id="ov-perr"></div>
+          <div class="row"><button class="btn primary">Mark polish done</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`;
+  host.scrollIntoView({ block: 'nearest' });
+  $('#ov-pcancel').addEventListener('click', () => {
+    ov.form = null;
+    renderOverviewPolish(ov.data.need_polish);
+  });
+  $('#ov-pform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target).entries());
+    try {
+      const res = await api(`/api/logistics/items/${r.id}/polish`, { method: 'POST', body: { action, ...body } });
+      flash(action === 'send' ? `Sent to polish${res.cost ? ' — its cost is on the logistic costs' : ''}` : 'Polish done — back in stock');
+      ov.form = null;
+      loadOverview(() => location.hash === '#/logistics' || location.hash === '#/logistics/overview');
+    } catch (err) {
+      $('#ov-perr').textContent = err.message;
+    }
+  });
+}
+
+/* Search everything — our watches and clients, and the logistics records; nothing twice. */
+const OV_SCOPES = [
+  ['all', 'All'],
+  ['stock', 'In stock'],
+  ['sold', 'Sold'],
+  ['incoming', 'Incoming'],
+  ['shipments', 'Shipments'],
+  ['clients', 'Clients'],
+  ['transactions', 'Transactions'],
+];
+let ovSearchSeq = 0;
+function renderOverviewSearch() {
+  const S = ov.search;
+  $('#ov-search').innerHTML = `<h3 style="margin:0 0 8px">Search everything <span class="fold-note count">our watches and clients · London · Dubai · HK · sold · incoming · shipments</span></h3>
+    <input class="q" type="search" id="ov-q" placeholder="Brand, reference, model, stock number, serial, client, tracking…" value="${esc(S.q)}" autocomplete="off">
+    <div class="pills" id="ov-scopes" style="margin-top:8px">${OV_SCOPES.map(([k, l]) => `<button class="pill ${S.scope === k ? 'on' : ''}" data-scope="${k}">${esc(l)}</button>`).join('')}</div>
+    <div id="ov-results"></div>`;
+  let timer;
+  $('#ov-q').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      S.q = e.target.value;
+      runOverviewSearch();
+    }, 220);
+  });
+  $$('#ov-scopes .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      S.scope = b.dataset.scope;
+      $$('#ov-scopes .pill').forEach((x) => x.classList.toggle('on', x === b));
+      runOverviewSearch();
+    })
+  );
+  if (S.q) runOverviewSearch();
+}
+
+async function runOverviewSearch() {
+  const S = ov.search;
+  const seq = ++ovSearchSeq;
+  const out = $('#ov-results');
+  if (!S.q.trim()) {
+    out.innerHTML = '<p class="count" style="margin:8px 0 0">Results show as you type.</p>';
+    return;
+  }
+  let r;
+  try {
+    r = await api(`/api/logistics/search?${new URLSearchParams({ q: S.q, scope: S.scope })}`);
+  } catch (err) {
+    if (seq === ovSearchSeq) out.innerHTML = `<p class="err">${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== ovSearchSeq || !$('#ov-results')) return;
+  const watchRows = r.watches.map(
+    (w) => `<a class="lg-line" href="#/watch/${w.id}"><span class="lg-stock">#${esc(w.stock_no)}</span><span class="grow"><b>${esc(w.title)}</b>${
+      w.now ? ` <span class="count" style="margin:0">· ${esc(w.now.headline)}</span>` : w.location ? ` <span class="count" style="margin:0">· ${esc(w.location)}</span>` : ''
+    }</span>${chip(w.status)}</a>`
+  );
+  const clientRows = r.clients.map(
+    (c) => `<a class="lg-line" href="#/client/${c.id}"><span class="lg-stock">Client</span><span class="grow"><b>${esc(c.name)}</b>${
+      c.country ? ` <span class="count" style="margin:0">· ${esc(c.country)}</span>` : ''
+    }</span><span class="count" style="margin:0">${esc(c.bought)} bought · ${esc(c.sold)} sold</span></a>`
+  );
+  const recordRows = r.records.map(
+    (i) => `<div class="lg-line"><span>${stockLinksOf(i) || `<span class="lg-stock">${esc(i.kind_label)}</span>`}</span><a class="grow" href="#/lg/${i.id}" style="color:inherit;text-decoration:none"><b>${esc(i.summary.title)}</b>${
+      i.summary.sub ? ` <span class="count" style="margin:0">· ${esc(i.summary.sub)}</span>` : ''
+    } <span class="count" style="margin:0">· ${esc(i.kind_label)}</span></a>${lgChip(i.summary.status)}</div>`
+  );
+  const group = (label, rows) => (rows.length ? `<h3 style="margin:12px 0 2px">${esc(label)} <span class="fold-note count">${rows.length}</span></h3>${rows.join('')}` : '');
+  out.innerHTML =
+    group('Watches', watchRows) + group('Clients', clientRows) + group('Logistics records', recordRows) ||
+    '<p class="count" style="margin:8px 0 0">Nothing matches.</p>';
+}
+
+/* What is moving now, and the latest changes. */
+function renderOverviewLists(o) {
+  const row = (i, extra = '') => `<div class="lg-line">
+      <span>${stockLinksOf(i)}</span>
+      <a class="grow" href="#/lg/${i.id}" style="color:inherit;text-decoration:none"><b>${esc(i.summary.title)}</b>${i.summary.sub ? ` <span class="count" style="margin:0">${esc(i.summary.sub)}</span>` : ''}</a>
+      ${extra || lgChip(i.summary.status)}</div>`;
+  const places = o.places.map((p) => `<div><b>${p.n}</b><span>${esc(p.label)}${p.consignment ? ` · ${p.consignment} on consignment` : ''}${p.polish ? ` · ${p.polish} at polish` : ''}</span></div>`).join('');
   const change = (e) => {
     const keys = Object.keys(e.changes || {}).filter((k) => !['back', 'gone'].includes(k));
     const words =
@@ -272,11 +560,8 @@ async function showLogisticsOverview() {
     return `<li><time>${esc(fmtWhen(e.at))}</time><div><a href="#/lg/${e.item.id}">${esc(e.item.summary.title)}</a> ${stockTags(e.item.stock_nos)}
       <div class="d">${esc(words)} · ${esc(e.source === 'user' ? e.user_name || 'someone here' : 'the logistics app')}</div></div></li>`;
   };
-  $('#app').innerHTML = `
-    ${lgHeader('overview', o.as_of ? `the logistics app as of ${esc(fmtWhen(o.as_of))}` : 'the logistics app has not been read yet')}
-    <div class="stat" style="margin-bottom:16px">
-      <div><b>${o.shipments.length}</b><span>shipments on their way</span></div>
-      <div><b>${o.ready.length}</b><span>sold, waiting for delivery</span></div>
+  $('#ov-lists').innerHTML = `
+    <div class="stat" style="margin-bottom:14px">
       <div><b>${o.incoming.length}</b><span>watches coming in</span></div>
       ${places}
     </div>
