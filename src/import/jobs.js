@@ -56,7 +56,8 @@ export function startJob(name, user) {
       await syncClients({ user });
       await syncDetails({ mode: 'new', user });
       await syncVault({ user });
-      await syncLogistics({ user, reuse: true });
+      // Its own switch: off is the logistics switch-over, whatever "everything" says.
+      if (config.logistics.enabled) await syncLogistics({ user, reuse: true });
     },
   };
   const fn = Object.hasOwn(jobs, name) ? jobs[name] : null;
@@ -104,7 +105,17 @@ async function cycle() {
   }
   // One download of the worker's document serves both: the second step reuses the first one's copy.
   if (vaultOn() && config.sync.enabled) steps.push(['vault', () => syncVault({ reuse: true })]);
-  if (vaultOn() && config.logistics.enabled) steps.push(['logistics', () => syncLogistics({ reuse: true })]);
+  if (vaultOn() && config.logistics.enabled) {
+    steps.push([
+      'logistics',
+      async () => {
+        // The stamp this pass reads at: the minute check does not read the same document again after it.
+        const v = await fetchVersion().catch(() => null);
+        await syncLogistics({ reuse: true });
+        if (v !== null) lastVersion = v;
+      },
+    ]);
+  }
   for (const [name, fn] of steps) {
     try {
       await fn();
@@ -134,8 +145,30 @@ async function checkVersion() {
   const first = lastVersion === null;
   lastVersion = v;
   if (first) return;
-  runJob('logistics', () => syncLogistics()).catch((err) => {
-    if (err.status !== 409) console.error(`[logistics] ${err.message}`);
+  runJob('logistics', () => syncLogistics({ quiet: true }))
+    .catch((err) => {
+      if (err.status !== 409) console.error(`[logistics] ${err.message}`);
+    })
+    .finally(() => {
+      // The 15-minute pass came round while this one held the lock: it runs now, not fifteen minutes late.
+      if (passWaiting) tick();
+    });
+}
+
+/*
+ * The 15-minute pass. One that comes round while another job holds the lock
+ * waits for it rather than being dropped — the minute check runs often enough
+ * that dropping would skip Chrono Key for a quarter of an hour at a time.
+ */
+let passWaiting = false;
+function tick() {
+  if (current) {
+    passWaiting = true;
+    return;
+  }
+  passWaiting = false;
+  runJob('scheduled', cycle).catch((err) => {
+    if (err.status !== 409) console.error(`[sync] ${err.message}`);
   });
 }
 
@@ -150,12 +183,6 @@ export function startScheduler(log = console.log) {
     return;
   }
   const every = Math.max(5, config.sync.intervalMin) * 60_000;
-  const tick = () => {
-    if (current) return;
-    runJob('scheduled', cycle).catch((err) => {
-      if (err.status !== 409) console.error(`[sync] ${err.message}`);
-    });
-  };
   // A minute after start-up, not at once: a deploy should come up first.
   setTimeout(tick, 60_000).unref();
   setInterval(tick, every).unref();

@@ -1,8 +1,8 @@
 import { query, tx } from '../db/index.js';
 import { parseMoney, realDate } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
-import { lastLogisticsRead } from '../import/logistics/sync.js';
-import { GROUPS, KINDS, KIND, isSecret, stockOf } from './kinds.js';
+import { lastLogisticsRead, stockFor } from '../import/logistics/sync.js';
+import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
 import * as situation from './situation.js';
 
 /*
@@ -34,10 +34,16 @@ const kindOf = (key) =>
     summary: (d) => ({ title: String(d.title || d.name || d.description || d.text || d.id || key), date: d.ts || d.createdAt || d.date }),
   };
 
+/*
+ * A logistics client's id as records name it: the app's own, or — for one
+ * added here, which has none — "ma-" and our row's id.
+ */
+const CLIENT_ID = "COALESCE(source_id, 'ma-' || id)";
+
 /* The logistics clients by id, for every summary that names one. */
 async function context() {
-  const { rows } = await query("SELECT source_id, data->>'name' AS name FROM logistics_items WHERE kind = 'clients' AND source_id IS NOT NULL");
-  const names = new Map(rows.map((r) => [r.source_id, r.name || '']));
+  const { rows } = await query(`SELECT ${CLIENT_ID} AS id, data->>'name' AS name FROM logistics_items WHERE kind = 'clients'`);
+  const names = new Map(rows.map((r) => [r.id, r.name || '']));
   const client = (id) => (id ? names.get(String(id)) || '' : '');
   return { client, route: (d) => situation.route(d, client), stage: situation.stage };
 }
@@ -50,8 +56,10 @@ function summarise(row, ctx) {
     s = {};
   }
   const t = situation.when(s.date);
+  const d = row.data || {};
   return {
-    title: String(s.title || '').trim() || kindOf(row.kind).label,
+    // A record added through the plain Title / Notes form says what it is, not just its list's name.
+    title: String(s.title || d.title || d.name || d.text || d.notes || '').trim().slice(0, 200) || kindOf(row.kind).label,
     sub: String(s.sub || '').trim(),
     status: String(s.status || '').trim(),
     date: t ? new Date(t).toISOString() : null,
@@ -163,7 +171,8 @@ export async function itemEvents(id) {
 /** The logistics clients, for the client fields' choices. */
 export async function clientChoices() {
   const { rows } = await query(
-    "SELECT source_id AS id, data->>'name' AS name, data->>'country' AS country FROM logistics_items WHERE kind = 'clients' AND deleted_at IS NULL AND source_id IS NOT NULL ORDER BY lower(data->>'name')"
+    `SELECT ${CLIENT_ID} AS id, data->>'name' AS name, data->>'country' AS country FROM logistics_items
+      WHERE kind = 'clients' AND deleted_at IS NULL ORDER BY lower(data->>'name')`
   );
   return rows;
 }
@@ -260,7 +269,7 @@ export async function createItem(kind, data, user) {
   values.createdAt ??= stamp;
   if (['activity', 'vaultNotifications', 'ownerBriefs', 'settlements', 'thirdPartyMovers', 'thirdPartyShipments', 'logisticCosts', 'soldStocks', 'readyForDelivery'].includes(kind)) values.ts ??= stamp;
   return tx(async (db) => {
-    const stockNos = stockOf(kind, values, await rowStockFromDb(db));
+    const stockNos = stockFor(kind, values, null, await rowStockFromDb(db));
     const { rows } = await db.query(
       "INSERT INTO logistics_items(kind, data, stock_nos, happened_at, origin, created_by) VALUES ($1,$2,$3,$4,'manual',$5) RETURNING id",
       [kind, values, stockNos, situation.happenedAt(kind, values), user?.id ?? null]
@@ -285,7 +294,7 @@ export async function updateItem(id, patch, user) {
     if (!keys.length) return { changed: [] };
     const next = { ...it.data, ...values };
     const locks = it.origin === 'manual' ? it.locked_fields : [...new Set([...it.locked_fields, ...keys])];
-    const stockNos = stockOf(it.kind, next, await rowStockFromDb(db));
+    const stockNos = stockFor(it.kind, next, it.source_id, await rowStockFromDb(db), it.stock_nos);
     await db.query('UPDATE logistics_items SET data = $2, stock_nos = $3, locked_fields = $4, happened_at = $5, updated_at = now() WHERE id = $1', [
       it.id,
       next,
@@ -315,7 +324,7 @@ export async function unlockField(id, field, user) {
       it.id,
       next,
       locks,
-      stockOf(it.kind, next, await rowStockFromDb(db)),
+      stockFor(it.kind, next, it.source_id, await rowStockFromDb(db), it.stock_nos),
       situation.happenedAt(it.kind, next),
     ]);
     await log(db, it.id, { userId: user?.id, action: 'unlock', changes: { [field]: [it.data[field] ?? null, theirs ?? null] } });
@@ -339,7 +348,8 @@ export async function deleteItem(id, user, { restore = false } = {}) {
 
 /** When the logistics app was last read (a pass that found nothing new still counts). */
 async function asOf() {
-  const { rows } = await query("SELECT max(finished_at) AS at FROM import_runs WHERE source = 'logistics' AND ok");
+  // Newest first along import_runs' started_at index, not a scan of every run.
+  const { rows } = await query("SELECT finished_at AS at FROM import_runs WHERE source = 'logistics' AND ok ORDER BY started_at DESC LIMIT 1");
   const a = rows[0]?.at ? new Date(rows[0].at) : null;
   const b = lastLogisticsRead();
   return a && b ? (a > b ? a : b) : a || b;

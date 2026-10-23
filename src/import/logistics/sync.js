@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { pool, query } from '../../db/index.js';
+import { pool, query, tx } from '../../db/index.js';
 import { config } from '../../config.js';
-import { fetchState, getPhoto } from '../vault/sync.js';
+import { fetchState } from '../vault/sync.js';
 import { startRun, finishRun, progressRun } from '../listimport.js';
 import { GONE_LIMIT } from '../gone.js';
 import { KIND, NEVER_COPIED, isSecret, stockOf } from '../../logistics/kinds.js';
@@ -100,7 +100,11 @@ async function keep(v, stats) {
         const id = await storeFile(Buffer.from(v.slice(m[0].length), 'base64'));
         stats.files += 1;
         return `lgfile:${id}`;
-      } catch {
+      } catch (err) {
+        // Not a picture or a PDF this app can read: kept as such. Anything
+        // else (the store unreachable) fails the record, which is read again
+        // next pass — not marked unreadable for ever.
+        if (err.status !== 415) throw err;
         stats.unreadableFiles = (stats.unreadableFiles || 0) + 1;
         return 'lgfile:unreadable';
       }
@@ -146,10 +150,50 @@ async function copiedMap(urls) {
   return new Map(rows.map((r) => [r.source_ref, r.id]));
 }
 
+const MAX_FILE = 50 * 1024 * 1024;
+
 /*
- * The worker's pictures our records still point at, copied a budget at a time
- * and swapped in. Not a change of the record — the same picture, kept here —
- * so no history entry and no lock.
+ * One file off the worker's /photos/ — a picture, or a document (customs
+ * papers are PDFs there) — or null. Only the worker's own origin, no
+ * redirects followed, at most 50 MB counted as it arrives. /photos/ is public
+ * on the worker, so its key is not sent.
+ */
+async function getWorkerFile(url) {
+  const origin = workerOrigin();
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!origin || u.origin !== origin || !u.pathname.startsWith('/photos/')) return null;
+  const res = await fetch(u.href, { redirect: 'manual', signal: AbortSignal.timeout(config.vault.timeoutMs) });
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || !(type.startsWith('image/') || type.startsWith('application/pdf'))) return null;
+  if (Number(res.headers.get('content-length')) > MAX_FILE) return null;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body || []) {
+    size += chunk.length;
+    if (size > MAX_FILE) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+/*
+ * An address that gave nothing storable (a Word file, a dead link, a picture
+ * this app cannot read) is not asked for again for a day: asked every pass,
+ * it used up the pass's allowance and nothing else was ever copied.
+ */
+const refused = new Map();
+const REFUSED_FOR = 24 * 3600_000;
+
+/*
+ * The worker's files our records still point at, copied an allowance at a
+ * time and swapped in. Not a change of the record — the same file, kept
+ * here — so no history entry and no lock. The swap re-reads each record under
+ * a lock: a person's edit made meanwhile is kept, never written over.
  */
 async function copyWorkerPhotos(stats) {
   const origin = workerOrigin();
@@ -160,40 +204,64 @@ async function copyWorkerPhotos(stats) {
     [prefix]
   );
   if (!rows.length) return;
+  const now = Date.now();
   const wanted = [...new Set(rows.flatMap((r) => [...workerUrls(r.data, prefix)]))];
   const map = await copiedMap(wanted);
   let budget = config.logistics.photosPerPass;
   for (const url of wanted) {
     if (map.has(url) || budget <= 0) continue;
+    if (now - (refused.get(url) || 0) < REFUSED_FOR) continue;
     budget -= 1;
     try {
-      const buffer = await getPhoto(url);
-      if (!buffer) continue;
+      const buffer = await getWorkerFile(url);
+      if (!buffer) {
+        refused.set(url, now);
+        continue;
+      }
       map.set(url, await storeFile(buffer, url));
       stats.photosCopied += 1;
     } catch (err) {
-      console.warn(`[logistics] photo ${url}: ${err.message}`);
+      refused.set(url, now);
+      console.warn(`[logistics] file ${url}: ${err.message}`);
     }
   }
+  if (refused.size > 20_000) refused.clear();
   for (const r of rows) {
-    const next = localise(r.data, map);
-    if (stable(next) !== stable(r.data)) await query('UPDATE logistics_items SET data = $2 WHERE id = $1', [r.id, next]);
+    if (stable(localise(r.data, map)) === stable(r.data)) continue;
+    await tx(async (db) => {
+      const { rows: cur } = await db.query('SELECT data FROM logistics_items WHERE id = $1 FOR UPDATE', [r.id]);
+      if (!cur[0]) return;
+      const next = localise(cur[0].data, map);
+      if (stable(next) !== stable(cur[0].data)) await db.query('UPDATE logistics_items SET data = $2 WHERE id = $1', [r.id, next]);
+    });
   }
 }
 
 /* ── one record into ours ──────────────────────────────────────────── */
 
 /**
+ * The stock numbers a record names. A map's record (vaultTracking) is named
+ * by its key. A trip names its watches by the ids of their rows, and a sale
+ * gives a watch a new row: once it is sold its old id points nowhere, so what
+ * the trip was known to carry is kept rather than lost.
+ */
+export function stockFor(kind, d, sourceId, rowStock, previous = []) {
+  const nos = stockOf(kind, KIND[kind]?.map ? { ...d, _key: sourceId } : d, rowStock);
+  if (KIND[kind]?.stockField === 'stockIds' && previous.length) return [...new Set([...nos, ...previous])];
+  return nos;
+}
+
+/**
  * Writes what the logistics app says into our item: new, or every field that
  * nobody locked here replaced — a field the app dropped is dropped too.
  */
-async function applyItem(db, kind, sourceId, data, stockNos, stats, rowStock) {
+async function applyItem(db, kind, sourceId, data, stats, rowStock) {
   const { rows } = await db.query('SELECT * FROM logistics_items WHERE kind = $1 AND source_id = $2 FOR UPDATE', [kind, sourceId]);
   const it = rows[0];
   if (!it) {
     const { rows: ins } = await db.query(
       `INSERT INTO logistics_items(kind, source_id, data, stock_nos, happened_at, origin) VALUES ($1,$2,$3,$4,$5,'logistics') RETURNING id`,
-      [kind, sourceId, data, stockNos, happenedAt(kind, data)]
+      [kind, sourceId, data, stockFor(kind, data, sourceId, rowStock), happenedAt(kind, data)]
     );
     await db.query("INSERT INTO logistics_events(item_id, source, action, changes) VALUES ($1,'logistics','create','{}')", [ins[0].id]);
     stats.created += 1;
@@ -214,8 +282,8 @@ async function applyItem(db, kind, sourceId, data, stockNos, stats, rowStock) {
     next[k] = data[k];
     if (stable(it.data[k]) !== stable(data[k])) changes[k] = [brief(it.data[k]), brief(data[k])];
   }
-  // Locked stock numbers stay what the person typed; the rest follow the app.
-  const stock = it.locked_fields.length ? stockOf(kind, next, rowStock) : stockNos;
+  // From the record as kept: locked stock numbers stay what the person typed.
+  const stock = stockFor(kind, next, sourceId, rowStock, it.stock_nos);
   // Back after the sync deleted it: restored. A person's deletion stands.
   const back = it.source_gone_at !== null;
   const ours = back && it.deleted_at && +it.deleted_at === +it.source_gone_at;
@@ -318,10 +386,16 @@ export const lastLogisticsRead = () => lastRead;
 
 const MAIN_LISTS = ['shipments', 'incomings', 'londonStock', 'dubaiStock', 'soldStocks', 'clients'];
 
-export async function syncLogistics({ user, reuse = false, state: given } = {}) {
+/*
+ * quiet: the between-passes read, when the worker's version moved — about
+ * once a minute while the logistics app is in use. It keeps no import_runs
+ * row (they would push everything else off the Import page's list); the
+ * 15-minute pass keeps one, and records a failure.
+ */
+export async function syncLogistics({ user, reuse = false, quiet = false, state: given } = {}) {
   if (!config.vault.configured) throw new Error('The logistics app is not configured (VAULT_URL)');
-  const run = await startRun('logistics', 'full', user);
-  const stats = { records: 0, kinds: 0, created: 0, updated: 0, unchanged: 0, restored: 0, gone: 0, noId: 0, files: 0, photosCopied: 0, refused: {} };
+  const run = quiet ? null : await startRun('logistics', 'full', user);
+  const stats = { records: 0, kinds: 0, created: 0, updated: 0, unchanged: 0, restored: 0, gone: 0, noId: 0, files: 0, photosCopied: 0, failed: 0, refused: {} };
   try {
     const state = given || (await fetchState({ reuse }));
     if (!MAIN_LISTS.some((k) => Array.isArray(state?.[k]))) {
@@ -340,40 +414,55 @@ export async function syncLogistics({ user, reuse = false, state: given } = {}) 
         const { rows: had } = await client.query('SELECT source_id, hash, gone_at, item_id FROM logistics_records WHERE kind = $1', [kind]);
         const known = new Map(had.map((r) => [r.source_id, r]));
         const seen = [];
-        for (const [sourceId, rec] of records) {
+        for (const [sourceId, listed] of records) {
           if (!sourceId) {
             stats.noId += 1;
             continue;
           }
           stats.records += 1;
           seen.push(sourceId);
+          // The vault's photo store, which the vault step adds to its lists'
+          // records, is not part of the logistics app's record: a missed read
+          // of it is not a change of every stock row.
+          const { vaultPhotos, ...rec } = listed; // eslint-disable-line no-unused-vars
           const hash = sha(JSON.stringify(rec), 'sha1');
           const k = known.get(sourceId);
           if (k && k.hash === hash && !k.gone_at && k.item_id) {
             stats.unchanged += 1;
             continue;
           }
-          const raw = await keep(rec, stats);
-          const data = localise(raw, await copiedMap([...workerUrls(raw, prefix)]));
-          const stockNos = stockOf(kind, KIND[kind]?.map ? { ...data, _key: sourceId } : data, rowStock);
-          await client.query('BEGIN');
+          // One record that cannot be kept (a value Postgres refuses, the
+          // photo store down) is skipped and tried again next pass — it does
+          // not stop every list after it. It stays "seen": never taken as gone.
           try {
-            const itemId = await applyItem(client, kind, sourceId, data, stockNos, stats, rowStock);
-            await client.query(
-              `INSERT INTO logistics_records(kind, source_id, data, hash, fetched_at, gone_at, item_id) VALUES ($1,$2,$3,$4,now(),NULL,$5)
-               ON CONFLICT (kind, source_id) DO UPDATE SET data = EXCLUDED.data, hash = EXCLUDED.hash, fetched_at = now(),
-                 gone_at = NULL, item_id = EXCLUDED.item_id`,
-              [kind, sourceId, raw, hash, itemId]
-            );
-            await client.query('COMMIT');
+            const raw = await keep(rec, stats);
+            const data = localise(raw, await copiedMap([...workerUrls(raw, prefix)]));
+            await client.query('BEGIN');
+            try {
+              const itemId = await applyItem(client, kind, sourceId, data, stats, rowStock);
+              await client.query(
+                `INSERT INTO logistics_records(kind, source_id, data, hash, fetched_at, gone_at, item_id) VALUES ($1,$2,$3,$4,now(),NULL,$5)
+                 ON CONFLICT (kind, source_id) DO UPDATE SET data = EXCLUDED.data, hash = EXCLUDED.hash, fetched_at = now(),
+                   gone_at = NULL, item_id = EXCLUDED.item_id`,
+                [kind, sourceId, raw, hash, itemId]
+              );
+              await client.query('COMMIT');
+            } catch (err) {
+              await client.query('ROLLBACK').catch(() => {});
+              throw err;
+            }
           } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw new Error(`${kind} ${sourceId}: ${err.message}`);
+            stats.failed += 1;
+            (stats.failures ||= []).length < 5 && stats.failures.push(`${kind} ${sourceId}: ${err.message}`);
+            console.warn(`[logistics] ${kind} ${sourceId} not kept: ${err.message}`);
+            continue;
           }
           written += 1;
-          if (written % 100 === 0) await progressRun(run, stats);
+          if (run && written % 100 === 0) await progressRun(run, stats);
         }
-        if (KIND[kind]?.keepGone || !seen.length) continue;
+        // A list the app has emptied mirrors that too (a watch checked back in
+        // leaves checkoutStock empty) — within the same limit: ten at most.
+        if (KIND[kind]?.keepGone) continue;
         await client.query('BEGIN');
         try {
           await settleGone(client, kind, seen, stats);
@@ -388,13 +477,15 @@ export async function syncLogistics({ user, reuse = false, state: given } = {}) 
     }
     await copyWorkerPhotos(stats);
     lastRead = new Date();
-    // A pass that found nothing new leaves no run behind: every minute would be 1,440 rows a day of "nothing".
-    const changed = stats.created + stats.updated + stats.restored + stats.gone + stats.photosCopied + Object.keys(stats.refused).length;
-    if (!changed && !user) await query('DELETE FROM import_runs WHERE id = $1', [run]);
-    else await finishRun(run, { ok: true, stats });
+    if (run) {
+      // A pass that found nothing new leaves no run behind.
+      const changed = stats.created + stats.updated + stats.restored + stats.gone + stats.photosCopied + stats.failed + Object.keys(stats.refused).length;
+      if (!changed && !user) await query('DELETE FROM import_runs WHERE id = $1', [run]);
+      else await finishRun(run, { ok: !stats.failed, stats });
+    }
     return stats;
   } catch (err) {
-    await finishRun(run, { ok: false, stats, error: err.message });
+    if (run) await finishRun(run, { ok: false, stats, error: err.message });
     throw err;
   }
 }

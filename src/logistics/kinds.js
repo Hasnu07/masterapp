@@ -225,7 +225,8 @@ export const KINDS = [
     key: 'pickupCodes',
     label: 'Pickup codes',
     group: 'shipments',
-    summary: (d) => ({ title: first(d, ['title', 'name', 'carrier', 'code']) || 'Pickup code', sub: first(d, ['notes', 'address', 'location']), status: d.status, date: d.date || d.ts || d.createdAt }),
+    // The handover code itself is not the title: it is on the record's own page, not in every list.
+    summary: (d) => ({ title: first(d, ['title', 'name', 'carrier', 'courier', 'client', 'clientName']) || 'Pickup code', sub: first(d, ['address', 'location', 'notes']), status: d.status, date: d.date || d.ts || d.createdAt }),
   },
   {
     key: 'logisticsAddresses',

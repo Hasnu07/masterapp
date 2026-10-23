@@ -21,6 +21,12 @@ import { KIND, stockList } from './kinds.js';
 
 /** A moment as milliseconds: the app keeps both epoch ms and "YYYY-MM-DD" (and sometimes "DD/MM/YYYY"). */
 export function when(v) {
+  const t = rawWhen(v);
+  // A number no calendar holds (typed by hand, or a stray id) is no moment: new Date() of it would throw.
+  return t !== null && Number.isFinite(new Date(t).getTime()) ? t : null;
+}
+
+function rawWhen(v) {
   if (v === null || v === undefined || v === '') return null;
   if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? v : null;
   const s = String(v).trim();
@@ -237,15 +243,33 @@ export function now(items, ctx = {}) {
     head = { headline: where, detail: [d.holder && `held by ${d.holder}`, d.stockStatus].filter(Boolean).join(', '), tone: d.section === 'in_hand' ? 'here' : 'moving', since: when(d.createdAt), itemId: hk.id };
   }
 
+  // Sold through the HK situation list: no Sold Stocks record is made for those.
+  const hkSold = !head && newest(of('hkSituation').filter((i) => i.data.section === 'sold'), 'createdAt');
+  if (hkSold) {
+    const d = hkSold.data;
+    const sale = [...(Array.isArray(d.movements) ? d.movements : [])].reverse().find((m) => m.sale)?.sale;
+    head = {
+      headline: 'Sold (Hong Kong)',
+      detail: [sale?.clientName && `to ${sale.clientName}`, d.holder && `held by ${d.holder}`].filter(Boolean).join(', '),
+      tone: 'sold',
+      since: when(d.createdAt),
+      itemId: hkSold.id,
+    };
+  }
+
   const inc = !head && newest(of('incomings').filter((i) => !/cancel/i.test(i.data.status || '')), 'arrivedAt', 'createdAt');
   if (inc) {
     const d = inc.data;
     const arrived = d.status === 'arrived';
+    // Received into stock already: the stock row it became is the watch's place — and none is live now.
+    const received = Boolean(d.inventoryId || d.inventoryMovedAt);
     head = {
-      headline: arrived ? 'Arrived — not yet put into stock' : d.status === 'consignment' ? 'Coming in on consignment' : 'On its way in',
-      detail: [d.supplier && `from ${d.supplier}`, (d.inventoryDest || d.location) && `to ${d.inventoryDest || d.location}`, !arrived && d.eta && `expected ${d.eta}`].filter(Boolean).join(', '),
-      tone: arrived ? 'here' : 'moving',
-      since: when(d.arrivedAt) || when(d.createdAt),
+      headline: received ? 'Received into stock' : arrived ? 'Arrived — not yet put into stock' : d.status === 'consignment' ? 'Coming in on consignment' : 'On its way in',
+      detail: received
+        ? [d.inventoryDest && `put into ${d.inventoryDest}`, d.inventoryMovedAt && day(d.inventoryMovedAt), 'no current place recorded since'].filter(Boolean).join(', ')
+        : [d.supplier && `from ${d.supplier}`, (d.inventoryDest || d.location) && `to ${d.inventoryDest || d.location}`, !arrived && d.eta && `expected ${d.eta}`].filter(Boolean).join(', '),
+      tone: received ? 'none' : arrived ? 'here' : 'moving',
+      since: when(d.inventoryMovedAt) || when(d.arrivedAt) || when(d.createdAt),
       itemId: inc.id,
     };
   }
@@ -296,7 +320,11 @@ export function now(items, ctx = {}) {
       tone: 'warn',
     });
   }
-  const placeRow = live.find((i) => PLACES.some(([k]) => k === i.kind) && i.data.needPolish && (i.data.status || 'current') !== 'moved');
+  // At the polisher from a row that is not a place's (a sold watch polished before delivery).
+  const atPolish = live.find((i) => !PLACES.some(([k]) => k === i.kind) && i.data.polish?.sentTo && i.data.polish.status !== 'done');
+  if (atPolish) overlays.push({ text: `At polish with ${atPolish.data.polish.sentTo}`, tone: 'away', itemId: atPolish.id });
+  const polishing = live.some((i) => i.data.polish?.sentTo && i.data.polish.status !== 'done');
+  const placeRow = !polishing && live.find((i) => PLACES.some(([k]) => k === i.kind) && i.data.needPolish && (i.data.status || 'current') !== 'moved');
   if (placeRow) overlays.push({ text: 'Needs polish', tone: 'warn', itemId: placeRow.id });
 
   return { ...head, overlays };
@@ -304,15 +332,24 @@ export function now(items, ctx = {}) {
 
 /* ── the watch's logistics history ────────────────────────────────── */
 
+/* The app's movement types. Accessories are noted on the watch's row as movements, but nothing moved the watch. */
 const MOVE_WORDS = {
   dubai: 'Moved to Dubai',
   london: 'Moved to London',
   hk: 'Moved to Hong Kong',
   arrival_from_dubai: 'Arrived from Dubai',
   arrival_from_london: 'Arrived from London',
-  accessories_pending_collect: 'Accessories to collect',
-  accessories_pending_give: 'Accessories to give',
+  arrival_from_hk: 'Arrived from Hong Kong',
+  sold_held_in_safe: 'Sold — held in our safe for the buyer',
+  accessories_pending_collect: 'Accessories: to collect (noted)',
+  accessories_pending_give: 'Accessories: to give (noted)',
+  accessories_received: 'Accessories: received',
+  accessories_given: 'Accessories: given',
 };
+const moveWords = (mv) =>
+  MOVE_WORDS[mv.moveType] ||
+  (/^arrival_from_/.test(mv.moveType || '') ? `Arrived from ${mv.moveType.slice(13).replace(/_/g, ' ')}` : '') ||
+  (mv.toSection ? `HK: ${mv.fromSection || ''} → ${mv.toSection}` : mv.destination ? `Moved — ${mv.destination}` : 'Moved');
 
 /**
  * Everything that happened to the watch, newest first: the movements kept on
@@ -324,18 +361,24 @@ export function timeline(items, ctx = {}) {
   const out = [];
   const seen = new Set();
   const push = (e) => {
-    const key = e.key || `${e.at}|${e.text}`;
+    // Movements repeat across rows (a sold row keeps its origin row's): one each. Two costs on one day are two.
+    const key = e.key || `${e.itemId}|${e.at}|${e.text}`;
     if (seen.has(key)) return;
     seen.add(key);
     out.push(e);
   };
   const movementsOf = (d) => [...(Array.isArray(d.movements) ? d.movements : []), ...(Array.isArray(d.originRow?.movements) ? d.originRow.movements : [])];
+  // A record a PERSON deleted here is not history; one the logistics app dropped is (a sale takes a row out of its place).
+  const byPerson = (i) => i.deleted_at && !(i.source_gone_at && +new Date(i.deleted_at) === +new Date(i.source_gone_at));
+  const today = Date.now();
 
   for (const i of items) {
+    if (byPerson(i)) continue;
     const d = i.data || {};
+    const gone = Boolean(i.deleted_at);
     for (const mv of movementsOf(d)) {
       const at = when(mv.ts) || when(mv.date) || when(mv.movedAt);
-      const words = MOVE_WORDS[mv.moveType] || (mv.toSection ? `HK: ${mv.fromSection || ''} → ${mv.toSection}` : mv.destination ? `Moved — ${mv.destination}` : 'Moved');
+      const words = moveWords(mv);
       push({
         key: `mv:${mv.id || `${at}|${words}`}`,
         at,
@@ -358,11 +401,17 @@ export function timeline(items, ctx = {}) {
         const place = PLACES.find(([k]) => k === i.kind)[1];
         if (d.receivedAt || d.createdAt) push({ at: when(d.receivedAt) || when(d.createdAt), kind: i.kind, itemId: i.id, text: `Into ${place}`, detail: d.from ? `from ${d.from}` : '' });
         if (d.consignment?.with) push({ at: when(d.consignment.date), kind: i.kind, itemId: i.id, text: d.consignment.direction === 'from_client' ? `On consignment from ${d.consignment.with}` : `On consignment with ${d.consignment.with}`, detail: d.consignment.notes || '' });
+        // A consignment recalled is kept on the row as consignmentRecord: still the watch's history.
+        const past = d.consignmentRecord;
+        if (past?.with) {
+          push({ key: `cr:${i.id}:${past.date}`, at: when(past.date), kind: i.kind, itemId: i.id, text: `${past.direction === 'from_client' ? `On consignment from ${past.with}` : `On consignment with ${past.with}`} — since recalled`, detail: past.notes || '' });
+        }
         if (d.polish?.sentTo) {
           push({ at: when(d.polish.sentDate) || when(d.polish.createdAt), kind: i.kind, itemId: i.id, text: `Sent to polish — ${d.polish.sentTo}`, detail: d.polish.itemDescription || '' });
         }
+        // A finished polish keeps the day it came back (returnedDate) and the notes made then.
         for (const p of Array.isArray(d.polishHistory) ? d.polishHistory : []) {
-          push({ key: `po:${p.id || p.sentDate}`, at: when(p.returnedAt) || when(p.returnDate) || when(p.sentDate), kind: i.kind, itemId: i.id, text: `Polish${p.sentTo ? ` with ${p.sentTo}` : ''} — done`, detail: p.notes || '' });
+          push({ key: `po:${p.id || p.sentDate}`, at: when(p.returnedDate) || when(p.sentDate), kind: i.kind, itemId: i.id, text: `Back from polish${p.sentTo ? ` (${p.sentTo})` : ''}`, detail: p.returnNotes || '' });
         }
         break;
       }
@@ -373,11 +422,16 @@ export function timeline(items, ctx = {}) {
         push({ at: when(d.soldDate) || when(d.ts), kind: i.kind, itemId: i.id, text: 'Sold', detail: [d.soldToBuyer && `to ${d.soldToBuyer}`, d.soldFromLocation && `from ${d.soldFromLocation}`].filter(Boolean).join(' · ') });
         break;
       case 'soldStocks':
-        push({ at: when(d.soldDate) || when(d.ts), kind: i.kind, itemId: i.id, text: 'Sold', detail: [d.soldToBuyer && `to ${d.soldToBuyer}`, d.soldFromLocation && `from ${d.soldFromLocation}`].filter(Boolean).join(' · ') });
-        if (d.deliveredAt) push({ at: when(d.deliveredAt), kind: i.kind, itemId: i.id, text: 'Delivered to the buyer', detail: d.deliveredVia === 'in_person' ? 'in person' : d.deliveredVia === 'shipment' ? 'by shipment' : '' });
+        // A sold row the logistics app dropped is a sale it took back (Cancel Sale).
+        push({ at: when(d.soldDate) || when(d.ts), kind: i.kind, itemId: i.id, text: gone ? 'Sold — the sale was later cancelled' : 'Sold', detail: [d.soldToBuyer && `to ${d.soldToBuyer}`, d.soldFromLocation && `from ${d.soldFromLocation}`].filter(Boolean).join(' · ') });
+        if (d.deliveredAt && !gone) push({ at: when(d.deliveredAt), kind: i.kind, itemId: i.id, text: 'Delivered to the buyer', detail: d.deliveredVia === 'in_person' ? 'in person' : d.deliveredVia === 'shipment' ? 'by shipment' : '' });
         break;
       case 'shipments': {
         const st = stage(d);
+        if (st.key === 'cancelled') {
+          push({ at: when(d.date) || when(d.createdAt), kind: i.kind, itemId: i.id, text: 'Shipment booked, then cancelled', detail: route(d, clientName) });
+          break;
+        }
         push({ at: when(d.date) || when(d.createdAt), kind: i.kind, itemId: i.id, text: 'Shipped', detail: [route(d, clientName), d.tracking].filter(Boolean).join(' · ') });
         if (d.deliveredAt || st.key === 'delivered') push({ at: when(d.deliveredAt) || when(st.track?.asOf), kind: i.kind, itemId: i.id, text: 'Shipment delivered', detail: route(d, clientName) });
         else if (st.key === 'exception' || st.key === 'customs') push({ at: st.track?.asOf || null, kind: i.kind, itemId: i.id, text: st.label, detail: st.track?.label || '' });
@@ -387,9 +441,11 @@ export function timeline(items, ctx = {}) {
         push({ at: when(d.shipmentDate) || when(d.ts), kind: i.kind, itemId: i.id, text: `With mover ${d.moverName || ''}`.trim(), detail: [d.fromCountry, d.toCountry].filter(Boolean).join(' → ') });
         if (d.deliveryDate) push({ at: when(d.deliveryDate), kind: i.kind, itemId: i.id, text: 'Mover delivered', detail: d.moverName || '' });
         break;
-      case 'personTrips':
-        push({ at: when(d.startDate), kind: i.kind, itemId: i.id, text: `Trip — ${d.personName || ''}`.trim(), detail: [d.fromLocation, d.toLocation].filter(Boolean).join(' → ') });
+      case 'personTrips': {
+        const at = when(d.startDate);
+        push({ at, kind: i.kind, itemId: i.id, text: `${at && at > today ? 'Trip planned' : 'Trip'} — ${d.personName || ''}`.replace(/ — $/, ''), detail: [d.fromLocation, d.toLocation].filter(Boolean).join(' → ') });
         break;
+      }
       case 'driverDeliveries':
         push({ at: when(d.dateGiven) || when(d.ts), kind: i.kind, itemId: i.id, text: `Given to driver ${d.driverName || ''}`.trim(), detail: d.destination || '' });
         break;
@@ -419,7 +475,9 @@ export function timeline(items, ctx = {}) {
  *      already stands for that shipment and watch
  *   3. a trip's cost lines, split over every watch on the trip
  *   4. what the watch cost to buy, from its incoming record
- * Amounts stay in their own currency; nothing is converted here.
+ * Amounts stay in their own currency; nothing is converted here. A cost with
+ * no currency is dollars, as the app counts it (its convertToUSD takes an
+ * unknown currency at 1).
  *
  * @param stockNo     the watch's stock number
  * @param items       logistics items naming it (live ones)
@@ -437,7 +495,7 @@ export function costs(stockNo, items, { tripStocks = (i) => Math.max(1, (i.data.
     const stocks = names(c.stockNumber);
     if (!stocks.includes(sn)) continue;
     const n = stocks.length || 1;
-    out.push({ source: 'Logistic cost', title: c.title || '', detail: [[c.fromName, c.toName].filter(Boolean).join(' → '), n > 1 && `split across ${n} watches`].filter(Boolean).join(' · '), date: day(c.date || c.ts), currency: c.currency || '', amount: (Number(c.amount) || 0) / n, itemId: i.id });
+    out.push({ source: 'Logistic cost', title: c.title || '', detail: [[c.fromName, c.toName].filter(Boolean).join(' → '), n > 1 && `split across ${n} watches`].filter(Boolean).join(' · '), date: day(c.date || c.ts), currency: c.currency || 'USD', amount: (Number(c.amount) || 0) / n, itemId: i.id });
   }
   for (const i of live.filter((x) => x.kind === 'shipments')) {
     const s = i.data;
@@ -445,16 +503,17 @@ export function costs(stockNo, items, { tripStocks = (i) => Math.max(1, (i.data.
     if (!stocks.includes(sn)) continue;
     const amount = Number(s.costAmount) || 0;
     if (amount <= 0) continue;
-    if (costsList.some((c) => c.data.shipmentId === s.id && names(c.data.stockNumber).includes(sn))) continue;
+    // A shipment added here has no id of the app's: no cost line can stand for it.
+    if (s.id && costsList.some((c) => c.data.shipmentId === s.id && names(c.data.stockNumber).includes(sn))) continue;
     const n = stocks.length || 1;
-    out.push({ source: 'Shipment', title: s.items || '', detail: [s.tracking, n > 1 && `split across ${n} watches`].filter(Boolean).join(' · '), date: day(s.date), currency: s.costCurrency || '', amount: amount / n, itemId: i.id });
+    out.push({ source: 'Shipment', title: s.items || '', detail: [s.tracking, n > 1 && `split across ${n} watches`].filter(Boolean).join(' · '), date: day(s.date), currency: s.costCurrency || 'USD', amount: amount / n, itemId: i.id });
   }
   for (const i of live.filter((x) => x.kind === 'personTrips')) {
     const t = i.data;
     const n = tripStocks(i);
     for (const c of Array.isArray(t.costs) ? t.costs : []) {
       if (!Number(c.amount)) continue;
-      out.push({ source: 'Trip (shared)', title: [c.category, c.label].filter(Boolean).join(' · '), detail: `${t.personName || ''} trip · split across ${n} watch${n === 1 ? '' : 'es'}`.trim(), date: day(c.date || t.startDate), currency: c.currency || '', amount: Number(c.amount) / n, itemId: i.id });
+      out.push({ source: 'Trip (shared)', title: [c.category, c.label].filter(Boolean).join(' · '), detail: `${t.personName || ''} trip · split across ${n} watch${n === 1 ? '' : 'es'}`.trim(), date: day(c.date || t.startDate), currency: c.currency || 'USD', amount: Number(c.amount) / n, itemId: i.id });
     }
   }
   for (const i of live.filter((x) => x.kind === 'incomings')) {
@@ -462,7 +521,7 @@ export function costs(stockNo, items, { tripStocks = (i) => Math.max(1, (i.data.
     if (String(d.stockNumber || '').trim().toLowerCase() !== sn) continue;
     const amount = Number(d.costAmount) || 0;
     if (amount <= 0) continue;
-    out.push({ source: 'Purchase', title: `Purchase · ${[d.brand, d.reference].filter(Boolean).join(' ')}`.trim(), detail: [d.supplier && `from ${d.supplier}`, d.location].filter(Boolean).join(' · '), date: d.eta || '', currency: d.costCurrency || '', amount, itemId: i.id });
+    out.push({ source: 'Purchase', title: `Purchase · ${[d.brand, d.reference].filter(Boolean).join(' ')}`.trim(), detail: [d.supplier && `from ${d.supplier}`, d.location].filter(Boolean).join(' · '), date: day(d.eta) || '', currency: d.costCurrency || 'USD', amount, itemId: i.id });
   }
   for (const c of out) c.amount = Math.round(c.amount * 100) / 100;
   const totals = {};

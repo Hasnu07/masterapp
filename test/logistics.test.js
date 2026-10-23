@@ -73,13 +73,24 @@ async function fixture() {
     goldSoukTasks: Array.from({ length: 15 }, (_, i) => ({ id: `g${i}`, title: `Task ${i}` })),
     activity: [{ id: 'a1', text: 'Shipment created', ts: 1761000000000 }],
     someNewList: [{ id: 'n1', title: 'A list the catalog does not know yet' }],
+    checkoutStock: [{ id: 'K1', stockNumber: '1950', brand: 'Tudor', checkedOutBy: 'trade show', checkedOutDate: '2026-10-22' }],
+    // The vault's holder of a stock row, keyed by the row's id (a map, not a list).
+    vaultTracking: { D1: { holder: 'Ali', loc: 'dubai' } },
+    shipmentDocs: [{ id: 'SD1', title: 'Customs papers', files: [`${base}/photos/doc.pdf`, `${base}/photos/dead.jpg`] }],
   };
 }
+
+const hits = {};
 
 before(async () => {
   const photo = await jpeg(60, 40, '#3a6');
   worker = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
+    hits[url.pathname] = (hits[url.pathname] || 0) + 1;
+    if (url.pathname === '/photos/doc.pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+      return res.end(Buffer.from('%PDF-1.4\n% a customs paper\n%%EOF\n'));
+    }
     if (url.pathname.startsWith('/api/')) {
       if (req.headers['x-worker-token'] !== 'vault-key') {
         res.statusCode = 401;
@@ -173,8 +184,9 @@ test('a shipment’s stage: the carrier knows better than a status set by hand',
 
 test('every list is copied — its settings, passwords and notes never are', async () => {
   const s = await m.sync.syncLogistics();
-  // 2 clients, 3 places' rows, 2 incomings, 2 shipments, 3 costs, 1 trip, 15 tasks, 1 activity line, 1 new list.
-  assert.equal(s.created, 30, JSON.stringify(s));
+  // 2 clients, 3 places' rows, 2 incomings, 2 shipments, 3 costs, 1 trip, 15 tasks, 1 activity line, 1 new list,
+  // 1 checked out, 1 vault holder, 1 shipping document.
+  assert.equal(s.created, 33, JSON.stringify(s));
   const kinds = (await db('SELECT DISTINCT kind FROM logistics_items')).rows.map((r) => r.kind);
   assert.ok(!kinds.includes('settings') && !kinds.includes('notepad'));
   assert.ok(kinds.includes('someNewList'), 'a list the catalog does not know yet is kept too');
@@ -196,7 +208,18 @@ test('pictures inside records become files; the worker’s own are copied too', 
   assert.match(d1.data.photos[1], /^lgfile:\d+$/, 'the one on the worker');
   const raw = (await db("SELECT data FROM logistics_records WHERE kind = 'dubaiStock' AND source_id = 'D1'")).rows[0].data;
   assert.equal(raw.photos[1], `${base}/photos/p1.jpg`, 'the raw record keeps the address it gave');
-  assert.equal((await db('SELECT count(*)::int AS n FROM logistics_files')).rows[0].n, 2);
+  const doc = await item('shipmentDocs', 'SD1');
+  assert.match(doc.data.files[0], /^lgfile:\d+$/, 'a PDF on the worker is copied too');
+  assert.equal(doc.data.files[1], `${base}/photos/dead.jpg`, 'a dead address stays as it was');
+  const types = (await db('SELECT content_type FROM logistics_files')).rows.map((r) => r.content_type).sort();
+  assert.deepEqual(types, ['application/pdf', 'image/jpeg', 'image/jpeg']);
+});
+
+test('an address that gave nothing is not asked for again every pass', async () => {
+  const before = hits['/photos/dead.jpg'];
+  await m.sync.syncLogistics();
+  await m.sync.syncLogistics({ quiet: true });
+  assert.equal(hits['/photos/dead.jpg'], before, 'refused for a day, not every minute');
 });
 
 test('an unchanged document changes nothing — and leaves no run behind', async () => {
@@ -255,6 +278,69 @@ test('a list that loses most of its records at once is a broken read, not a clea
   assert.equal(s.refused.goldSoukTasks, 12);
   assert.equal((await db("SELECT count(*)::int AS n FROM logistics_items WHERE kind = 'goldSoukTasks' AND deleted_at IS NULL")).rows[0].n, 15);
   state.goldSoukTasks = kept;
+});
+
+test('a list the app empties is mirrored too: a watch checked back in is not "checked out" here', async () => {
+  const kept = state.checkoutStock;
+  state.checkoutStock = [];
+  await m.sync.syncLogistics();
+  assert.ok((await item('checkoutStock', 'K1')).deleted_at);
+  state.checkoutStock = kept;
+  await m.sync.syncLogistics();
+  assert.equal((await item('checkoutStock', 'K1')).deleted_at, null, 'and back when it is listed again');
+});
+
+test('one record Postgres refuses is skipped, not the end of the pass', async () => {
+  state.brokenList = [
+    { id: 'b1', title: 'carries a \u0000 nul' },
+    { id: 'b2', title: 'fine' },
+  ];
+  state.shipments[1].notes = 'changed after the broken list';
+  const s = await m.sync.syncLogistics();
+  assert.equal(s.failed, 1, JSON.stringify(s));
+  assert.ok(await item('brokenList', 'b2'), 'the rest of its list is kept');
+  assert.equal((await item('shipments', 'S2')).data.notes, 'changed after the broken list', 'and every list after it');
+  delete state.brokenList;
+});
+
+test('the vault’s photo store is not part of a logistics record', async () => {
+  state.dubaiStock[0].vaultPhotos = ['https://example.invalid/v.jpg'];
+  const s = await m.sync.syncLogistics();
+  assert.equal(s.updated, 0, 'a missed or changed read of it changes no stock row');
+  delete state.dubaiStock[0].vaultPhotos;
+});
+
+test('a vault holder is named by its key; editing it keeps its stock number', async () => {
+  const vt = await item('vaultTracking', 'D1');
+  assert.deepEqual(vt.stock_nos, ['1668']);
+  await m.lg.updateItem(vt.id, { holder: 'Omar' }, null);
+  assert.deepEqual((await item('vaultTracking', 'D1')).stock_nos, ['1668']);
+  await m.sync.syncLogistics();
+  assert.deepEqual((await item('vaultTracking', 'D1')).stock_nos, ['1668'], 'and so does the sync, with the field locked');
+});
+
+test('the between-passes read keeps no run', async () => {
+  const runs = (await db("SELECT count(*)::int AS n FROM import_runs WHERE source = 'logistics'")).rows[0].n;
+  state.shipments[1].notes = 'a quiet change';
+  const s = await m.sync.syncLogistics({ quiet: true });
+  assert.equal(s.updated, 1);
+  assert.equal((await db("SELECT count(*)::int AS n FROM import_runs WHERE source = 'logistics'")).rows[0].n, runs);
+});
+
+test('costs: a shipment added here keeps its own cost; no currency is dollars, as the app counts it', () => {
+  const { costs } = m.situation;
+  const c = costs('9', [
+    { id: 1, kind: 'shipments', data: { stockNumber: '9', costAmount: 100, costCurrency: 'GBP' } },
+    { id: 2, kind: 'logisticCosts', data: { stockNumber: '9', title: 'Taxi', amount: 5 } },
+  ]);
+  assert.deepEqual(c.totals, { GBP: 100, USD: 5 });
+});
+
+test('a number no calendar holds is no moment', () => {
+  const { when, happenedAt } = m.situation;
+  assert.equal(when(8.7e15), null);
+  assert.equal(when(1e20), null);
+  assert.equal(happenedAt('logisticCosts', { date: 1e20 }), null);
 });
 
 test('an activity line falling off the app’s last 200 is not a deletion', async () => {
@@ -371,4 +457,19 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const pic = await viewer.call('GET', `/api/logistics/files/${fileId}?thumb=1`);
   assert.equal(pic.status, 200);
   assert.equal(pic.type, 'image/jpeg');
+
+  // A client added here can be chosen on a shipment, and its name shows.
+  const cl = await editor.call('POST', '/api/logistics/items', { kind: 'clients', data: { name: 'New Dealer', country: 'UAE' } });
+  const choices = (await viewer.call('GET', '/api/logistics/clients')).body.clients;
+  const mine2 = choices.find((c) => c.name === 'New Dealer');
+  assert.equal(mine2.id, `ma-${cl.body.id}`);
+  const ship = await editor.call('POST', '/api/logistics/items', { kind: 'shipments', data: { stockNumber: '1950', toClientId: mine2.id, status: 'pending' } });
+  assert.match((await viewer.call('GET', `/api/logistics/items/${ship.body.id}`)).body.summary.sub, /New Dealer/);
+});
+
+test('a trip keeps the watches it carried after one of them is sold (its row id then points nowhere)', async () => {
+  state.dubaiStock = state.dubaiStock.filter((r) => r.id !== 'D2');
+  state.personTrips[0].notes = 'edited after the sale';
+  await m.sync.syncLogistics();
+  assert.deepEqual((await item('personTrips', 'T1')).stock_nos.sort(), ['1668', '1700']);
 });

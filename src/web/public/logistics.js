@@ -11,7 +11,9 @@
  */
 'use strict';
 
-const lgState = { q: '', kind: '', deleted: false, clients: null };
+const lgState = { q: '', kind: '', deleted: false };
+/* Each logistics page drawn bumps this: an answer for a page no longer shown is dropped, not drawn over the new one. */
+let lgPage = 0;
 
 const LG_TONE = [
   [/^(delivered|done|paid|settled|back|current|arrived)$/i, 'lg-good'],
@@ -134,6 +136,7 @@ let lgSeq = 0;
 let lgShown = [];
 async function showLogistics(group) {
   if (!group || group === 'overview') return showLogisticsOverview();
+  lgPage += 1;
   if (!lgGroups().some((g) => g.key === group)) {
     location.hash = '#/logistics';
     return;
@@ -178,6 +181,8 @@ const lgAddKind = () => lgState.kind || lgKinds().find((k) => k.group === lgStat
 
 async function loadLogistics(more = false) {
   const seq = ++lgSeq;
+  // A new search starts a new list: "Show more" waits for it, so it never adds the old list's next page to it.
+  if (!more) $('#lg-more')?.classList.add('hide');
   const p = new URLSearchParams({ group: lgState.group, kind: lgState.kind, q: lgState.q, limit: 100, offset: more ? lgShown.length : 0 });
   if (lgState.deleted) p.set('deleted', '1');
   let r;
@@ -187,7 +192,9 @@ async function loadLogistics(more = false) {
     return flash(err.message, true);
   }
   if (seq !== lgSeq || !$('#lg-rows')) return;
-  lgShown = more ? [...lgShown, ...r.items] : r.items;
+  // Records the sync added since the first page push the rest down: a row already shown is not shown twice.
+  const had = new Set(lgShown.map((i) => i.id));
+  lgShown = more ? [...lgShown, ...r.items.filter((i) => !had.has(i.id))] : r.items;
   // The lists in the logistics app's own order (London before Dubai), not the alphabet's.
   const order = (key) => {
     const i = lgKinds().findIndex((k) => k.key === key);
@@ -227,15 +234,17 @@ async function loadLogistics(more = false) {
 /* ── the overview ───────────────────────────────────────────────── */
 
 async function showLogisticsOverview() {
+  const seq = ++lgPage;
+  const still = () => seq === lgPage && (location.hash === '#/logistics' || location.hash === '#/logistics/overview');
   $('#app').innerHTML = `${lgHeader('overview')}<p class="sub">Reading…</p>`;
   let o;
   try {
     o = await api('/api/logistics/overview');
   } catch (err) {
-    $('#app').innerHTML = `${lgHeader('overview')}<p class="err">${esc(err.message)}</p>`;
+    if (still()) $('#app').innerHTML = `${lgHeader('overview')}<p class="err">${esc(err.message)}</p>`;
     return;
   }
-  if (location.hash !== '#/logistics' && location.hash !== '#/logistics/overview') return;
+  if (!still()) return;
   const row = (i, extra = '') => `<a class="lg-line" href="#/lg/${i.id}">
       <span>${stockTags(i.stock_nos)}</span>
       <span class="grow"><b>${esc(i.summary.title)}</b>${i.summary.sub ? ` <span class="count" style="margin:0">${esc(i.summary.sub)}</span>` : ''}</span>
@@ -275,14 +284,17 @@ async function showLogisticsOverview() {
 /* ── one record ─────────────────────────────────────────────────── */
 
 async function showLogisticsItem(id, { editing = false } = {}) {
+  const seq = ++lgPage;
+  const still = () => seq === lgPage && location.hash === `#/lg/${id}`;
   let it;
   let events = [];
   try {
     [it, { events }] = await Promise.all([api(`/api/logistics/items/${id}`), api(`/api/logistics/items/${id}/events`)]);
   } catch (err) {
-    $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/logistics">Back to logistics</a>`;
+    if (still()) $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/logistics">Back to logistics</a>`;
     return;
   }
+  if (!still()) return;
   const k = lgKind(it.kind);
   const editor = can('editor') && !it.deleted_at;
   const locked = new Set(it.locked_fields || []);
@@ -317,7 +329,8 @@ async function showLogisticsItem(id, { editing = false } = {}) {
     : `<div class="panel"><h3>${esc(k.label)}</h3><dl class="fields">${
         k.fields
           .filter((f) => !withAmount.has(f.key))
-          .map((f) => `<dt>${esc(f.label)}</dt><dd>${lgShow(f, it.data, extra) || '<span class="blank">—</span>'}${lockMark(f.key)}</dd>`)
+          // An amount's currency shows with it — and so does its lock, when the currency was edited here.
+          .map((f) => `<dt>${esc(f.label)}</dt><dd>${lgShow(f, it.data, extra) || '<span class="blank">—</span>'}${lockMark(f.key)}${f.type === 'money' && f.currency ? lockMark(f.currency) : ''}</dd>`)
           .join('') +
         scalars.map(([key, v]) => `<dt>${esc(humanKey(key))}</dt><dd>${lgValue(v, key)}${lockMark(key)}</dd>`).join('')
       }</dl></div>`;
@@ -431,7 +444,7 @@ function lgInput(f, d) {
       return `<select ${name}><option value="false"${v ? '' : ' selected'}>No</option><option value="true"${v ? ' selected' : ''}>Yes</option></select>`;
     case 'date':
     case 'when': {
-      const t = typeof v === 'number' || /^\d{10,13}$/.test(String(v ?? '')) ? new Date(Number(v)).toISOString().slice(0, 10) : String(v ?? '').slice(0, 10);
+      const t = asDay(v);
       return `<input type="date" ${name} value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(t) ? t : '')}">`;
     }
     case 'money':
@@ -454,46 +467,57 @@ function lgForm(fields, d) {
     .join('')}</div><datalist id="lg-currencies">${(state.meta.currencies || []).map((c) => `<option value="${esc(c)}">`).join('')}</datalist>`;
 }
 
+/* A day as this computer's calendar has it — not UTC's, which is yesterday in a Hong Kong or Dubai morning. */
+function localDay(t = Date.now()) {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+/* The day a field holds, whichever way the app wrote it (milliseconds or a day). */
+const asDay = (v) => (typeof v === 'number' || /^\d{10,13}$/.test(String(v ?? '')) ? localDay(Number(v)) : String(v ?? '').slice(0, 10));
+/* Text as a form gives it back: the browser hands a textarea's line breaks back as \n, and trims nothing. */
+const asText = (v) => (v === null || v === undefined ? '' : String(v)).replace(/\r\n?/g, '\n').trim();
+
 /** Only the fields that differ from what is held, so an edit never resends — and re-locks — the rest. */
 function lgRead(form, fields, d) {
   const patch = {};
   for (const f of fields) {
     const el = form.elements[f.key];
     if (!el) continue;
-    const v = el.value.trim();
+    const v = asText(el.value);
     const was = d[f.key];
     if (f.type === 'bool') {
       if ((v === 'true') !== Boolean(was)) patch[f.key] = v === 'true';
       continue;
     }
     if (f.type === 'date' || f.type === 'when') {
-      const t = typeof was === 'number' || /^\d{10,13}$/.test(String(was ?? '')) ? new Date(Number(was)).toISOString().slice(0, 10) : String(was ?? '').slice(0, 10);
-      if (v !== t) patch[f.key] = v;
+      if (v !== asDay(was)) patch[f.key] = v;
       continue;
     }
-    if (v !== (was === null || was === undefined ? '' : String(was))) patch[f.key] = v;
+    if (v !== asText(was)) patch[f.key] = v;
   }
   return patch;
 }
 
+/* The logistics clients, asked for each time a form opens: one added a minute ago is there. */
 async function fillLogisticsClients(form) {
   const sels = $$('select[data-client]', form);
   if (!sels.length) return;
-  if (!lgState.clients) lgState.clients = (await api('/api/logistics/clients').catch(() => ({ clients: [] }))).clients;
+  const clients = (await api('/api/logistics/clients').catch(() => ({ clients: [] }))).clients;
   for (const s of sels) {
     const v = s.dataset.client;
     s.innerHTML =
       '<option value="">—</option>' +
-      lgState.clients.map((c) => `<option value="${esc(c.id)}"${c.id === v ? ' selected' : ''}>${esc(c.name || c.id)}${c.country ? ` (${esc(c.country)})` : ''}</option>`).join('') +
-      (v && !lgState.clients.some((c) => c.id === v) ? `<option value="${esc(v)}" selected>client ${esc(v)}</option>` : '');
+      clients.map((c) => `<option value="${esc(c.id)}"${c.id === v ? ' selected' : ''}>${esc(c.name || c.id)}${c.country ? ` (${esc(c.country)})` : ''}</option>`).join('') +
+      (v && !clients.some((c) => c.id === v) ? `<option value="${esc(v)}" selected>client ${esc(v)}</option>` : '');
   }
 }
 
 function showNewLogisticsItem(kind) {
   const k = lgKind(kind);
   if (!can('editor') || !lgKinds().some((x) => x.key === kind)) return (location.hash = '#/logistics');
+  lgPage += 1;
   const blank = {};
-  for (const f of k.fields) if (f.type === 'date') blank[f.key] = new Date().toISOString().slice(0, 10);
+  for (const f of k.fields) if (f.type === 'date') blank[f.key] = localDay();
   $('#app').innerHTML = `
     ${lgHeader(k.group)}
     <a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))}</a>
@@ -546,6 +570,8 @@ function renderWatchLogistics() {
     return;
   }
   const totals = Object.entries(L.costs.totals || {});
+  // The minute's refresh redraws the panel: the costs list someone opened stays open.
+  const open = Boolean(panel.querySelector('details')?.open);
   panel.hidden = false;
   panel.innerHTML = `<h3>Logistics</h3>
     ${
@@ -567,17 +593,21 @@ function renderWatchLogistics() {
     ${L.timeline.length > 40 ? `<p class="count">and ${L.timeline.length - 40} earlier</p>` : ''}
     <h3 style="margin-top:14px">Records</h3>
     ${L.items.map((i) => `<a class="lg-line" href="#/lg/${i.id}"><span class="count" style="margin:0;min-width:110px">${esc(i.kind_label)}</span><span class="grow">${esc(i.summary.title)}</span>${lgChip(i.summary.status)}</a>`).join('')}`;
+  const details = panel.querySelector('details');
+  if (details) details.open = open;
 }
 
 /* Fetched with the rest of the watch's side panels, then again every minute while the page stays open. */
 let lgWatchTimer = null;
 async function loadWatchLogistics(id) {
   clearTimeout(lgWatchTimer);
+  const onPage = () => state.user && location.hash === `#/watch/${id}` && current?.w.id === id;
   const L = await api(`/api/watches/${id}/logistics`).catch((err) => ({ error: err.message }));
-  if (current?.w.id !== id) return;
+  // Signed out meanwhile: the sign-in form is showing — not redrawn, and no more refreshes.
+  if (!onPage()) return;
   current.logistics = L;
   renderWatchLogistics();
   lgWatchTimer = setTimeout(() => {
-    if (location.hash === `#/watch/${id}` && current?.w.id === id) loadWatchLogistics(id);
+    if (onPage()) loadWatchLogistics(id);
   }, 60_000);
 }
