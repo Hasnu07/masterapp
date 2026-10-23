@@ -222,6 +222,51 @@ test('clients: added, searched, tied to a watch, and the watch listed on the cli
   assert.deepEqual((await editor.call('PATCH', `/api/clients/${c.body.id}`, { nickname: 'AK' })).body.changed, ['nickname']);
 });
 
+test('expenses: added with a payment copy, searched, totalled in euros, deleted', async () => {
+  assert.equal((await viewer.call('POST', '/api/expenses', { title: 'x', amount: 1, currency: 'EUR' })).status, 403);
+  assert.equal((await editor.call('POST', '/api/expenses', { title: 'Rent', amount: '5000' })).status, 400, 'a currency is said, never assumed');
+  const rent = await editor.call('POST', '/api/expenses', {
+    title: 'Dubai office rent | October', type: 'RENT', amount: '5,000', currency: 'aed', payment_method: 'bank', expense_date: '2026-10-01',
+  });
+  assert.equal(rent.status, 201, JSON.stringify(rent.body));
+  const fuel = await editor.call('POST', '/api/expenses', { title: 'Petrol', type: 'Local Expense Petrol', amount: '80', currency: 'EUR', expense_date: '2026-10-02' });
+  assert.equal((await viewer.call('GET', `/api/expenses/${fuel.body.id}`)).body.cost_eur, 80, 'an amount in euros is its own euro figure');
+
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n');
+  const fd = new FormData();
+  fd.append('files', new Blob([pdf], { type: 'application/pdf' }), 'transfer slip.pdf');
+  fd.append('files', new Blob([await sharp({ create: { width: 40, height: 30, channels: 3, background: '#c33' } }).jpeg().toBuffer()]), 'receipt.jpg');
+  const up = await editor.call('POST', `/api/expenses/${rent.body.id}/files`, fd);
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  const bad = new FormData();
+  bad.append('files', new Blob([Buffer.from('MZ not a document')]), 'evil.exe');
+  assert.equal((await editor.call('POST', `/api/expenses/${rent.body.id}/files`, bad)).status, 415);
+
+  const e = (await viewer.call('GET', `/api/expenses/${rent.body.id}`)).body;
+  assert.equal(e.currency, 'AED');
+  assert.equal(e.amount, 5000);
+  assert.equal(e.cost_eur, null, 'no euro figure is made up');
+  assert.deepEqual(e.files.map((f) => [f.name, f.content_type]), [['transfer slip.pdf', 'application/pdf'], ['receipt.jpg', 'image/jpeg']]);
+  const file = await viewer.call('GET', `/api/expense-files/${e.files[0].id}`);
+  assert.equal(file.type, 'application/pdf');
+  assert.ok(file.body.subarray(0, 5).equals(Buffer.from('%PDF-')));
+  assert.equal((await client().call('GET', `/api/expense-files/${e.files[0].id}`)).status, 401, 'behind the sign-in');
+
+  const found = (await viewer.call('GET', '/api/expenses?q=rent')).body;
+  assert.deepEqual(found.expenses.map((x) => x.title), ['Dubai office rent | October']);
+  assert.equal(found.expenses[0].files, 2);
+  assert.equal((await viewer.call('GET', '/api/expenses?q=5000')).body.total, 1, 'by its amount');
+  const all = (await viewer.call('GET', '/api/expenses?from=2026-10-01&to=2026-10-31')).body;
+  assert.equal(all.total, 2);
+  assert.equal(all.sum_eur, 80);
+  assert.equal(all.without_eur, 1, 'and says how many the total leaves out');
+  assert.deepEqual((await viewer.call('GET', '/api/expenses/types')).body.types.sort(), ['Local Expense Petrol', 'RENT']);
+
+  assert.equal((await editor.call('DELETE', `/api/expenses/${rent.body.id}/files/${e.files[1].id}`)).status, 200);
+  assert.equal((await editor.call('DELETE', `/api/expenses/${fuel.body.id}`)).status, 200);
+  assert.equal((await viewer.call('GET', '/api/expenses')).body.total, 1);
+});
+
 test('rates for the converter: a source without AED is refused, the daily one is used, and it says so', async () => {
   assert.equal((await client().call('GET', '/api/rates')).status, 401, 'signed in only');
   const r = (await viewer.call('GET', '/api/rates')).body;

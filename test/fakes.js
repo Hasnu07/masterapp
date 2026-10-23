@@ -103,6 +103,61 @@ export const CLIENTS = [
   clientRow({ id: 'c-idle', firstName: 'Nobody Yet', clientType: 'X' }),
 ];
 
+/*
+ * Chrono Key's expenses, as first read 23 Oct 2026: the list page holds every
+ * row (booked cost in "£", the date in data-sort), each expense's own page its
+ * currency, rate, cost in that currency and payment type. Exported so a test
+ * can change one.
+ */
+export const EXPENSES = {
+  2044: { title: 'FERRARI | SHIPMENT EXPENSES | PAID IN CASH | aed 4,300', type: 'Logistics Expense', date: '2026-10-20',
+    description: 'FERRARI | SHIPMENT EXPENSES | PAID IN CASH | aed 4,300', booked: '£1,032.00',
+    currency: [7, 'AED (DHS)'], rate: '0.2400000000', cost: '4300.00', typeId: [134, 'Logistics Expense'], pay: 0 },
+  2041: { title: 'META EXPENSE | PKR 53,073', type: 'Meta Expense', date: '2026-10-21',
+    description: 'meta expense | pkr 53,073 = USD 192', booked: '£170.88',
+    currency: [2, 'USD ($)'], rate: '0.8900000000', cost: '192.00', typeId: [138, 'Meta Expense'], pay: 1 },
+  2030: { title: 'TRIP — Cristian', type: 'Logistics Expense', date: '2026-10-16',
+    description: 'Complete\r\n2026-10-14 Flight / Ticket EUR 585\r\n Total $1,701.8', booked: '£1,575.93',
+    currency: [1, 'GBP (&#xA3;)'], rate: '1.0000000000', cost: '1575.93', typeId: [134, 'Logistics Expense'], pay: null, loan: true },
+  // Pounds, booked under Chrono Key's "EUR" at a pound-to-euro rate; the title says so.
+  1987: { title: 'kashan | salary | september 2026 | gbp 3,000', type: 'SALARY', date: '2026-10-01',
+    description: 'kashan | salary | september 2026 | gbp 3,000', booked: '£3,540.00',
+    currency: [3, 'EUR (&#x20AC;)'], rate: '1.1800000000', cost: '3000.00', typeId: [64, 'SALARY'], pay: 2 },
+  // The same, with nothing saying so.
+  2007: { title: 'harissa | transfer to Balance', type: 'Commission', date: '2026-10-05',
+    description: '', booked: '£590.00', currency: [3, 'EUR (&#x20AC;)'], rate: '1.18', cost: '500.00', typeId: [109, 'Commission'], pay: 2 },
+};
+
+function expenseList() {
+  const row = ([id, e]) => `<tr><td> </td><td><div>${e.title}</div></td><td><div> ${e.type} </div></td>
+    <td><div>${e.description.replace(/\r\n/g, '&#xD;&#xA;')}</div></td><td><div>${e.booked.replace('£', '&#xA3;')}</div></td>
+    <td data-sort="${e.date}"><div> ${e.date.split('-').reverse().join('/')} </div></td>
+    <td><a class="menu-link px-3 " href="/Stock/AddEditExpense/${id}">Edit</a><a onclick="DeleteFromServer('${id}')">Delete</a></td></tr>`;
+  return `<table><thead><tr><th></th><th>Title</th><th>Type</th><th>Description</th><th>Cost</th><th>Created Date</th><th>Actions</th></tr></thead>
+    <tbody>${Object.entries(EXPENSES).sort(([a], [b]) => b - a).map(row).join('')}</tbody></table>`;
+}
+
+function expensePage(id) {
+  const e = EXPENSES[id];
+  if (!e) return '<html>Not found</html>';
+  const opts = (list, picked) => list.map(([v, txt]) => `<option${v === picked ? ' selected="selected"' : ''} value="${v}">${txt}</option>`).join('');
+  return `<form><select class="form-select" id="CurrencyID" name="CurrencyID">${opts(
+    [[1, 'GBP (&#xA3;)'], [3, 'EUR (&#x20AC;)'], [2, 'USD ($)'], [7, 'AED (DHS)']],
+    e.currency[0]
+  )}</select>
+    <input data-val="true" id="ExchangeRate" name="ExchangeRate" value="${e.rate}" />
+    <input id="Title" name="Title" type="text" value="${e.title}" />
+    <input id="InsertedDT" name="InsertedDT" type="date" value="${e.date}" />
+    <select id="typeId" name="typeId"><option value="">Select Expense Type</option>${opts([[134, 'Logistics Expense'], [138, 'Meta Expense'], [64, 'SALARY'], [109, 'Commission']], e.typeId[0])}</select>
+    <input id="Cost" name="Cost" type="text" value="${e.cost}" />
+    <select id="PaymentType" name="PaymentType"><option value="">Select Payment Type</option>${opts(
+      [[0, 'Cash'], [1, 'Card'], [2, 'Wire'], [3, 'Crypto'], [4, 'PayPal / Chrono24']],
+      e.pay
+    )}</select>
+    <input class="form-check-input" type="checkbox" id="ExcludeFromProfit" name="ExcludeFromProfit" value="true"${e.loan ? ' checked="checked"' : ''} />
+    <textarea id="Description" name="Description">\r\n${e.description}</textarea></form>`;
+}
+
 /* What each watch's own page says. Euro figures as Chrono Key computes them. */
 export const DETAILS = {
   // a1-again is a1 under a second name, as Chrono Key's own galleries do.
@@ -228,6 +283,9 @@ export async function startChronoKey({ username = 'ck-user', password = 'ck-pass
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.end(JSON.stringify({ draw: 1, recordsTotal: CLIENTS.length, recordsFiltered: CLIENTS.length, data: CLIENTS }));
       }
+      if (url.pathname === '/Stock/ExpenseList') return res.end(expenseList());
+      const ex = url.pathname.match(/^\/Stock\/AddEditExpense\/(\d+)$/);
+      if (ex && req.method === 'GET') return res.end(expensePage(Number(ex[1])));
       if (url.pathname === '/Stock/ToBeShippedList') {
         return res.end('<table><thead><tr><th>Image</th><th>STOCK NUMBER</th><th>Tracking Status</th></tr></thead><tbody><tr><td></td><td>1701</td><td>In transit</td></tr></tbody></table>');
       }

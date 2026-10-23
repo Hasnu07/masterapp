@@ -17,6 +17,7 @@ const state = {
   meta: null,
   list: { q: '', status: '', location: '', brand: '', sort: 'newest', deleted: false },
   clients: { q: '', type: '' },
+  expenses: { q: '', type: '', from: '', to: '' },
 };
 
 async function api(path, opts = {}) {
@@ -108,7 +109,7 @@ function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
   const [, page, id] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients' }[page] || page || 'inventory';
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   menu(false);
   window.scrollTo(0, 0);
@@ -116,6 +117,8 @@ function route() {
   if (page === 'watch' && id) return showWatch(Number(id));
   if (page === 'clients') return id === 'new' ? showNewClient() : showClients();
   if (page === 'client' && id) return showClient(Number(id));
+  if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
+  if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -1077,6 +1080,305 @@ function renderWatchClients() {
   });
 }
 
+/* ── expenses ─────────────────────────────────────────────────────── */
+
+const payLabel = (k) => state.meta.paymentKinds.find((p) => p.key === k)?.label || '';
+const expenseCost = (e) => money(e.amount, e.currency);
+
+async function showExpenses() {
+  const X = state.expenses;
+  $('#app').innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
+      <div><h1>Expenses</h1><p class="sub" style="margin:0">What the business spends — from Chrono Key's expense list, and added here.</p></div>
+      ${can('editor') ? '<a class="btn gold" href="#/expenses/new">+ Add expense</a>' : ''}
+    </div>
+    <div class="filters" style="grid-template-columns:1fr auto auto auto">
+      <input class="q" type="search" id="xq" placeholder="Title, type, description or amount…" value="${esc(X.q)}">
+      <select id="xtype"><option value="">All types</option></select>
+      <label class="count" style="margin:0">From <input type="date" id="xfrom" value="${esc(X.from)}"></label>
+      <label class="count" style="margin:0">to <input type="date" id="xto" value="${esc(X.to)}"></label>
+    </div>
+    <div class="figures" id="xsum" style="margin:0 0 12px"></div>
+    <div class="panel tscroll" style="padding:0"><table class="list clients"><thead><tr>
+      <th>Date</th><th>Title</th><th>Type</th><th>Cost</th><th>In EUR</th><th>Paid by</th><th title="Payment copies">Copy</th>
+    </tr></thead><tbody id="xrows"></tbody></table></div>
+    <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="xmore">Show more</button></div>`;
+  let timer;
+  $('#xq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      X.q = e.target.value;
+      loadExpenses();
+    }, 220);
+  });
+  for (const [id, key] of [
+    ['#xtype', 'type'],
+    ['#xfrom', 'from'],
+    ['#xto', 'to'],
+  ]) {
+    $(id).addEventListener('change', (e) => {
+      X[key] = e.target.value;
+      loadExpenses();
+    });
+  }
+  $('#xmore').addEventListener('click', () => loadExpenses(true));
+  $('#xrows').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (tr && !e.target.closest('a')) location.hash = `#/expense/${tr.dataset.id}`;
+  });
+  loadExpenses();
+}
+
+let expenseSeq = 0;
+let expensesShown = [];
+async function loadExpenses(more = false) {
+  const X = state.expenses;
+  const seq = ++expenseSeq;
+  const p = new URLSearchParams({ q: X.q, type: X.type, from: X.from, to: X.to, limit: 100, offset: more ? expensesShown.length : 0 });
+  let r;
+  try {
+    r = await api(`/api/expenses?${p}`);
+  } catch (err) {
+    return flash(err.message, true);
+  }
+  if (seq !== expenseSeq || !$('#xrows')) return;
+  expensesShown = more ? [...expensesShown, ...r.expenses] : r.expenses;
+
+  $('#xtype').innerHTML =
+    `<option value="">All types</option>` +
+    r.types
+      .filter((t) => t.k)
+      .map((t) => `<option value="${esc(t.k)}"${X.type === t.k ? ' selected' : ''}>${esc(t.k)} (${t.n})</option>`)
+      .join('') +
+    (X.type && !r.types.some((t) => t.k === X.type) ? `<option selected value="${esc(X.type)}">${esc(X.type)} (0)</option>` : '');
+  $('#xsum').innerHTML = `
+    <div><span>Expenses</span><b>${r.total.toLocaleString('en-GB')}</b></div>
+    <div><span>Total in EUR</span><b>${money(r.sum_eur, 'EUR')}</b></div>
+    ${r.without_eur ? `<div><span>Not in the total</span><b title="No euro figure: the cost is in its own currency only">${r.without_eur} without a euro figure</b></div>` : ''}`;
+  $('#xrows').innerHTML =
+    expensesShown
+      .map(
+        (e) => `<tr data-id="${e.id}">
+          <td style="white-space:nowrap">${esc(fmtDate(e.expense_date))}</td>
+          <td><a href="#/expense/${e.id}"><b>${esc(e.title || 'Untitled')}</b></a></td>
+          <td>${esc(e.type)}</td>
+          <td style="white-space:nowrap">${expenseCost(e) || '<span class="blank">—</span>'}</td>
+          <td style="white-space:nowrap">${money(e.cost_eur, 'EUR') || '<span class="blank">—</span>'}</td>
+          <td>${esc(payLabel(e.payment_method))}</td>
+          <td>${e.files ? `📎 ${e.files}` : ''}</td>
+        </tr>`
+      )
+      .join('') || `<tr><td colspan="7" class="count">No expense matches.</td></tr>`;
+  $('#xmore').classList.toggle('hide', expensesShown.length >= r.total);
+}
+
+/* The form, for a new expense and an edit. */
+function expenseForm(e) {
+  const F = state.meta.expenseFields;
+  const input = (f) => {
+    const v = e[f.key];
+    switch (f.type) {
+      case 'date':
+        return `<input type="date" name="${f.key}" value="${esc(v || '')}">`;
+      case 'currency': {
+        const codes = [...new Set([...state.meta.currencies, ...(v ? [v] : [])])];
+        return `<select name="${f.key}"><option value="">—</option>${codes.map((c) => `<option${c === v ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+      }
+      case 'enum':
+        return `<select name="${f.key}">${f.options.map((o) => `<option value="${esc(o)}"${o === (v || '') ? ' selected' : ''}>${esc(o ? payLabel(o) : '—')}</option>`).join('')}</select>`;
+      case 'longtext':
+        return `<textarea name="${f.key}" rows="4">${esc(v || '')}</textarea>`;
+      case 'bool':
+        return `<input type="checkbox" name="${f.key}"${v ? ' checked' : ''} style="justify-self:start">`;
+      default:
+        return `<input name="${f.key}" value="${esc(v ?? '')}"${f.key === 'type' ? ' list="xtypes" autocomplete="off"' : ''}${
+          f.type === 'money' || f.type === 'rate' ? ' inputmode="decimal"' : ''
+        }>`;
+    }
+  };
+  return `<div class="form-grid">${F.map(
+    (f) => `<label class="${f.type === 'longtext' ? 'wide' : ''}">${esc(f.label)}${input(f)}</label>`
+  ).join('')}</div><datalist id="xtypes"></datalist>`;
+}
+
+function readExpenseForm(form, e) {
+  const patch = {};
+  for (const f of state.meta.expenseFields) {
+    const el = form.elements[f.key];
+    const v = f.type === 'bool' ? el.checked : el.value.trim();
+    const was = e[f.key];
+    if (f.type === 'bool' ? Boolean(was) !== v : String(v) !== (was === null || was === undefined ? '' : String(was))) patch[f.key] = v;
+  }
+  return patch;
+}
+
+async function fillTypeSuggestions() {
+  const r = await api('/api/expenses/types').catch(() => ({ types: [] }));
+  const dl = $('#xtypes');
+  if (dl) dl.innerHTML = r.types.map((t) => `<option value="${esc(t)}">`).join('');
+}
+
+async function showExpense(id) {
+  let e;
+  try {
+    e = await api(`/api/expenses/${id}`);
+  } catch (err) {
+    $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/expenses">Back to the expenses</a>`;
+    return;
+  }
+  renderExpense(e, false);
+}
+
+function renderExpense(e, editing) {
+  const editor = can('editor');
+  const fileTile = (f) => `<div class="xfile">
+      <a href="/api/expense-files/${f.id}" target="_blank" rel="noopener">${
+        f.has_thumb ? `<img src="/api/expense-files/${f.id}?thumb=1" alt="">` : '<span class="xpdf">PDF</span>'
+      }<span class="xname">${esc(f.name || (f.content_type === 'application/pdf' ? 'Document.pdf' : 'Picture'))}</span></a>
+      ${editor && !e.deleted_at ? `<button type="button" class="btn small danger" data-rm="${f.id}">Remove</button>` : ''}
+    </div>`;
+  $('#app').innerHTML = `
+    <div class="watch-head">
+      <div>
+        <a href="#/expenses" class="count" style="text-decoration:none">← Expenses</a>
+        <h1>${esc(e.title || 'Untitled expense')}</h1>
+        <div class="row">${e.type ? `<b>${esc(e.type)}</b>` : ''}<span>${esc(fmtDate(e.expense_date))}</span>
+          ${e.deleted_at ? chip('deleted') : ''}
+          <span class="count" style="margin:0">${e.origin === 'chronokey' ? 'From Chrono Key' : 'Added in masterapp'}</span></div>
+        <div class="figures">
+          <div><span>Cost</span><b>${expenseCost(e) || '<span class="blank">—</span>'}</b></div>
+          <div><span>In EUR</span><b>${money(e.cost_eur, 'EUR') || '<span class="blank">—</span>'}</b></div>
+          ${e.exchange_rate ? `<div><span>Rate</span><b>${esc(Number(e.exchange_rate))}</b></div>` : ''}
+          <div><span>Paid by</span><b>${esc(payLabel(e.payment_method)) || '<span class="blank">—</span>'}</b></div>
+        </div>
+        ${e.exclude_from_profit ? '<p class="count" style="margin:8px 0 0">Left out of profit (Loan Book on Chrono Key).</p>' : ''}
+      </div>
+      <div class="row">
+        ${editor && !editing && !e.deleted_at ? '<button class="btn primary" id="xedit">Edit</button>' : ''}
+        ${editor ? (e.deleted_at ? '<button class="btn" id="xrestore">Restore</button>' : '<button class="btn danger" id="xdel">Delete</button>') : ''}
+      </div>
+    </div>
+    <div class="watch-layout">
+      <div class="stack">
+        <div class="panel"><h3>Payment copy</h3>
+          <div class="xfiles">${e.files.map(fileTile).join('') || '<p class="count" style="margin:0">None attached yet.</p>'}</div>
+          ${editor && !e.deleted_at ? `<label class="drop" id="xdrop" style="margin-top:12px">Drop a receipt or a transfer slip here, or <u>choose files</u> — pictures or PDFs
+            <input type="file" id="xfile" multiple accept="image/*,application/pdf" hidden></label>` : ''}
+        </div>
+      </div>
+      <div class="stack">
+        ${
+          editing
+            ? `<form class="panel" id="xform"><h3>Expense</h3>${expenseForm(e)}
+                <div class="row" style="margin-top:12px"><button class="btn primary">Save</button><button type="button" class="btn" id="xcancel">Cancel</button></div></form>`
+            : `<div class="panel"><h3>Description</h3><div style="white-space:pre-wrap;overflow-wrap:anywhere">${
+                e.description ? esc(e.description) : '<span class="blank">—</span>'
+              }</div>${
+                e.locked_fields.length
+                  ? `<p class="count" style="margin:10px 0 0">✎ Edited here: ${esc(
+                      e.locked_fields.map((k) => state.meta.expenseFields.find((f) => f.key === k)?.label || k).join(', ')
+                    )} — the copy from Chrono Key leaves ${e.locked_fields.length === 1 ? 'it' : 'them'} alone.</p>`
+                  : ''
+              }</div>`
+        }
+      </div>
+    </div>`;
+
+  const upload = async (files) => {
+    if (!files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f, f.name);
+    try {
+      await api(`/api/expenses/${e.id}/files`, { method: 'POST', body: fd });
+      flash(files.length === 1 ? 'Payment copy added' : `${files.length} payment copies added`);
+      showExpense(e.id);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $('#xfile')?.addEventListener('change', (ev) => upload([...ev.target.files]));
+  const drop = $('#xdrop');
+  if (drop) {
+    drop.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      drop.classList.add('over');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      drop.classList.remove('over');
+      upload([...ev.dataTransfer.files]);
+    });
+  }
+  $$('[data-rm]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this payment copy?')) return;
+      await api(`/api/expenses/${e.id}/files/${b.dataset.rm}`, { method: 'DELETE' }).then(
+        () => showExpense(e.id),
+        (err) => flash(err.message, true)
+      );
+    })
+  );
+  $('#xedit')?.addEventListener('click', () => renderExpense(e, true));
+  $('#xcancel')?.addEventListener('click', () => renderExpense(e, false));
+  $('#xdel')?.addEventListener('click', async () => {
+    if (!confirm(`Delete “${e.title}”? It can be restored later.`)) return;
+    await api(`/api/expenses/${e.id}`, { method: 'DELETE' }).then(() => showExpense(e.id), (err) => flash(err.message, true));
+  });
+  $('#xrestore')?.addEventListener('click', async () => {
+    await api(`/api/expenses/${e.id}/restore`, { method: 'POST' }).then(() => showExpense(e.id), (err) => flash(err.message, true));
+  });
+  $('#xform')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const patch = readExpenseForm(ev.target, e);
+    try {
+      if (Object.keys(patch).length) await api(`/api/expenses/${e.id}`, { method: 'PATCH', body: patch });
+      flash('Saved');
+      showExpense(e.id);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  });
+  if (editing) fillTypeSuggestions();
+}
+
+function showNewExpense() {
+  if (!can('editor')) return (location.hash = '#/expenses');
+  const blank = { expense_date: new Date().toISOString().slice(0, 10), payment_method: '', exclude_from_profit: false };
+  $('#app').innerHTML = `
+    <a href="#/expenses" class="count" style="text-decoration:none">← Expenses</a>
+    <h1>Add an expense</h1>
+    <form class="panel" id="xnew" style="max-width:820px">${expenseForm(blank)}
+      <label class="drop" style="margin-top:14px">Payment copy — a receipt or a transfer slip, pictures or PDFs: <u>choose files</u>
+        <input type="file" name="files" multiple accept="image/*,application/pdf" hidden></label>
+      <div class="count" id="xpicked"></div>
+      <div class="row" style="margin-top:12px"><button class="btn primary">Add expense</button></div></form>`;
+  fillTypeSuggestions();
+  const form = $('#xnew');
+  form.elements.files.addEventListener('change', (ev) => {
+    $('#xpicked').textContent = [...ev.target.files].map((f) => f.name).join(', ');
+  });
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = readExpenseForm(form, {});
+    let id;
+    try {
+      id = (await api('/api/expenses', { method: 'POST', body })).id;
+    } catch (err) {
+      return flash(err.message, true);
+    }
+    const files = [...form.elements.files.files];
+    if (files.length) {
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f, f.name);
+      await api(`/api/expenses/${id}/files`, { method: 'POST', body: fd }).catch((err) =>
+        flash(`The expense is added, but the payment copy was not: ${err.message}`, true)
+      );
+    }
+    location.hash = `#/expense/${id}`;
+  });
+}
+
 /* ── new watch ────────────────────────────────────────────────────── */
 
 function showNew() {
@@ -1129,6 +1431,7 @@ async function showImport() {
       'chronokey/csv': 'Product list (CSV upload)',
       'chronokey/list': 'Product list (live)',
       'chronokey/clients': 'Client list',
+      'chronokey/expenses': 'Expenses',
       'chronokey/details-new': 'Watch pages & photos — new',
       'chronokey/details-active': 'Watch pages & photos — unsold and recent',
       'chronokey/details-full': 'Watch pages & photos — everything',
@@ -1204,6 +1507,7 @@ async function showImport() {
         <div class="row">
           <button class="btn" data-job="chronokey-list">Read the product list now</button>
           <button class="btn" data-job="chronokey-clients">Read the client list now</button>
+          <button class="btn" data-job="chronokey-expenses">Read expenses now</button>
           <button class="btn gold" data-job="chronokey-new">Read new watch pages & photos</button>
           <button class="btn" data-job="chronokey-active">Re-read unsold & recent</button>
           <button class="btn" data-job="chronokey-full">Re-read every page</button>

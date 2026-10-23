@@ -6,6 +6,7 @@ import * as auth from '../auth/index.js';
 import * as watches from '../watches/index.js';
 import * as rates from '../rates/index.js';
 import * as clients from '../clients/index.js';
+import * as expenses from '../expenses/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -121,6 +122,7 @@ export function createServer() {
       paymentKinds: PAYMENT_KINDS,
       clientFields: clients.CLIENT_FIELDS,
       clientTypes: clients.CLIENT_TYPES,
+      expenseFields: expenses.EXPENSE_FIELDS,
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
@@ -185,6 +187,72 @@ export function createServer() {
     wrap(async (req, res) => {
       const { role, client_id: id } = req.body || {};
       res.json(await clients.linkWatch(req.params.id, role, id === 'chronokey' || id === null ? id : Number(id), req.user));
+    })
+  );
+
+  /* ── expenses ────────────────────────────────────────────────── */
+
+  app.get('/api/expenses', need('viewer'), wrap(async (req, res) => res.json(await expenses.listExpenses(req.query))));
+  app.get('/api/expenses/types', need('viewer'), wrap(async (req, res) => res.json({ types: await expenses.expenseTypes() })));
+  app.get('/api/expenses/:id', need('viewer'), wrap(async (req, res) => res.json(await expenses.getExpense(req.params.id))));
+  app.post(
+    '/api/expenses',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await expenses.createExpense(req.body || {}, req.user) }))
+  );
+  app.patch(
+    '/api/expenses/:id',
+    need('editor'),
+    wrap(async (req, res) => res.json(await expenses.updateExpense(req.params.id, req.body || {}, req.user)))
+  );
+  app.delete(
+    '/api/expenses/:id',
+    need('editor'),
+    wrap(async (req, res) => {
+      await expenses.deleteExpense(req.params.id, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.post(
+    '/api/expenses/:id/restore',
+    need('editor'),
+    wrap(async (req, res) => {
+      await expenses.deleteExpense(req.params.id, req.user, { restore: true });
+      res.json({ ok: true });
+    })
+  );
+  /* Payment copies: pictures or PDFs. */
+  app.post(
+    '/api/expenses/:id/files',
+    need('editor'),
+    photoUpload.array('files', expenses.MAX_FILES),
+    wrap(async (req, res) => {
+      const files = (req.files || []).map((f) => ({ buffer: f.buffer, name: f.originalname }));
+      if (!files.length) return res.status(400).json({ error: 'No file was sent' });
+      res.status(201).json({ ids: await expenses.addFiles(req.params.id, files, req.user) });
+    })
+  );
+  app.delete(
+    '/api/expenses/:id/files/:fid',
+    need('editor'),
+    wrap(async (req, res) => {
+      await expenses.removeFile(req.params.id, req.params.fid, req.user);
+      res.json({ ok: true });
+    })
+  );
+  /* Behind the sign-in, like the photos: a payment copy carries account numbers. */
+  app.get(
+    '/api/expense-files/:fid',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await expenses.expenseFile(req.params.fid, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such payment copy' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      const name = (f.name || `payment-copy-${Number(req.params.fid)}`).replace(/[^\w.\- ]+/g, '_');
+      res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${name}"`);
+      res.send(f.buffer);
     })
   );
 

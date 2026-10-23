@@ -110,6 +110,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 table.list.clients tbody tr { cursor: pointer; }
 table.list.clients tbody tr:hover { background: var(--paper); }
 table.list.clients a { text-decoration: none; }
+.xfiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.xfile { display: grid; gap: 6px; align-content: start; }
+.xfile a { display: grid; gap: 4px; color: inherit; text-decoration: none; font-size: 13px; }
+.xfile img, .xpdf { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: #f0ece4; }
+.xpdf { display: grid; place-items: center; font-weight: 700; letter-spacing: 1px; color: var(--bad); }
+.xname { overflow-wrap: anywhere; color: var(--muted); }
 .cw { display: grid; }
 .cw-row { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; padding: 7px 0;
   border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; font-size: 14px; }
@@ -244,6 +250,7 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
   <nav id="nav">
     <a href="#/" data-nav="inventory">Inventory</a>
     <a href="#/clients" data-nav="clients">Clients</a>
+    <a href="#/expenses" data-nav="expenses">Expenses</a>
     <a href="#/new" data-nav="new" data-role="editor">New watch</a>
     <a href="#/import" data-nav="import">Import</a>
     <a href="#/users" data-nav="users" data-role="admin">Users</a>

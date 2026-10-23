@@ -144,6 +144,42 @@ searchable." `src/clients`, `import/chronokey/clients.js`, migration 004.
   1,671 watches linked to who they were bought from, 1,464 of 1,467 sold ones
   to their buyer.
 
+## Expenses (23 Oct 2026)
+
+Asked for: a separate Expenses tab — currency, title, type, cost, payment
+method, description, payment copy. `src/expenses`,
+`import/chronokey/expenses.js`, migration 005.
+
+- **`/Stock/ExpenseList` is not a data grid**: the page itself holds every
+  expense (915 rows, 3.6 MB — Title, Type, Description, Cost "£", Created
+  Date in `data-sort`, edit link `/Stock/AddEditExpense/{id}`). Each
+  expense's own page (its edit form, a GET) holds the rest: CurrencyID (the
+  `selected` option), ExchangeRate, Cost in that currency, typeId,
+  PaymentType (0 Cash · 1 Card · 2 Wire · 3 Crypto · 4 PayPal / Chrono24),
+  ExcludeFromProfit ("Loan Book"). Chrono Key has no place for a payment
+  copy: that is ours (`expense_files`, a picture or a PDF, checked by its
+  bytes, served behind the sign-in).
+- **The list's Cost is Chrono Key's booked figure** = cost × rate, in euros
+  in practice (AED 4,300 × 0.24 = "£1,032"): stored as `cost_eur`. Checked on
+  60 real pages: every one within 1%. Kept as Chrono Key booked it — where
+  somebody typed rate 1 on a dollar or pound cost (2012 "usd 1307", 2020
+  "gbp 636"), its euro figure is the bare amount, and so is ours.
+- **Its two European currency options are not what they say.** "GBP (£)" is
+  the BASE (rate fixed at 1) and the base is euros: "salva | COMMISION | eur
+  5,000" is GBP 5,000 at 1. "EUR (€)" is used for POUNDS at a pound-to-euro
+  rate: "kashan | salary | gbp 3,000" is EUR 3,000 at 1.18. So the currency
+  (`currencyOf`): what the title/description says with this same amount
+  (`currencyFromNote`, as the product list) → else "GBP" = EUR → else "EUR"
+  at rate 1 = EUR, at any other rate NOT STATED (pounds, most likely — not
+  guessed) → AED / USD / CHF / HKD as chosen (their rates fit).
+- Payment type is unset on Chrono Key for most expenses (55 of 60 read),
+  though titles often say "PAID IN CASH" — not read from the title.
+- The pass: the list every 15 minutes (one request); an expense's page only
+  when it is new or its line on the list changed (compared key-sorted —
+  jsonb reorders keys), at most 200 a pass, two at a time. A page that fails
+  is retried a day later, not never. First run on the live site: ~915 pages
+  over the first five passes.
+
 ## Chrono Key's product list — read it right
 
 Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):
@@ -318,7 +354,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
   photos on the wrong watch in the source data (11 ↔ 1446, 1570, 739 ↔ 1346,
   1607 ↔ 1606); buy-backs not linked by `ck_product_id` (same serial: 126/330,
   537/1021, 683/1007, 813/1535, 1048/1433, 1149/1426, 1454/1645).
-- Documents (PDFs) per watch.
+- Documents (PDFs) per watch. Storage now takes PDFs (`saveDocument`, used
+  for expense payment copies); a watch's own documents are still to do.
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
-import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, picture } from './fakes.js';
+import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, EXPENSES, picture } from './fakes.js';
 
 /*
  * The import and sync, end to end, against stand-ins for Chrono Key and the
@@ -44,6 +44,8 @@ before(async () => {
     client: await import('../src/import/chronokey/client.js'),
     ckClients: await import('../src/import/chronokey/clients.js'),
     clients: await import('../src/clients/index.js'),
+    ckExpenses: await import('../src/import/chronokey/expenses.js'),
+    expenses: await import('../src/expenses/index.js'),
   };
   await m.migrate.migrate({ log: () => {} });
   db = m.db.query;
@@ -140,6 +142,60 @@ test("Chrono Key's clients come across, and every watch is tied to both sides of
   assert.ok(!(await watch('1700')).locked_fields.includes('sold_to_client'));
   const ev = (await db("SELECT action, changes FROM watch_events WHERE watch_id = $1 ORDER BY id", [w1700.id])).rows;
   assert.deepEqual(ev.find((e) => e.changes.sold_to_client)?.changes.sold_to_client, [null, 'Omar F'], 'the history names the client');
+});
+
+test("Chrono Key's expenses: the list, then each one's own page for its currency, rate and payment", async () => {
+  const pages = () => ck.calls.filter((c) => c.startsWith('GET /Stock/AddEditExpense/')).length;
+  const s = await m.ckExpenses.syncExpenses();
+  assert.equal(s.listed, 5);
+  assert.equal(s.created, 5);
+  assert.equal(s.pages, 5);
+  const byCk = async (id) => (await db('SELECT * FROM expenses WHERE ck_id = $1', [id])).rows[0];
+  const ferrari = await byCk(2044);
+  assert.equal(ferrari.amount, 4300, 'the cost in its own currency, from its page');
+  assert.equal(ferrari.currency, 'AED');
+  assert.equal(ferrari.exchange_rate, 0.24);
+  assert.equal(ferrari.cost_eur, 1032, "the list's booked figure: 4,300 × 0.24");
+  assert.equal(ferrari.payment_method, 'cash');
+  assert.equal(ferrari.type, 'Logistics Expense');
+  assert.equal(ferrari.expense_date, '2026-10-20');
+  const meta = await byCk(2041);
+  assert.equal(meta.currency, 'USD');
+  assert.equal(meta.payment_method, 'card');
+  const trip = await byCk(2030);
+  assert.equal(trip.currency, 'EUR', "Chrono Key's \"GBP\" is its base, which is euros");
+  assert.equal((await byCk(1987)).currency, 'GBP', 'booked under "EUR" at 1.18, and the title says gbp 3,000');
+  assert.equal((await byCk(1987)).cost_eur, 3540);
+  assert.equal((await byCk(2007)).currency, '', '"EUR" at 1.18 with nothing saying which: not stated, never guessed');
+  assert.equal(trip.payment_method, '', 'no payment type picked');
+  assert.equal(trip.exclude_from_profit, true);
+  assert.equal(trip.description, 'Complete\n2026-10-14 Flight / Ticket EUR 585\nTotal $1,701.8', 'its lines kept');
+
+  // Nothing changed: the list is read, no page is.
+  const n = pages();
+  const again = await m.ckExpenses.syncExpenses();
+  assert.equal(pages(), n, 'no page re-read when its line on the list is unchanged');
+  assert.equal(again.created + again.updated, 0);
+
+  // An edit here survives; a change on Chrono Key's list re-reads that one page.
+  await m.expenses.updateExpense(meta.id, { title: 'Meta ads — October' }, null);
+  EXPENSES[2041].booked = '£180.00';
+  EXPENSES[2041].cost = '200.00';
+  await m.ckExpenses.syncExpenses();
+  assert.equal(pages(), n + 1, 'only the changed expense');
+  const meta2 = await byCk(2041);
+  assert.equal(meta2.amount, 200);
+  assert.equal(meta2.cost_eur, 180);
+  assert.equal(meta2.title, 'Meta ads — October', 'the edit made here is kept');
+
+  // Deleted here, it stays deleted.
+  await m.expenses.deleteExpense(ferrari.id, null);
+  await m.ckExpenses.syncExpenses();
+  assert.ok((await byCk(2044)).deleted_at);
+  const list = await m.expenses.listExpenses({});
+  assert.equal(list.total, 4);
+  assert.equal(list.sum_eur, 180 + 1575.93 + 3540 + 590);
+  assert.deepEqual((await m.expenses.listExpenses({ q: 'salary' })).expenses.map((e) => e.ck_id), [1987]);
 });
 
 test('watch pages bring euro figures, ticks and photos — only from Chrono Key', async () => {

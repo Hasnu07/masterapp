@@ -13,7 +13,7 @@ import { config } from '../config.js';
  * refuses anything that is not one of ours — a key is a path on the disk.
  */
 
-const KEY = /^photos\/[0-9a-f]{2}\/[0-9a-f]{32}(-t)?\.(jpg|png|webp|gif)$/;
+const KEY = /^(photos\/[0-9a-f]{2}\/[0-9a-f]{32}(-t)?\.(jpg|png|webp|gif)|docs\/[0-9a-f]{2}\/[0-9a-f]{32}\.pdf)$/;
 
 function diskDriver(dir) {
   const full = (key) => {
@@ -245,4 +245,27 @@ export async function savePhoto(buffer) {
     width,
     height,
   };
+}
+
+/**
+ * A document — a payment copy, an invoice: a picture (stored as a photo, with
+ * its thumbnail) or a PDF, recognised by its first bytes, never by its name.
+ * Anything else is a 415.
+ *
+ * @returns {{storage_key, thumb_key, content_type, bytes}}
+ */
+export async function saveDocument(buffer) {
+  if (buffer.subarray(0, 5).toString('latin1') === '%PDF-') {
+    const id = crypto.randomBytes(16).toString('hex');
+    const key = `docs/${id.slice(0, 2)}/${id}.pdf`;
+    await (await storage()).put(key, buffer, 'application/pdf');
+    return { storage_key: key, thumb_key: null, content_type: 'application/pdf', bytes: buffer.length };
+  }
+  try {
+    const p = await savePhoto(buffer);
+    return { storage_key: p.storage_key, thumb_key: p.thumb_key, content_type: p.content_type, bytes: p.bytes };
+  } catch (err) {
+    if (err.status === 415) throw Object.assign(new Error('A payment copy must be a picture (JPEG, PNG, WebP, GIF) or a PDF'), { status: 415 });
+    throw err;
+  }
 }

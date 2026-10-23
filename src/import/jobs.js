@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { syncList, syncDetails } from './chronokey/sync.js';
 import { syncVault } from './vault/sync.js';
 import { syncClients } from './chronokey/clients.js';
+import { syncExpenses } from './chronokey/expenses.js';
 
 /*
  * The copy from Chrono Key and the vault, run on a timer until the
@@ -41,6 +42,7 @@ export function startJob(name, user) {
   const jobs = {
     'chronokey-list': () => syncList({ user }),
     'chronokey-clients': () => syncClients({ user }),
+    'chronokey-expenses': () => syncExpenses({ user }),
     'chronokey-new': () => syncDetails({ mode: 'new', user }),
     'chronokey-active': () => syncDetails({ mode: 'active', user }),
     'chronokey-full': () => syncDetails({ mode: 'full', user }),
@@ -65,6 +67,8 @@ async function cycle() {
     steps.push(['list', () => syncList()]);
     // One request: the client list, then every watch's two client links from the list just read.
     steps.push(['clients', () => syncClients()]);
+    // The expense list (one request), and the pages of new or changed expenses — at most 200 a pass.
+    steps.push(['expenses', () => syncExpenses({ limit: 200 })]);
     steps.push(['new details', () => syncDetails({ mode: 'new', limit: 200 })]);
     const { rows } = await query(
       "SELECT max(started_at) AS at FROM import_runs WHERE source = 'chronokey' AND mode = 'details-active' AND ok"
