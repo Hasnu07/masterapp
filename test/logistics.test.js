@@ -420,6 +420,12 @@ test('the overview’s figures are the logistics app’s own: deliveries, access
   const polish = o.need_polish.map((r) => [r.source_id, Boolean(r.polish), r.can_polish]);
   assert.deepEqual(polish.sort(), [['D1', false, true], ['D2', true, true]], 'the moved London copy is left out');
   assert.ok(o.need_polish.every((r) => r.watches.length === 1), 'each points at OUR watch');
+
+  // A delivery date typed as words is no date to be late against (guessed, "Oct 30" is 2001).
+  const typed = (await db(`INSERT INTO logistics_items(kind, data, origin) VALUES ('shipments', '{"status":"pending","deliveryDate":"Oct 30"}', 'manual') RETURNING id`)).rows[0];
+  const d = (await m.lg.overview()).deliveries;
+  assert.deepEqual([d.in_motion, d.delayed], [2, 1]);
+  await db('UPDATE logistics_items SET deleted_at = now() WHERE id = $1', [typed.id]);
 });
 
 test('polish: Send records who has it (and its cost, as a cost line); Done files it in the history', async () => {
@@ -453,7 +459,11 @@ test('search everything: our watch once (found through its logistics row), our c
   assert.ok(!viaRow.records.some((r) => ['dubaiStock', 'londonStock'].includes(r.kind)), 'its stock rows are not listed again');
 
   const notOurs = await m.lg.search({ q: 'Tudor' });
-  assert.ok(notOurs.records.some((r) => r.source_id === 'I2'), 'a watch we do not hold shows as its logistics record');
+  assert.deepEqual(
+    notOurs.records.filter((r) => r.stock_nos.includes('1950')).map((r) => r.source_id),
+    ['K1'],
+    'a watch we do not hold shows as its logistics record — once, where it is now (checked out, no longer coming in)'
+  );
 
   const people = await m.lg.search({ q: 'One', scope: 'clients' });
   assert.ok(people.clients.some((c) => c.name === 'Dealer One'), 'our client');
@@ -463,6 +473,32 @@ test('search everything: our watch once (found through its logistics row), our c
   assert.deepEqual(ship.records.map((r) => r.source_id), ['S1']);
   assert.ok(ship.records[0].watches.some((w) => w.stock_no === '1668'), 'its watches link to ours');
   assert.deepEqual((await m.lg.search({ q: '' })).watches, []);
+});
+
+test('search without strays: a stock number exactly, a contact hidden only beside our own, HK rows by section', async () => {
+  const add = (kind, data, stock) =>
+    db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ($1, $2, $3, 'manual') RETURNING id", [kind, data, stock]);
+  // Our 11668, whose London row holds "1668" inside longer numbers (a timestamp, a price, its own stock number).
+  await db("INSERT INTO watches(stock_no, brand, model, origin, status) VALUES ('11668', 'Rolex', 'Rolex Daytona', 'manual', 'in_stock')");
+  await add('londonStock', { stockNumber: '11668', watchModel: 'Cosmograph', createdAt: 1761668123456, costAmount: 16680, status: 'current' }, ['11668']);
+  assert.deepEqual((await m.lg.search({ q: '1668' })).watches.map((w) => w.stock_no), ['1668'], 'not 11668 through its row');
+  assert.deepEqual((await m.lg.search({ q: '1668', scope: 'stock' })).watches.map((w) => w.stock_no), ['1668']);
+  const byRow = (await m.lg.search({ q: 'Cosmograph' })).watches;
+  assert.deepEqual(byRow.map((w) => [w.stock_no, w.title]), [['11668', 'Rolex Daytona']], 'found through its row, titled as on the Watches page');
+
+  // The logistics app's Dealer One, found by what only it holds: shown, since our Dealer One is not in the answer.
+  const uae = await m.lg.search({ q: 'UAE', scope: 'clients' });
+  assert.deepEqual(uae.clients, []);
+  assert.deepEqual(uae.records.map((r) => r.source_id), ['c1']);
+
+  // The HK list by its section; the safe (clients' watches) only under All; one record per watch we do not hold.
+  await add('londonStock', { stockNumber: '2500', watchModel: 'Speedmaster', status: 'moved' }, ['2500']);
+  await add('hkSituation', { stockNumber: '2500', description: 'Speedmaster', section: 'sold' }, ['2500']);
+  await add('safeStock', { stockNumber: '2600', description: 'Speedmaster, a client’s' }, ['2600']);
+  const nos = async (scope) => (await m.lg.search({ q: 'Speedmaster', scope })).records.map((r) => `${r.kind}:${r.stock_nos}`).sort();
+  assert.deepEqual(await nos('sold'), ['hkSituation:2500']);
+  assert.deepEqual(await nos('stock'), [], 'neither sold in HK nor a client’s watch is our stock — nor the copy a move left behind');
+  assert.deepEqual(await nos('all'), ['hkSituation:2500', 'safeStock:2600']);
 });
 
 /* ── the API ── */

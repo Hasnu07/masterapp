@@ -252,7 +252,7 @@ async function loadLogistics(more = false) {
  * Refreshed every minute while open; the search and an open polish form are
  * left alone by the refresh.
  */
-const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, timer: null, data: null };
+const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, timer: null, typing: null, data: null };
 
 /* A record's stock numbers: to our watch's page where we hold it, else to the record. */
 const stockLinksOf = (i) =>
@@ -267,7 +267,9 @@ async function showLogisticsOverview() {
   const seq = ++lgPage;
   const still = () => seq === lgPage && (location.hash === '#/logistics' || location.hash === '#/logistics/overview');
   clearTimeout(ov.timer);
+  clearTimeout(ov.typing);
   ov.form = null;
+  ov.data = null;
   $('#app').innerHTML = `${lgHeader('overview', '<span id="ov-asof"></span>')}
     <div class="ov-cards" id="ov-cards"></div>
     <div class="ov-grid">
@@ -285,21 +287,32 @@ async function showLogisticsOverview() {
   await loadOverview(still);
 }
 
+/*
+ * One read of the overview, and the next a minute later — whatever happened to
+ * this one. A refresh that fails leaves the figures it had and says so; only a
+ * first read with nothing to show puts the error in their place. Signed out or
+ * gone to another page, it stops.
+ */
 async function loadOverview(still) {
   clearTimeout(ov.timer);
-  let o;
+  const shown = () => still() && state.user && $('#ov-cards');
   try {
-    o = await api('/api/logistics/overview');
+    const o = await api('/api/logistics/overview');
+    if (!shown()) return;
+    ov.data = o;
+    renderOverview(o);
   } catch (err) {
-    if (still() && $('#ov-lists')) $('#ov-lists').innerHTML = `<p class="err">${esc(err.message)}</p>`;
-    return;
+    if (!shown()) return;
+    if (ov.data) $('#ov-asof').textContent = `could not refresh (${err.message}) — trying again in a minute`;
+    else $('#ov-lists').innerHTML = `<p class="err">${esc(err.message)} — trying again in a minute</p>`;
+  } finally {
+    clearTimeout(ov.timer);
+    if (shown()) {
+      ov.timer = setTimeout(() => {
+        if (still() && state.user) loadOverview(still);
+      }, 60_000);
+    }
   }
-  if (!still()) return;
-  ov.data = o;
-  renderOverview(o);
-  ov.timer = setTimeout(() => {
-    if (still() && state.user) loadOverview(still);
-  }, 60_000);
 }
 
 function renderOverview(o) {
@@ -370,7 +383,11 @@ function renderOverviewCost(c) {
   });
   $('#ov-cost').innerHTML = parts.length
     ? `<div class="row" style="justify-content:space-between;align-items:flex-start">
-         <div><h3 style="margin:0 0 4px">Total logistic cost</h3><p class="count" style="margin:0">Every currency in one, at today’s ${esc(c.rates?.kind || '')} rates${c.rates?.stale ? ' (not fresh)' : ''}${left.length ? ` — ${esc(left.join(', '))} left out, no rate` : ''}.</p></div>
+         <div><h3 style="margin:0 0 4px">Total logistic cost</h3><p class="count" style="margin:0">${
+           c.rates
+             ? `Every currency in one, at today’s ${esc(c.rates.kind || '')} rates${c.rates.stale ? ' (not fresh)' : ''}${left.length ? ` — ${esc(left.join(', '))} left out, no rate` : ''}.`
+             : 'No exchange rates yet — the total shows at the next refresh.'
+         }</p></div>
          <label class="count" style="margin:0">in <select id="ov-costin" style="width:auto;min-height:30px;padding:2px 6px">${c.targets
            .filter((t) => R[t])
            .map((t) => `<option${t === target ? ' selected' : ''}>${esc(t)}</option>`)
@@ -458,6 +475,9 @@ function polishForm(action, r) {
   });
   $('#ov-pform').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const button = e.target.querySelector('button.primary');
+    if (button.disabled) return;
+    button.disabled = true;
     const body = Object.fromEntries(new FormData(e.target).entries());
     try {
       const res = await api(`/api/logistics/items/${r.id}/polish`, { method: 'POST', body: { action, ...body } });
@@ -465,7 +485,8 @@ function polishForm(action, r) {
       ov.form = null;
       loadOverview(() => location.hash === '#/logistics' || location.hash === '#/logistics/overview');
     } catch (err) {
-      $('#ov-perr').textContent = err.message;
+      button.disabled = false;
+      if ($('#ov-perr')) $('#ov-perr').textContent = err.message;
     }
   });
 }
@@ -487,10 +508,9 @@ function renderOverviewSearch() {
     <input class="q" type="search" id="ov-q" placeholder="Brand, reference, model, stock number, serial, client, tracking…" value="${esc(S.q)}" autocomplete="off">
     <div class="pills" id="ov-scopes" style="margin-top:8px">${OV_SCOPES.map(([k, l]) => `<button class="pill ${S.scope === k ? 'on' : ''}" data-scope="${k}">${esc(l)}</button>`).join('')}</div>
     <div id="ov-results"></div>`;
-  let timer;
   $('#ov-q').addEventListener('input', (e) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
+    clearTimeout(ov.typing);
+    ov.typing = setTimeout(() => {
       S.q = e.target.value;
       runOverviewSearch();
     }, 220);
@@ -508,19 +528,20 @@ function renderOverviewSearch() {
 async function runOverviewSearch() {
   const S = ov.search;
   const seq = ++ovSearchSeq;
-  const out = $('#ov-results');
+  if (!$('#ov-results')) return;
   if (!S.q.trim()) {
-    out.innerHTML = '<p class="count" style="margin:8px 0 0">Results show as you type.</p>';
+    $('#ov-results').innerHTML = '<p class="count" style="margin:8px 0 0">Results show as you type.</p>';
     return;
   }
   let r;
   try {
     r = await api(`/api/logistics/search?${new URLSearchParams({ q: S.q, scope: S.scope })}`);
   } catch (err) {
-    if (seq === ovSearchSeq) out.innerHTML = `<p class="err">${esc(err.message)}</p>`;
+    if (seq === ovSearchSeq && $('#ov-results')) $('#ov-results').innerHTML = `<p class="err">${esc(err.message)}</p>`;
     return;
   }
-  if (seq !== ovSearchSeq || !$('#ov-results')) return;
+  const out = $('#ov-results');
+  if (seq !== ovSearchSeq || !out) return;
   const watchRows = r.watches.map(
     (w) => `<a class="lg-line" href="#/watch/${w.id}"><span class="lg-stock">#${esc(w.stock_no)}</span><span class="grow"><b>${esc(w.title)}</b>${
       w.now ? ` <span class="count" style="margin:0">· ${esc(w.now.headline)}</span>` : w.location ? ` <span class="count" style="margin:0">· ${esc(w.location)}</span>` : ''

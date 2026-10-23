@@ -337,6 +337,22 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   page: its fields (typed ones with proper controls, the rest as plain
   fields), its lists and pictures, its history, edit / delete / restore /
   "use the logistics app's".
+- **The Overview is the logistics app's dashboard** (asked 24 Oct 2026):
+  its counters and deliveries donut, accessories, logistic cost per currency
+  and in ONE currency at the converter's rates (not the app's fixed table;
+  waits at most 1.5 s for them, then the last table, marked not fresh), Need
+  Polish with Send / Done (Send writes the polish and its cost line, as the
+  app does; locked here), and what is moving now. A delivery date counts as
+  late only when written YYYY-MM-DD or DD/MM/YYYY. Refreshed every minute; a
+  failed refresh keeps the figures and says so.
+- **Search everything, nothing twice** ("aligned with our stock and clients,
+  not making duplicates"): a watch is OUR watch — also when found through its
+  logistics row — shown once with where it is now; a stock row of a watch we
+  hold is not listed again; one we do not hold is ONE record (the row that
+  says where it is). A bare number is a stock number exactly ("1668" never
+  finds 11668 or a timestamp). A logistics contact is hidden only when our
+  client of that name is in the same answer. Chips: the HK list by its
+  section; the safe (clients' watches) only under All; moved copies never.
 - First copy of the June snapshot (on a stand-in worker): 699 records, 18
   lists, 59 pictures. `npm run import -- logistics` runs it by hand.
 - **Found in the logistics app, for its owner** (not ours to fix): its

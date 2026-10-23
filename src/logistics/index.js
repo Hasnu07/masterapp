@@ -1,5 +1,5 @@
 import { query, tx } from '../db/index.js';
-import { parseMoney, realDate } from '../watches/fields.js';
+import { parseMoney, realDate, displayTitle } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
 import { getRates } from '../rates/index.js';
 import { listWatches } from '../watches/index.js';
@@ -174,23 +174,44 @@ async function withWatches(views) {
  *   - a watch is OUR watch. A logistics stock row (London, Dubai, sold …) of a
  *     watch we hold is that watch — found through it, shown once, as ours,
  *     with where it is right now
- *   - a client is OUR client. A logistics contact whose name is one of ours is
- *     not shown again. (Names only decide what is shown twice; nothing is
- *     linked by name.)
+ *   - a client is OUR client. A logistics contact is not shown again when one
+ *     of ours with its name is in the answer. (Names only decide what is shown
+ *     twice; nothing is linked by name.)
  *   - the rest — shipments, transactions, costs, a stock row for a watch we do
- *     not hold — as the logistics records they are
+ *     not hold (one per watch) — as the logistics records they are
  */
 const STOCK_KINDS = ['londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'hkSituation', 'checkoutStock', 'soldStocks', 'readyForDelivery', 'incomings', 'fobPicked'];
 const CLIENT_KINDS = ['clients', 'companies'];
+/*
+ * The stock rows each chip takes. The HK list goes by its section (sold, on
+ * its way, in hand); the safe holds clients' watches, never our stock, so only
+ * All has it; an incoming that arrived is in its place now. Constant SQL — no
+ * request value reaches it.
+ */
+const SECTION = "COALESCE(i.data->>'section','')";
 export const SEARCH_SCOPES = Object.assign(Object.create(null), {
-  all: { watchStatus: '', stockKinds: STOCK_KINDS, clients: true, otherKinds: null },
-  stock: { watchStatus: 'in_stock', stockKinds: ['londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'hkSituation', 'checkoutStock'], clients: false, otherKinds: [] },
-  sold: { watchStatus: 'sold', stockKinds: ['soldStocks', 'readyForDelivery'], clients: false, otherKinds: [] },
-  incoming: { watchStatus: 'incoming', stockKinds: ['incomings', 'fobPicked'], clients: false, otherKinds: [] },
-  shipments: { watchStatus: null, stockKinds: [], clients: false, otherKinds: ['shipments', 'thirdPartyShipments', 'driverDeliveries'] },
-  clients: { watchStatus: null, stockKinds: [], clients: true, otherKinds: [] },
-  transactions: { watchStatus: null, stockKinds: [], clients: false, otherKinds: ['transactions', 'settlements', 'swaps', 'accCollect', 'accGive'] },
+  all: { watchStatus: '', rows: `i.kind IN (${STOCK_KINDS.map((k) => `'${k}'`).join(',')})`, clients: true, otherKinds: null },
+  stock: {
+    watchStatus: 'in_stock',
+    rows: `(i.kind IN ('londonStock','dubaiStock','hkStock','checkoutStock') OR (i.kind = 'hkSituation' AND ${SECTION} NOT IN ('sold','incoming')))`,
+    clients: false,
+    otherKinds: [],
+  },
+  sold: { watchStatus: 'sold', rows: `(i.kind IN ('soldStocks','readyForDelivery') OR (i.kind = 'hkSituation' AND ${SECTION} = 'sold'))`, clients: false, otherKinds: [] },
+  incoming: {
+    watchStatus: 'incoming',
+    rows: `((i.kind = 'incomings' AND COALESCE(i.data->>'status','') NOT IN ('arrived','cancelled')) OR i.kind = 'fobPicked' OR (i.kind = 'hkSituation' AND ${SECTION} = 'incoming'))`,
+    clients: false,
+    otherKinds: [],
+  },
+  shipments: { watchStatus: null, rows: null, clients: false, otherKinds: ['shipments', 'thirdPartyShipments', 'driverDeliveries'] },
+  clients: { watchStatus: null, rows: null, clients: true, otherKinds: [] },
+  transactions: { watchStatus: null, rows: null, clients: false, otherKinds: ['transactions', 'settlements', 'swaps', 'accCollect', 'accGive'] },
 });
+/* The copy a move leaves behind in the old place: a row of history, not where the watch is. */
+const NOT_MOVED = "COALESCE(i.data->>'status','') <> 'moved'";
+/* Which of a watch's rows says where it is now, first to last — situation.now's order. */
+const WHERE_FIRST = ['soldStocks', 'readyForDelivery', 'checkoutStock', 'londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'hkSituation', 'incomings', 'fobPicked'];
 
 const norm = (s) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -199,25 +220,35 @@ export async function search({ q = '', scope = 'all' } = {}) {
   const term = String(q).trim();
   if (!term) return { q: term, scope, watches: [], clients: [], records: [] };
   const words = term.split(/\s+/).slice(0, 6);
-  const match = (params) => {
-    const conds = words.map((w) => {
-      params.push(w);
-      return `(i.data::text ILIKE '%'||$${params.length}||'%' OR array_to_string(i.stock_nos, ' ') ILIKE '%'||$${params.length}||'%')`;
-    });
-    return conds.join(' AND ');
-  };
+  /*
+   * Every word, in a record's fields or its stock numbers. A bare number is a
+   * stock number exactly, as on the Watches page ("1668" must not find 11668,
+   * nor a timestamp or a price with those digits inside); in a record's other
+   * fields it must stand on its own (a whole tracking number, an amount) —
+   * except when the record leads to one of OUR watches, where only its stock
+   * numbers count ("2024" would otherwise bring every watch with a 2024 date).
+   */
+  const match = (params, { stockOnly = false } = {}) =>
+    words
+      .map((w) => {
+        params.push(w);
+        const n = `$${params.length}`;
+        if (!/^\d+$/.test(w)) return `(i.data::text ILIKE '%'||${n}||'%' OR array_to_string(i.stock_nos, ' ') ILIKE '%'||${n}||'%')`;
+        return stockOnly ? `${n} = ANY(i.stock_nos)` : `(${n} = ANY(i.stock_nos) OR i.data::text ~ ('(^|[^0-9])'||${n}||'([^0-9]|$)'))`;
+      })
+      .join(' AND ');
   const ctx = await context();
 
   // Watches: ours that match, and ours that a matching logistics stock row names.
   let watches = [];
   if (S.watchStatus !== null) {
     const direct = (await listWatches({ q: term, status: S.watchStatus, limit: 40 })).watches;
-    const p = [S.stockKinds];
-    const cond = match(p);
+    const p = [];
+    const cond = match(p, { stockOnly: true });
     if (S.watchStatus) p.push(S.watchStatus);
     const { rows: via } = await query(
       `SELECT DISTINCT w.id FROM logistics_items i JOIN watches w ON w.stock_no = ANY(i.stock_nos) AND w.deleted_at IS NULL
-        WHERE i.deleted_at IS NULL AND i.kind = ANY($1) AND ${cond} ${S.watchStatus ? `AND w.status = $${p.length}` : ''}
+        WHERE i.deleted_at IS NULL AND ${S.rows} AND ${NOT_MOVED} AND ${cond} ${S.watchStatus ? `AND w.status = $${p.length}` : ''}
         LIMIT 40`,
       p
     );
@@ -230,7 +261,7 @@ export async function search({ q = '', scope = 'all' } = {}) {
                FROM watches w WHERE w.id = ANY($1)`,
             [more]
           )
-        ).rows.map((w) => ({ id: w.id, stock_no: w.stock_no, title: [w.brand, w.model, w.reference].filter(Boolean).join(' ') || `Stock ${w.stock_no}`, status: w.status, location: w.location, photo_id: w.photo_id }))
+        ).rows.map((w) => ({ id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, location: w.location, photo_id: w.photo_id }))
       : [];
     watches = [...direct, ...extra].slice(0, 40);
     // Where each is right now, from the logistics app.
@@ -245,21 +276,20 @@ export async function search({ q = '', scope = 'all' } = {}) {
     }
   }
 
-  // Clients: ours; and a logistics contact only when none of ours has its name.
+  // Clients: ours; and a logistics contact unless one of ours with its name is among them — else it is the only
+  // way that person is found (the term may be in what only the logistics app holds: a country, an address, notes).
   let clients = [];
-  let ourNames = null;
+  let shownNames = new Set();
   if (S.clients) {
     clients = (await listClients({ q: term, limit: 25 })).clients;
-    const { rows } = await query("SELECT forename, surname, company, nickname FROM clients WHERE deleted_at IS NULL");
-    ourNames = new Set(rows.flatMap((c) => [`${c.forename || ''} ${c.surname || ''}`, c.company, c.nickname].map(norm).filter(Boolean)));
+    shownNames = new Set(clients.flatMap((c) => [c.name, c.company, c.nickname].map(norm).filter(Boolean)));
   }
 
   // Logistics records: stock rows of watches we do not hold, logistics-only contacts, and the rest of the scope's lists.
   const p = [];
   const parts = [];
-  if (S.stockKinds.length) {
-    p.push(S.stockKinds);
-    parts.push(`(i.kind = ANY($${p.length}) AND NOT EXISTS (SELECT 1 FROM watches w WHERE w.stock_no = ANY(i.stock_nos) AND w.deleted_at IS NULL))`);
+  if (S.rows) {
+    parts.push(`(${S.rows} AND ${NOT_MOVED} AND NOT EXISTS (SELECT 1 FROM watches w WHERE w.stock_no = ANY(i.stock_nos) AND w.deleted_at IS NULL))`);
   }
   if (S.clients) {
     p.push(CLIENT_KINDS);
@@ -279,8 +309,18 @@ export async function search({ q = '', scope = 'all' } = {}) {
         ORDER BY COALESCE(i.happened_at, i.created_at) DESC, i.id DESC LIMIT 60`,
       p
     );
+    // A watch we do not hold is one record, however many lists still have a row of it: the row that says where it
+    // is now, read in the order the watch page reads them (sold, then waiting for delivery, checked out, a place,
+    // the HK list, coming in) — the newest among equals.
+    const watchKey = (r) => (STOCK_KINDS.includes(r.kind) && r.stock_nos?.length ? [...r.stock_nos].sort().join(',') : null);
+    const best = new Map();
+    for (const r of rows) {
+      const key = watchKey(r);
+      if (key && (!best.has(key) || WHERE_FIRST.indexOf(r.kind) < WHERE_FIRST.indexOf(best.get(key).kind))) best.set(key, r);
+    }
     records = rows
-      .filter((r) => !(CLIENT_KINDS.includes(r.kind) && ourNames?.has(norm(r.data?.name))))
+      .filter((r) => !(CLIENT_KINDS.includes(r.kind) && shownNames.has(norm(r.data?.name))))
+      .filter((r) => !watchKey(r) || best.get(watchKey(r)) === r)
       .map((r) => view(r, ctx));
     records = await withWatches(records);
   }
@@ -709,6 +749,30 @@ export async function overview() {
 const RATE_TARGETS = ['USD', 'EUR', 'GBP', 'AED', 'HKD', 'CHF'];
 
 /*
+ * The converter's rates, without holding the Overview up: a rate source that
+ * is slow or failing (8 s each, two of them) gets a second and a half, then the
+ * last table the Overview had is used, marked not fresh — or none, the first
+ * time. The fetch carries on, and the next minute's refresh has it.
+ */
+let lastRates = null;
+async function ratesSoon(waitMs = 1500) {
+  let timer;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(lastRates && { ...lastRates, stale: true }), waitMs);
+    timer.unref?.();
+  });
+  const fresh = getRates().then(
+    (r) => (lastRates = r),
+    () => lastRates && { ...lastRates, stale: true }
+  );
+  try {
+    return await Promise.race([fresh, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/*
  * The logistics app's dashboard, figure for figure (its renderDashboard):
  *   shipments  in motion = pending or in transit; delivered = delivered (all
  *              time); delayed = in motion past its delivery date; ready for
@@ -731,9 +795,12 @@ async function dashboard() {
   const todayAt = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
   const active = ships.rows.filter((s) => s.status === 'pending' || s.status === 'in_transit');
   const delivered = ships.rows.filter((s) => s.status === 'delivered').length;
-  // Past its delivery date — read as a day whichever way it was typed (the app compares the text).
+  // Past its delivery date — a day as the app writes it (YYYY-MM-DD), or day first (DD/MM/YYYY). Anything else
+  // ("Oct 30", typed here) is no date to be late against: guessed, it lands in 2001.
   const delayed = active.filter((s) => {
-    const t = situation.when(s.due);
+    const due = String(s.due ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}/.test(due) && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(due)) return false;
+    const t = situation.when(due);
     return t !== null && t < todayAt;
   }).length;
   const { rows: readyRows } = await query("SELECT count(*)::int AS n FROM logistics_items WHERE kind = 'readyForDelivery' AND deleted_at IS NULL");
@@ -758,12 +825,10 @@ async function dashboard() {
   }
   for (const v of Object.values(byCurrency)) v.amount = Math.round(v.amount * 100) / 100;
   let rates = null;
-  try {
-    const r = await getRates();
+  const r = await ratesSoon();
+  if (r) {
     const want = new Set([...Object.keys(byCurrency), ...RATE_TARGETS]);
     rates = { kind: r.kind, stale: Boolean(r.stale), table: Object.fromEntries([...want].filter((c) => r.rates[c]).map((c) => [c, r.rates[c]])) };
-  } catch {
-    rates = null;
   }
   return {
     deliveries: { in_motion: active.length, delivered, delayed, in_progress: active.length - delayed, ready: readyRows[0].n },
