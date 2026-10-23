@@ -115,6 +115,37 @@ clears the DEAL — a sale taken back on Chrono Key is cleared here. So handing
 back ("use Chrono Key's") a spec field the list leaves empty clears it at
 once, for the page or the vault to fill (`unlockField`, `leftBlank`).
 
+## Keeping in step with everything, until the switch-over (23 Oct 2026)
+
+Asked for: "auto sync on everything with watch vault and Chrono Key until we
+stop using those … whatever changes there will be here also". Every 15
+minutes (`jobs.js` cycle), one job at a time:
+
+| step | reads | catches |
+|---|---|---|
+| list | the product grid (1 request) | every grid field; a watch gone from it |
+| clients | the client list (1) | every client field, the links; a client gone |
+| expenses | the expense list (1) + pages: new/changed (≤200) and the 40 read longest ago | every field; an expense gone; page-only edits within ~6 h |
+| new details | watch pages never read (≤200) | — |
+| rolling details | the 40 watch pages read longest ago | photos, euro figures, ticks anywhere, within ~10 h; failed pages retried |
+| active details | once a day: unsold and sold in 30 days | — |
+| vault | the whole state (1) + photos | every field; a record gone; a vault-only watch gone |
+
+**Deletions are mirrored, softly** (`import/gone.js`, migration 006): a raw
+record its source no longer lists gets `gone_at`; our record with no live
+source left is deleted with `deleted_at = source_gone_at`, restored by the
+sync if it is listed again. A person's deletion is never undone; a record a
+person restored after the sync removed it is never removed again. A read
+where more than 3% (and more than ten) vanish at once is refused, not acted
+on; a read listing nothing never counts; a CSV upload never mirrors. A watch
+gone from Chrono Key but still in the vault stays (and the other way round).
+A client a watch still names stays. **Photos are never deleted** because a
+source dropped them. Dry run on real data first: nothing would be removed;
+two vault records (1308, 1325, off Dubai stock) marked gone, their watches
+kept (still on Chrono Key).
+
+`SYNC=off` ends all of it — the switch-over.
+
 ## Clients (23 Oct 2026)
 
 Asked for: "connect each stock with each client … a new tab of that client,
@@ -343,7 +374,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
 - First live runs, 22 Oct 2026, on the PC copy: the list (grid shape above),
   then every watch's page and photos, then the vault. Each new kind of live
   read was dry-run first (rolled back) — keep doing that.
-- A page that fails (a rejected sign-in included) is stamped `detail_at`, so
+- (Fixed 23 Oct 2026 by the rolling pass, which re-reads the oldest pages
+  first.) A page that fails (a rejected sign-in included) is stamped `detail_at`, so
   the `new` pass never retries it — only `active` (unsold / recent) or
   `full` do. Should retry pages never read successfully.
 - After the first full copy: 1,354 of 1,671 watches have real photos. 315 have

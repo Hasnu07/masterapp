@@ -1,6 +1,7 @@
 import { pool, query } from '../db/index.js';
 import { readList, parseCsv, looksLikeProductList } from './productlist.js';
 import { applyToWatch } from './apply.js';
+import { markGone, settleWatches } from './gone.js';
 
 /*
  * Chrono Key's product list → our watches.
@@ -13,7 +14,12 @@ import { applyToWatch } from './apply.js';
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 
-export async function importProductList(headers, rows, { via = 'csv', ckIds = {}, incoming = null } = {}) {
+/**
+ * @param mirror  this is a COMPLETE live read of the grid: a watch it no
+ *                longer lists is gone from Chrono Key (gone.js). Never for a
+ *                CSV — an upload may be an old export.
+ */
+export async function importProductList(headers, rows, { via = 'csv', ckIds = {}, incoming = null, mirror = false } = {}) {
   if (!looksLikeProductList(headers)) {
     throw bad(
       `This does not look like Chrono Key's product list — no Stock No / brand columns. Columns found: ${headers
@@ -74,6 +80,17 @@ export async function importProductList(headers, rows, { via = 'csv', ckIds = {}
       } catch (err) {
         await client.query('ROLLBACK');
         throw new Error(`stock ${f.stock_no}: ${err.message}`);
+      }
+    }
+    if (mirror) {
+      await client.query('BEGIN');
+      try {
+        stats.goneFromList = await markGone(client, 'ck_records', 'stock_no', list.map((r) => r.fields.stock_no));
+        stats.watchesGone = await settleWatches(client);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
       }
     }
   } finally {

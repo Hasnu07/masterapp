@@ -380,7 +380,13 @@ function renderWatch() {
         ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
       </div>
     </div>
-    ${w.deleted_at ? `<p class="note">Deleted ${esc(fmtWhen(w.deleted_at))}. It stays deleted even when Chrono Key still lists it; restore it to bring it back.</p>` : ''}
+    ${
+      w.deleted_at
+        ? w.source_gone_at && w.source_gone_at === w.deleted_at
+          ? `<p class="note">Removed ${esc(fmtWhen(w.deleted_at))}: it is no longer on Chrono Key or in the vault. It comes back by itself if either lists it again; restore it to keep it here regardless.</p>`
+          : `<p class="note">Deleted ${esc(fmtWhen(w.deleted_at))}. It stays deleted even when Chrono Key still lists it; restore it to bring it back.</p>`
+        : ''
+    }
     <div class="watch-layout">
       <div class="stack">
         <div class="panel gallery" id="gallery"></div>
@@ -1435,6 +1441,7 @@ async function showImport() {
       'chronokey/details-new': 'Watch pages & photos — new',
       'chronokey/details-active': 'Watch pages & photos — unsold and recent',
       'chronokey/details-full': 'Watch pages & photos — everything',
+      'chronokey/details-rolling': 'Watch pages & photos — the longest unread',
       'vault/full': 'Watch vault',
     })[`${r.source}/${r.mode}`] || `${r.source} ${r.mode}`;
   const statsLine = (st) =>

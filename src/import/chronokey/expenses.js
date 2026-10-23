@@ -5,6 +5,7 @@ import { chronokey } from './client.js';
 import { parseMoney } from '../../watches/fields.js';
 import { startRun, finishRun, progressRun } from '../listimport.js';
 import { fromChronoKey, applyExpense } from '../../expenses/index.js';
+import { markGone, settleExpenses } from '../gone.js';
 
 /*
  * Chrono Key's expenses → ours.
@@ -100,9 +101,10 @@ export function parseExpensePage(html) {
 }
 
 /**
- * @param limit  at most this many expense pages this run (the first full read is ~915)
+ * @param limit    at most this many new or changed expense pages this run (the first full read is ~915)
+ * @param rolling  and this many more of the pages read longest ago
  */
-export async function syncExpenses({ user, limit = Infinity } = {}) {
+export async function syncExpenses({ user, limit = Infinity, rolling = 0 } = {}) {
   const run = await startRun('chronokey', 'expenses', user);
   const stats = { listed: 0, created: 0, updated: 0, pages: 0, failed: 0, errors: [] };
   try {
@@ -134,7 +136,33 @@ export async function syncExpenses({ user, limit = Infinity } = {}) {
       await write(row, old?.detail && sig(old.list_row) === sig(row) ? old.detail : null, stats);
     }
 
+    // What the list no longer holds: deleted on Chrono Key.
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      stats.goneFromList = await markGone(db, 'ck_expenses', 'ck_id', list.map((r) => r.ckId));
+      stats.expensesGone = await settleExpenses(db);
+      await db.query('COMMIT');
+    } catch (err) {
+      await db.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      db.release();
+    }
+
+    // Then, beside the new and the changed, the pages read longest ago — a
+    // payment type or a currency changed on Chrono Key without touching its
+    // line on the list still comes across, within hours.
     const queue = todo.slice(0, Number.isFinite(limit) ? limit : undefined);
+    if (rolling > 0) {
+      const { rows: oldest } = await query(
+        `SELECT ck_id FROM ck_expenses WHERE gone_at IS NULL AND detail IS NOT NULL AND NOT (ck_id = ANY($1))
+          ORDER BY detail_at NULLS FIRST, ck_id DESC LIMIT $2`,
+        [queue, rolling]
+      );
+      const listed = new Set(list.map((r) => r.ckId));
+      queue.push(...oldest.map((r) => r.ck_id).filter((id) => listed.has(id)));
+    }
     stats.todo = queue.length;
     const byId = new Map(list.map((r) => [r.ckId, r]));
     let next = 0;

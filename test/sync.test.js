@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pg from 'pg';
-import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, EXPENSES, picture } from './fakes.js';
+import { startChronoKey, startVault, HEADERS, PRODUCTS, GRID, DETAILS, EXPENSES, CLIENTS, picture } from './fakes.js';
 
 /*
  * The import and sync, end to end, against stand-ins for Chrono Key and the
@@ -46,6 +46,7 @@ before(async () => {
     clients: await import('../src/clients/index.js'),
     ckExpenses: await import('../src/import/chronokey/expenses.js'),
     expenses: await import('../src/expenses/index.js'),
+    gone: await import('../src/import/gone.js'),
   };
   await m.migrate.migrate({ log: () => {} });
   db = m.db.query;
@@ -198,6 +199,66 @@ test("Chrono Key's expenses: the list, then each one's own page for its currency
   assert.deepEqual((await m.expenses.listExpenses({ q: 'salary' })).expenses.map((e) => e.ck_id), [1987]);
 });
 
+test("what Chrono Key drops is removed here, comes back with it — and a person's choice stands", async () => {
+  const take = (stock) => GRID.splice(GRID.findIndex((r) => r.stockNumber === stock), 1)[0];
+  const events = async (id) => (await db("SELECT action, source FROM watch_events WHERE watch_id = $1 AND action IN ('delete','restore') ORDER BY id", [id])).rows;
+
+  // 1700 deleted here by a person first; then 1700 and 1701 both vanish from Chrono Key.
+  const w1700 = await watch('1700');
+  await m.watches.deleteWatch(w1700.id, null);
+  const r1700 = take(1700);
+  const r1701 = take(1701);
+  const s = await m.ck.syncList();
+  assert.deepEqual(s.goneFromList, { gone: 2, back: 0, refused: 0 });
+  assert.equal(s.watchesGone.deleted, 1, "only 1701: 1700 was already a person's deletion");
+  const g = await watch('1701');
+  assert.ok(g.deleted_at && +g.deleted_at === +g.source_gone_at, 'removed by the sync, and marked so');
+  assert.deepEqual(await events(g.id), [{ action: 'delete', source: 'chronokey' }]);
+
+  // They come back: the sync's own deletion is undone, the person's is not.
+  GRID.push(r1700, r1701);
+  const back = await m.ck.syncList();
+  assert.equal(back.watchesGone.restored, 1);
+  assert.equal((await watch('1701')).deleted_at, null);
+  assert.equal((await watch('1701')).source_gone_at, null);
+  assert.ok((await watch('1700')).deleted_at, "a person's deletion stays");
+
+  // Removed by the sync, restored by a person: kept, never removed a second time.
+  take(1701);
+  await m.ck.syncList();
+  await m.watches.restoreWatch(g.id, null);
+  await m.ck.syncList();
+  assert.equal((await watch('1701')).deleted_at, null, 'a person restored it: it stays');
+  GRID.push(r1701);
+  await m.ck.syncList();
+  assert.equal((await watch('1701')).source_gone_at, null);
+  await m.watches.restoreWatch(w1700.id, null);
+
+  // An expense deleted on Chrono Key, then listed again.
+  const harissa = EXPENSES[2007];
+  delete EXPENSES[2007];
+  const ex = await m.ckExpenses.syncExpenses();
+  assert.equal(ex.expensesGone.deleted, 1);
+  assert.ok((await db('SELECT deleted_at FROM expenses WHERE ck_id = 2007')).rows[0].deleted_at);
+  EXPENSES[2007] = harissa;
+  assert.equal((await m.ckExpenses.syncExpenses()).expensesGone.restored, 1);
+  assert.equal((await db('SELECT deleted_at FROM expenses WHERE ck_id = 2007')).rows[0].deleted_at, null);
+
+  // A client gone from the list: removed when no watch names it, kept while one does.
+  const idle = CLIENTS.splice(CLIENTS.findIndex((c) => c.id === 'c-idle'), 1)[0];
+  const omar = CLIENTS.splice(CLIENTS.findIndex((c) => c.id === 'c-omar'), 1)[0];
+  const cs = await m.ckClients.syncClients();
+  assert.equal(cs.clientsGone.deleted, 1, 'Nobody Yet goes; Omar F, who bought 1668, stays');
+  assert.ok((await db("SELECT deleted_at FROM clients WHERE ck_id = 'c-idle'")).rows[0].deleted_at);
+  assert.equal((await db("SELECT deleted_at FROM clients WHERE ck_id = 'c-omar'")).rows[0].deleted_at, null);
+  CLIENTS.push(idle, omar);
+  assert.equal((await m.ckClients.syncClients()).clientsGone.restored, 1);
+
+  // A read that lists nothing is never a clear-out.
+  assert.equal((await m.gone.markGone(m.db.pool, 'ck_records', 'stock_no', [])).refused, -1);
+  assert.equal((await db('SELECT count(*)::int AS n FROM ck_records WHERE gone_at IS NOT NULL')).rows[0].n, 0);
+});
+
 test('watch pages bring euro figures, ticks and photos — only from Chrono Key', async () => {
   const s = await m.ck.syncDetails({ mode: 'new' });
   assert.equal(s.done, 3);
@@ -302,6 +363,18 @@ test('the vault adds prices, its photos and the watches only it holds', async ()
   const again = await m.vault.syncVault();
   assert.equal(again.created + again.updated, 0, 'a second read changes nothing');
   assert.equal(again.photos, 0);
+});
+
+test('a watch only the vault held goes when the vault drops it; one Chrono Key still lists stays', async () => {
+  vault.dropped.add('v-1800').add('v-1668');
+  const s = await m.vault.syncVault({ photos: false });
+  assert.equal(s.goneFromVault.gone, 2);
+  assert.equal(s.watchesGone.deleted, 1);
+  assert.ok((await watch('1800')).deleted_at, 'vault-only: gone');
+  assert.equal((await watch('1668')).deleted_at, null, 'still on Chrono Key: kept');
+  vault.dropped.clear();
+  assert.equal((await m.vault.syncVault({ photos: false })).watchesGone.restored, 1);
+  assert.equal((await watch('1800')).deleted_at, null);
 });
 
 test('an empty spec cell on the list leaves what the vault filled', async () => {
