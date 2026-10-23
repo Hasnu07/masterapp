@@ -334,6 +334,7 @@ export async function startVault({ token = 'vault-key' } = {}) {
     soldStocks: [{ id: 'v-1700-old', stockNumber: '1700', brand: 'Patek Philippe', b2bUsd: 1, caseDiameter: '41mm', bezel: 'Smooth' }],
     incomings: [{ id: 'v-1900', stockNumber: '1900', status: 'cancelled', brand: 'Rolex', watchModel: 'GMT' }],
   });
+  const dropped = new Set();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/')) {
@@ -342,7 +343,12 @@ export async function startVault({ token = 'vault-key' } = {}) {
         return res.end('{"error":"Unauthorized"}');
       }
       res.setHeader('Content-Type', 'application/json');
-      if (url.pathname === '/api/state') return res.end(JSON.stringify({ data: state() }));
+      if (url.pathname === '/api/state') {
+        // A record the test has taken out of the vault is not in its lists.
+        const s = state();
+        for (const k of Object.keys(s)) if (Array.isArray(s[k])) s[k] = s[k].filter((w) => !dropped.has(w.id));
+        return res.end(JSON.stringify({ data: s }));
+      }
       if (url.pathname === '/api/vault-photos') return res.end(JSON.stringify({ data: { 'v-1668': [`${base}/photos/v1.jpg`] } }));
     }
     if (pics[url.pathname]) {
@@ -354,5 +360,5 @@ export async function startVault({ token = 'vault-key' } = {}) {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}`;
-  return { url: `${base}/api/state`, close: () => server.close() };
+  return { url: `${base}/api/state`, dropped, close: () => server.close() };
 }

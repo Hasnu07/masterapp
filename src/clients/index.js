@@ -1,6 +1,7 @@
 import { query, tx } from '../db/index.js';
 import { displayTitle } from '../watches/fields.js';
 import { logEvent } from '../watches/index.js';
+import { markGone, settleClients } from '../import/gone.js';
 
 /*
  * Clients: who a watch was bought from and who it was sold to.
@@ -325,7 +326,7 @@ export function fromChronoKey(r) {
  * links from the grid. Fields edited here are left alone; a client no longer
  * on the list is kept (a deal still names them).
  */
-export async function applyClientList(db, rows) {
+export async function applyClientList(db, rows, { mirror = false } = {}) {
   const stats = { clients: rows.length, created: 0, updated: 0, unchanged: 0 };
   const { rows: held } = await db.query('SELECT * FROM clients WHERE ck_id IS NOT NULL');
   const byCk = new Map(held.map((c) => [c.ck_id, c]));
@@ -366,6 +367,11 @@ export async function applyClientList(db, rows) {
     );
   }
   Object.assign(stats, await linkWatchesToClients(db));
+  // A client gone from the list (deleted, or merged into another) — kept while a watch still names it.
+  if (mirror) {
+    stats.goneFromList = await markGone(db, 'ck_clients', 'ck_id', rows.map((r) => t(r.id)).filter(Boolean));
+    stats.clientsGone = await settleClients(db);
+  }
   return stats;
 }
 

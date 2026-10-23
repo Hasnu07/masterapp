@@ -53,7 +53,8 @@ export async function syncClients({ user } = {}) {
     // session or a redesigned page answers.
     if (!rows.length) throw new Error(`${DATA} answered with no clients${total ? ` (it says ${total})` : ''}`);
 
-    const stats = await tx((db) => applyClientList(db, rows));
+    // Only a read holding every client Chrono Key counts may say one is gone.
+    const stats = await tx((db) => applyClientList(db, rows, { mirror: Boolean(total) && rows.length >= total }));
     await finishRun(run, { ok: true, stats: { ...stats, total } });
     return stats;
   } catch (err) {

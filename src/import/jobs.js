@@ -67,9 +67,12 @@ async function cycle() {
     steps.push(['list', () => syncList()]);
     // One request: the client list, then every watch's two client links from the list just read.
     steps.push(['clients', () => syncClients()]);
-    // The expense list (one request), and the pages of new or changed expenses — at most 200 a pass.
-    steps.push(['expenses', () => syncExpenses({ limit: 200 })]);
+    // The expense list (one request), the pages of new or changed expenses — at most 200 a pass —
+    // and the 40 read longest ago, so every expense page is re-read every few hours.
+    steps.push(['expenses', () => syncExpenses({ limit: 200, rolling: 40 })]);
     steps.push(['new details', () => syncDetails({ mode: 'new', limit: 200 })]);
+    // 40 watch pages a pass, the longest unread first: every page refreshed within about ten hours.
+    steps.push(['rolling details', () => syncDetails({ mode: 'rolling', limit: 40 })]);
     const { rows } = await query(
       "SELECT max(started_at) AS at FROM import_runs WHERE source = 'chronokey' AND mode = 'details-active' AND ok"
     );

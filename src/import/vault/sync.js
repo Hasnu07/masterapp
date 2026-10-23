@@ -1,6 +1,7 @@
 import { pool, query } from '../../db/index.js';
 import { config } from '../../config.js';
 import { applyToWatch } from '../apply.js';
+import { markGone, settleWatches } from '../gone.js';
 import { addPhotos } from '../../watches/index.js';
 import { parseMoney } from '../../watches/fields.js';
 import { startRun, finishRun, progressRun } from '../listimport.js';
@@ -283,6 +284,18 @@ export async function syncVault({ user, photos = true } = {}) {
           throw new Error(`stock ${stockNo}: ${err.message}`);
         }
         if ((stats.created + stats.updated + stats.unchanged) % 25 === 0) await progressRun(run, stats);
+      }
+
+      // What the vault no longer holds (the state is read whole, every list).
+      const seen = LISTS.flatMap((l) => (state[l.key] || []).filter((w) => w && w.id).map((w) => String(w.id)));
+      await client.query('BEGIN');
+      try {
+        stats.goneFromVault = await markGone(client, 'vault_records', 'vault_id', seen);
+        stats.watchesGone = await settleWatches(client);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
       }
     } finally {
       client.release();

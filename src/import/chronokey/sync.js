@@ -110,7 +110,8 @@ export async function syncList({ user } = {}) {
     const stats = await importProductList(
       gridHeaders,
       rows.map((r) => r.values),
-      { via: 'grid', ckIds, incoming }
+      // Only a read that holds every row Chrono Key counts may say a watch is gone.
+      { via: 'grid', ckIds, incoming, mirror: Boolean(total) && rows.length >= total }
     );
     stats.gridTotal = total;
     stats.incoming = incoming ? incoming.size : null;
@@ -269,6 +270,10 @@ export async function syncDetails({ mode = 'new', limit = Infinity, user, onProg
     active: `detail_at IS NULL OR stock_no IN (SELECT stock_no FROM watches
                WHERE status <> 'sold' OR sale_date > now() - interval '30 days')`,
     new: 'detail_at IS NULL',
+    // Every page in turn, the longest unread first: with `limit` a slice each
+    // pass, so a change anywhere — an old sale's photos, a page that failed —
+    // comes across within hours, without one long pass holding the others up.
+    rolling: 'gone_at IS NULL',
   }[mode];
   if (!where) throw new Error(`unknown mode ${mode}`);
   const { rows } = await query(
