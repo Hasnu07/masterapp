@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
@@ -61,8 +62,18 @@ const PAGE_POLICY = [
 ].join('; ');
 
 /*
- * Failed sign-ins: ten in ten minutes per address, and per account — the
- * account limit holds whatever the address is.
+ * Failed sign-ins, over the last ten minutes:
+ *  - ten from one address, and that address waits;
+ *  - per account, counted at each address — never one count for the whole
+ *    account. A whole-account count let anybody who knew an email (the
+ *    admin's) keep its owner out, right password and all, with ten wrong ones
+ *    every ten minutes. While an account is failing from everywhere (ten or
+ *    more in all) each address gets three tries at it instead of ten: guessing
+ *    from many addresses is slowed, and the owner, from their own, still gets in.
+ *
+ * An attempt is counted BEFORE its password is checked, and handed back when
+ * it signs in. Counted after, a burst sent at once all got past the limit
+ * while the first ten passwords were still being checked.
  *
  * The address: on App Platform x-forwarded-for carries DigitalOcean's ingress,
  * not the person (DigitalOcean's docs), so req.ip was the same for everybody
@@ -70,20 +81,51 @@ const PAGE_POLICY = [
  * address is in do-connecting-ip.
  */
 const attempts = new Map();
+const MAX_KEYS = 20_000;
 const clientAddress = (req) => (config.production && req.get('do-connecting-ip')) || req.ip;
+// Kept as a short hash: an email can be any length, and its key is held for ten minutes.
+// JSON, not a separator: an email with a newline in it must not pass for an (account, address) pair.
+const keyOf = (...parts) => crypto.createHash('sha256').update(JSON.stringify(parts)).digest('base64url');
 function recent(key, now) {
   const list = (attempts.get(key) || []).filter((t) => now - t < 10 * 60_000);
+  // Moved to the back: the front of the map is what was touched longest ago.
+  attempts.delete(key);
   if (list.length) attempts.set(key, list);
-  else attempts.delete(key);
   return list;
 }
-const tooMany = (keys) => keys.some((k) => recent(k, Date.now()).length >= 10);
-function failed(keys) {
+
+/** Counts a sign-in attempt, or returns null when it is over a limit. */
+export function reserveAttempt(address, email) {
   const now = Date.now();
-  for (const k of keys) attempts.set(k, [...recent(k, now), now]);
-  // Addresses that never come back are dropped, so the map cannot grow for ever.
-  if (attempts.size > 10_000) for (const k of [...attempts.keys()]) recent(k, now);
+  const at = keyOf('address', address);
+  const account = keyOf('account', email);
+  const here = keyOf('account', email, address);
+  if (recent(at, now).length >= 10) return null;
+  const failingEverywhere = recent(account, now).length >= 10;
+  if (recent(here, now).length >= (failingEverywhere ? 3 : 10)) return null;
+  const keys = [at, account, here];
+  // Only the newest ten matter: no limit is higher.
+  for (const k of keys) attempts.set(k, [...recent(k, now), now].slice(-10));
+  // Bounded whatever is sent: the keys touched longest ago go first.
+  for (const k of attempts.keys()) {
+    if (attempts.size <= MAX_KEYS) break;
+    attempts.delete(k);
+  }
+  return { keys, now };
 }
+
+/** A sign-in that went through is not a failure. */
+function giveBackAttempt({ keys, now }) {
+  for (const k of keys) {
+    const list = attempts.get(k) || [];
+    const i = list.lastIndexOf(now);
+    if (i >= 0) list.splice(i, 1);
+    if (!list.length) attempts.delete(k);
+  }
+}
+
+/* For the tests: what the limit is holding. */
+export const attemptKeys = () => [...attempts.keys()];
 
 export function createServer() {
   const app = express();
@@ -133,13 +175,18 @@ export function createServer() {
   app.post(
     '/api/login',
     wrap(async (req, res) => {
-      const keys = [`address ${clientAddress(req)}`, `account ${String(req.body?.email || '').trim().toLowerCase()}`];
-      if (tooMany(keys)) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
-      const r = await auth.signIn(req.body?.email, req.body?.password);
-      if (!r) {
-        failed(keys);
-        return res.status(401).json({ error: 'Wrong email or password' });
+      const held = reserveAttempt(clientAddress(req), String(req.body?.email || '').trim().toLowerCase());
+      if (!held) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
+      let r = null;
+      let wrong = false;
+      try {
+        r = await auth.signIn(req.body?.email, req.body?.password);
+        wrong = !r;
+      } finally {
+        // Kept only for a wrong password — not for one that signed in, nor a check that broke.
+        if (!wrong) giveBackAttempt(held);
       }
+      if (wrong) return res.status(401).json({ error: 'Wrong email or password' });
       res.cookie(auth.COOKIE, r.token, {
         httpOnly: true,
         sameSite: 'lax',

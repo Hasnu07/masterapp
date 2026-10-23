@@ -394,7 +394,10 @@ viewer (reads), editor (+ add/edit/delete watches and photos), admin
 `ADMIN_PASSWORD` when there are no accounts. scrypt hashes, 30-day sessions
 (stored hashed), HttpOnly SameSite=Lax cookie, and every non-GET API call must
 carry `X-Requested-With: masterapp`. Ten failed sign-ins per ten minutes per
-address AND per account. The address is `do-connecting-ip` in production:
+address, and per account at each address (three while that account is failing
+from everywhere) — never one lock on a whole account, which let anybody keep
+its owner out (fixed 24 Oct 2026). Each attempt is counted before its password
+is checked, so a burst sent at once gets no more. The address is `do-connecting-ip` in production:
 on App Platform `x-forwarded-for` (so `req.ip`) is DigitalOcean's ingress,
 the same for everybody — counted by it, ten wrong passwords from anyone locked
 everyone out (fixed 23 Oct 2026). An admin cannot demote or disable themselves.
