@@ -69,14 +69,38 @@ export const GRID = [
     wholeSalePrice: 11538, retailPrice: 11900, watchMonth: 3, watchYear: 2026, dial: 'Pink', size: '31', material: 'SS',
     description: 'aed 46,000 = usd 12,534 as of 23-09-2026', paperWork: true, servicePaper: false, box: false,
     condition: 'New', isSold: true, soldTo: 'Omar F', saleDate: '2026-09-25T00:00:00', salePrice: 14000, saleCash: 0,
-    saleCard: 0, saleWire: 0, saleCrypto: 14000, saleZellVenmo: 0, purchaseExchangeRate: 0.234, category: 'Dubai' }),
+    saleCard: 0, saleWire: 0, saleCrypto: 14000, saleZellVenmo: 0, purchaseExchangeRate: 0.234, category: 'Dubai',
+    clientId: 'c-one', soldToId: 'c-omar' }),
   gridRow({ id: 9002, stockNumber: 1700, serialNumber: 'S1700', makeName: 'Patek Philippe', model: 'Nautilus',
     subModel: '5711/1A-014', purchasedFrom: 'Dealer Two', purchaseDate: '2026-10-01T09:00:00', purchasePrice: 98000,
     purchaseWire: 98000, wholeSalePrice: 103000, retailPrice: null, watchMonth: 9, watchYear: 2026, paperWork: true,
-    box: true, condition: 'Unworn', category: 'Watch' }),
+    box: true, condition: 'Unworn', category: 'Watch', clientId: 'c-two' }),
   gridRow({ id: 9003, stockNumber: 1701, serialNumber: 'S1701', makeName: 'Rolex', model: 'Daytona',
     subModel: '126500LN', purchasedFrom: 'Dealer Three', purchaseDate: '2026-10-10T16:20:00.1234567',
-    purchasePrice: 30000, category: 'UK' }),
+    purchasePrice: 30000, category: 'UK', clientId: 'c-one' }),
+];
+
+/*
+ * Chrono Key's client list (/User/ClientListDatatable), in the shape of the
+ * first live read, 23 Oct 2026: an object per client, a GUID id, names with
+ * stray spaces, clientType D or I, nulls for what is not filled in.
+ */
+const clientRow = (o) => ({
+  id: null, userName: 'user-1', firstName: null, lastName: null, email: null, phoneNumber: null, imgProfile: null,
+  roleName: 'Client', dob: '2026-05-20T00:00:00', address: null, imgProofOfId: null, imgProofOfAddress: null,
+  clientType: 'D', billFullName: '', billPhoneNumber: null, billAddress1: null, billAddress2: null, billZipCode: null,
+  billCity: null, billStateProvince: null, billCountry: null, billCountryName: null, shipFullName: '',
+  shipPhoneNumber: null, shipAddress1: null, shipAddress2: null, shipZipCode: null, shipCity: null,
+  shipStateProvince: null, shipCountry: null, shipCountryName: null, companyName: null, companyNumber: null,
+  xeroContactID: null, dealerName: 'luxurytime', qbCustomerID: null, qbVendorID: null, nickName: null, isActive: true,
+  ...o,
+});
+export const CLIENTS = [
+  clientRow({ id: 'c-one', firstName: ' Dealer One', companyName: 'One Watches LLC', phoneNumber: '+971 50 123 4567',
+    billAddress1: 'Gold Souk 4', billCity: 'Dubai', billCountryName: 'United Arab Emirates' }),
+  clientRow({ id: 'c-two', firstName: 'Dealer', lastName: 'Two ', email: 'two@example.com' }),
+  clientRow({ id: 'c-omar', firstName: ' Omar', lastName: 'F', clientType: 'I', nickName: 'Omar the collector' }),
+  clientRow({ id: 'c-idle', firstName: 'Nobody Yet', clientType: 'X' }),
 ];
 
 /* What each watch's own page says. Euro figures as Chrono Key computes them. */
@@ -197,6 +221,12 @@ export async function startChronoKey({ username = 'ck-user', password = 'ck-pass
       if (url.pathname === '/Stock/ProductsDataTable') {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.end(JSON.stringify({ draw: ['1'], recordsTotal: GRID.length, recordsFiltered: GRID.length, data: GRID }));
+      }
+      if (url.pathname === '/User/ClientListDatatable' && req.method === 'POST') {
+        const f = new URLSearchParams(body);
+        if (f.get('roleType') !== 'Client') return res.end('{"data":[]}');
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(JSON.stringify({ draw: 1, recordsTotal: CLIENTS.length, recordsFiltered: CLIENTS.length, data: CLIENTS }));
       }
       if (url.pathname === '/Stock/ToBeShippedList') {
         return res.end('<table><thead><tr><th>Image</th><th>STOCK NUMBER</th><th>Tracking Status</th></tr></thead><tbody><tr><td></td><td>1701</td><td>In transit</td></tr></tbody></table>');

@@ -198,6 +198,30 @@ test('what a reference has sold for: newest first, the vault beside it, the ones
   assert.deepEqual(s.inStock.map((x) => [x.stock_no, x.self]), [['6004', true]], 'deleted and other references left out');
 });
 
+test('clients: added, searched, tied to a watch, and the watch listed on the client', async () => {
+  assert.equal((await viewer.call('POST', '/api/clients', { forename: 'Viewer' })).status, 403, 'editors add clients');
+  assert.equal((await editor.call('POST', '/api/clients', { email: 'x@example.com' })).status, 400, 'a client needs a name');
+  const c = await editor.call('POST', '/api/clients', { forename: 'Ahmed', surname: 'Khan', type: 'dealer', phone: '+92 300 1234567' });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  const found = (await viewer.call('GET', '/api/clients?q=khan')).body;
+  assert.deepEqual(found.clients.map((x) => x.name), ['Ahmed Khan']);
+  assert.equal((await viewer.call('GET', '/api/clients?q=3001234567')).body.total, 1, 'by phone digits');
+
+  const w = (await editor.call('POST', '/api/watches', { stock_no: '7001', brand: 'Rolex', purchase_date: '2026-10-01' })).body.id;
+  assert.equal((await viewer.call('PUT', `/api/watches/${w}/client`, { role: 'purchase', client_id: c.body.id })).status, 403);
+  assert.equal((await editor.call('PUT', `/api/watches/${w}/client`, { role: 'purchase', client_id: c.body.id })).status, 200);
+  assert.equal((await editor.call('PUT', `/api/watches/${w}/client`, { role: 'sale', client_id: 999999 })).status, 404);
+  const page = (await viewer.call('GET', `/api/watches/${w}`)).body;
+  assert.deepEqual(page.clients.purchase, { id: c.body.id, name: 'Ahmed Khan', locked: false }, 'a watch added here locks nothing');
+  assert.equal(page.clients.sale.id, null);
+  const client = (await viewer.call('GET', `/api/clients/${c.body.id}`)).body;
+  assert.deepEqual(client.bought.map((x) => x.stock_no), ['7001']);
+  assert.equal((await viewer.call('GET', '/api/clients?q=khan')).body.clients[0].bought, 1);
+
+  assert.equal((await editor.call('PATCH', `/api/clients/${c.body.id}`, { type: 'wholesale' })).status, 400);
+  assert.deepEqual((await editor.call('PATCH', `/api/clients/${c.body.id}`, { nickname: 'AK' })).body.changed, ['nickname']);
+});
+
 test('rates for the converter: a source without AED is refused, the daily one is used, and it says so', async () => {
   assert.equal((await client().call('GET', '/api/rates')).status, 401, 'signed in only');
   const r = (await viewer.call('GET', '/api/rates')).body;

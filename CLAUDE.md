@@ -115,6 +115,35 @@ clears the DEAL — a sale taken back on Chrono Key is cleared here. So handing
 back ("use Chrono Key's") a spec field the list leaves empty clears it at
 once, for the page or the vault to fill (`unlockField`, `leftBlank`).
 
+## Clients (23 Oct 2026)
+
+Asked for: "connect each stock with each client … a new tab of that client,
+searchable." `src/clients`, `import/chronokey/clients.js`, migration 004.
+
+- Chrono Key's client list is `/User/ClientList`; its rows come from **POST
+  `/User/ClientListDatatable`** (PageSize, PageNumber, SearchBy,
+  `roleType=Client`). First read: **646 clients**, all in one answer of
+  PageSize 1000 — an object per client, `id` a GUID, `firstName` with stray
+  spaces, `clientType` D (499, Dealer) or I (147, Retail; the page shows any
+  other code as Retail-Company), `companyName`, `phoneNumber`, bill…/ship…
+  address, `isActive`. Kept whole in `ck_clients`; ours in `clients`; changes
+  in `client_events`. A field edited here is locked, as for watches.
+- **Linked by id, never by name.** The product grid names both sides of every
+  deal: `clientId` (bought from — the `purchasedFrom` column) and `soldToId`
+  (sold to). All 1,665 / 1,468 ids were on the client list. 505 watches have
+  a typed "Purchased from" that is NOT the client's name ("EVALUMASA (DieGO
+  GIMINEZ)" is the client "DieGO GIMINEZ"), and 8 names belong to two
+  clients — matching names would have been wrong both ways.
+- `watches.purchased_from_client_id` / `sold_to_client_id`, set by the sync
+  from `ck_records.list_row` (rows from the CSV export carry no ids: left
+  alone). A link changed on the watch page is locked
+  (`purchased_from_client` / `sold_to_client` in `locked_fields`); "Use Chrono
+  Key's" hands it back. A grid row with no buyer clears the sale's link.
+- The 15-minute pass reads the client list after the product list (one more
+  request). Dry run on this PC's copy, rolled back: 646 clients, 1,661 of
+  1,671 watches linked to who they were bought from, 1,464 of 1,467 sold ones
+  to their buyer.
+
 ## Chrono Key's product list — read it right
 
 Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):

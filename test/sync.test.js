@@ -42,6 +42,8 @@ before(async () => {
     list: await import('../src/import/listimport.js'),
     watches: await import('../src/watches/index.js'),
     client: await import('../src/import/chronokey/client.js'),
+    ckClients: await import('../src/import/chronokey/clients.js'),
+    clients: await import('../src/clients/index.js'),
   };
   await m.migrate.migrate({ log: () => {} });
   db = m.db.query;
@@ -88,6 +90,56 @@ test('the live product grid becomes our watches, read by its own field names', a
   assert.equal(b.ck_id, null, 'the grid names no detail page; the search finds it later');
   assert.equal(b.purchase_currency, '', 'no description, no currency');
   assert.equal((await watch('1701')).status, 'incoming', 'on the incoming page and unsold');
+});
+
+test("Chrono Key's clients come across, and every watch is tied to both sides of its deals by id", async () => {
+  const s = await m.ckClients.syncClients();
+  assert.equal(s.clients, 4);
+  assert.equal(s.created, 4);
+  const byCk = async (id) => (await db('SELECT * FROM clients WHERE ck_id = $1', [id])).rows[0];
+  const one = await byCk('c-one');
+  const omar = await byCk('c-omar');
+  assert.equal(one.forename, 'Dealer One', 'stray spaces trimmed');
+  assert.equal(one.type, 'dealer');
+  assert.equal(one.company, 'One Watches LLC');
+  assert.equal(one.address, 'Gold Souk 4\nDubai');
+  assert.equal(one.country, 'United Arab Emirates');
+  assert.equal(omar.type, 'retail');
+  assert.equal((await byCk('c-idle')).type, 'retail_company', 'any type but D and I, as Chrono Key shows it');
+  assert.equal((await db("SELECT count(*)::int AS n FROM ck_clients")).rows[0].n, 4, 'the raw rows are kept');
+
+  assert.equal((await watch('1668')).purchased_from_client_id, one.id);
+  assert.equal((await watch('1668')).sold_to_client_id, omar.id);
+  assert.equal((await watch('1700')).sold_to_client_id, null);
+  const page = await m.clients.getClient(one.id);
+  assert.deepEqual(page.bought.map((w) => w.stock_no), ['1701', '1668'], 'newest purchase first');
+  assert.deepEqual((await m.clients.getClient(omar.id)).sold.map((w) => w.stock_no), ['1668']);
+
+  const find = async (q) => (await m.clients.listClients({ q })).clients.map((c) => c.name);
+  assert.deepEqual(await find('omar'), ['Omar F']);
+  assert.deepEqual(await find('collector'), ['Omar F'], 'by nickname');
+  assert.deepEqual(await find('+971501234567'), ['Dealer One'], 'a phone by its digits, however written');
+  assert.deepEqual(await find('one watches'), ['Dealer One'], 'by company');
+  const listed = (await m.clients.listClients({})).clients.find((c) => c.name === 'Dealer One');
+  assert.equal(listed.bought, 2);
+
+  // An edit here, and a link changed here, survive the next read of Chrono Key.
+  await m.clients.updateClient(one.id, { forename: 'Dealer One (Dubai)' }, null);
+  const w1700 = await watch('1700');
+  await m.clients.linkWatch(w1700.id, 'sale', omar.id, null);
+  const again = await m.ckClients.syncClients();
+  assert.equal(again.created, 0);
+  assert.equal(again.watchesLinked, 0, 'nothing moves the second time');
+  assert.equal((await byCk('c-one')).forename, 'Dealer One (Dubai)');
+  assert.equal((await watch('1700')).sold_to_client_id, omar.id);
+  assert.ok((await watch('1700')).locked_fields.includes('sold_to_client'));
+
+  // Handed back: Chrono Key's grid names no buyer for 1700.
+  await m.clients.linkWatch(w1700.id, 'sale', 'chronokey', null);
+  assert.equal((await watch('1700')).sold_to_client_id, null);
+  assert.ok(!(await watch('1700')).locked_fields.includes('sold_to_client'));
+  const ev = (await db("SELECT action, changes FROM watch_events WHERE watch_id = $1 ORDER BY id", [w1700.id])).rows;
+  assert.deepEqual(ev.find((e) => e.changes.sold_to_client)?.changes.sold_to_client, [null, 'Omar F'], 'the history names the client');
 });
 
 test('watch pages bring euro figures, ticks and photos — only from Chrono Key', async () => {

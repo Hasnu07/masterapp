@@ -27,10 +27,30 @@ header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255
 .bar-in { max-width: 1320px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .brand { font: 600 21px/1 var(--serif); letter-spacing: .2px; margin-right: 6px; white-space: nowrap; }
 .brand small { font: 500 11px var(--sans); color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; margin-left: 6px; }
-nav { display: flex; gap: 4px; flex-wrap: wrap; }
-nav a { text-decoration: none; color: var(--muted); padding: 7px 11px; border-radius: 8px; font-weight: 500; }
+/* The menu: a ☰ in the bar, the pages in a drawer from the left. */
+.burger { width: 38px; height: 38px; margin-left: -6px; border: 0; border-radius: 8px; background: none; cursor: pointer;
+  display: grid; place-items: center; flex: none; }
+.burger:hover { background: var(--gold-soft); }
+.burger span, .burger span::before, .burger span::after { display: block; width: 18px; height: 2px; border-radius: 2px;
+  background: var(--ink); position: relative; content: ''; }
+.burger span::before { position: absolute; top: -6px; }
+.burger span::after { position: absolute; top: 6px; }
+.scrim { position: fixed; inset: 0; z-index: 55; background: rgba(29,27,24,.28); }
+.drawer { position: fixed; top: 0; bottom: 0; left: 0; z-index: 60; width: min(270px, 84vw); background: var(--card);
+  border-right: 1px solid var(--line); box-shadow: 4px 0 24px rgba(0,0,0,.08); display: flex; flex-direction: column;
+  padding: 10px 12px 16px; transform: translateX(-102%); transition: transform .18s ease; }
+.drawer.open { transform: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 14px; }
+.drawer-x { border: 0; background: none; font-size: 24px; line-height: 1; color: var(--muted); cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+.drawer-x:hover { background: var(--gold-soft); color: var(--ink); }
+nav { display: flex; flex-direction: column; gap: 2px; }
+nav a { text-decoration: none; color: var(--muted); padding: 10px 12px; border-radius: 8px; font-weight: 500; }
+nav a:hover { color: var(--ink); background: var(--paper); }
 nav a.on { color: var(--ink); background: var(--gold-soft); }
-.who { margin-left: auto; display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 13px; }
+.who { margin-top: auto; padding: 14px 4px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center;
+  justify-content: space-between; color: var(--muted); font-size: 13px; }
+.who span { min-width: 0; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
 
 main { max-width: 1320px; margin: 0 auto; padding: 18px 16px 60px; }
 h1 { font: 600 30px/1.15 var(--serif); margin: 0 0 4px; }
@@ -87,6 +107,25 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .figures { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 12px; }
 .figures > div > span { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
 .figures b { font-size: 16px; font-weight: 600; }
+table.list.clients tbody tr { cursor: pointer; }
+table.list.clients tbody tr:hover { background: var(--paper); }
+table.list.clients a { text-decoration: none; }
+.cw { display: grid; }
+.cw-row { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; padding: 7px 0;
+  border-bottom: 1px solid var(--line); color: inherit; text-decoration: none; font-size: 14px; }
+.cw-row:hover { background: var(--paper); }
+.cw-row img, .cw-none { width: 44px; height: 44px; border-radius: 6px; object-fit: cover; background: #f0ece4; display: block; }
+.cw-price { white-space: nowrap; font-weight: 600; }
+.wc { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.wc:last-child { border-bottom: 0; }
+.wc-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 14px; }
+.wc-label { color: var(--muted); font-size: 13px; min-width: 84px; }
+.wc-act { margin-left: auto; display: flex; gap: 6px; }
+.wc-pick { margin-top: 8px; }
+.wc-pick input { width: 100%; }
+.wc-hits { display: grid; margin-top: 4px; }
+.wc-hit { text-align: left; border: 0; border-bottom: 1px solid var(--line); background: none; padding: 7px 4px; cursor: pointer; font-size: 14px; }
+.wc-hit:hover { background: var(--gold-soft); }
 .sold-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .sold-row .count { margin: 0; white-space: nowrap; }
 .desc { margin: 10px 0 0; color: var(--muted); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -158,10 +197,7 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
   dl.fields { grid-template-columns: minmax(110px, 42%) 1fr; }
   h1 { font-size: 25px; }
   input, select, textarea { font-size: 16px !important; }
-  .who span { display: none; }
-  .bar-in { gap: 8px; padding: 8px 12px; }
-  .brand { order: 1; } .who { order: 2; } nav { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; }
-  nav a { white-space: nowrap; padding: 6px 10px; }
+  .bar-in { gap: 8px; padding: 6px 12px; }
 }
 
 /* The converter under every price (fxchip.js), as in InvoiceWEB. BLUE, and
@@ -195,16 +231,25 @@ table.list th { font-size: 12px; text-transform: uppercase; letter-spacing: .8px
 <body>
 <header class="bar hide" id="bar">
   <div class="bar-in">
+    <button class="burger" id="menu" type="button" aria-label="Open the menu" aria-controls="drawer" aria-expanded="false"><span></span></button>
     <div class="brand">Purosangue <small>ERP</small></div>
-    <nav id="nav">
-      <a href="#/" data-nav="inventory">Inventory</a>
-      <a href="#/new" data-nav="new" data-role="editor">New watch</a>
-      <a href="#/import" data-nav="import">Import</a>
-      <a href="#/users" data-nav="users" data-role="admin">Users</a>
-    </nav>
-    <div class="who"><span id="who"></span><button class="btn small" id="logout">Sign out</button></div>
   </div>
 </header>
+<div class="scrim hide" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Menu" inert>
+  <div class="drawer-head">
+    <div class="brand">Purosangue <small>ERP</small></div>
+    <button class="drawer-x" id="menu-close" type="button" aria-label="Close the menu">×</button>
+  </div>
+  <nav id="nav">
+    <a href="#/" data-nav="inventory">Inventory</a>
+    <a href="#/clients" data-nav="clients">Clients</a>
+    <a href="#/new" data-nav="new" data-role="editor">New watch</a>
+    <a href="#/import" data-nav="import">Import</a>
+    <a href="#/users" data-nav="users" data-role="admin">Users</a>
+  </nav>
+  <div class="who"><span id="who"></span><button class="btn small" id="logout">Sign out</button></div>
+</aside>
 <main id="app"></main>
 <script src="/app.js"></script>
 <script src="/fxchip.js"></script>

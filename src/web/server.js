@@ -5,6 +5,7 @@ import { config, ROOT } from '../config.js';
 import * as auth from '../auth/index.js';
 import * as watches from '../watches/index.js';
 import * as rates from '../rates/index.js';
+import * as clients from '../clients/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -118,6 +119,8 @@ export function createServer() {
       locations: LOCATIONS,
       currencies: CURRENCIES,
       paymentKinds: PAYMENT_KINDS,
+      clientFields: clients.CLIENT_FIELDS,
+      clientTypes: clients.CLIENT_TYPES,
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
@@ -166,7 +169,43 @@ export function createServer() {
     })
   );
 
-  app.get('/api/watches/:id', need('viewer'), wrap(async (req, res) => res.json(await watches.getWatch(req.params.id))));
+  app.get(
+    '/api/watches/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const w = await watches.getWatch(req.params.id);
+      res.json({ ...w, clients: await clients.linksOf(w) });
+    })
+  );
+
+  /* Who a watch was bought from / sold to: { role: purchase|sale, client_id: n | null | "chronokey" }. */
+  app.put(
+    '/api/watches/:id/client',
+    need('editor'),
+    wrap(async (req, res) => {
+      const { role, client_id: id } = req.body || {};
+      res.json(await clients.linkWatch(req.params.id, role, id === 'chronokey' || id === null ? id : Number(id), req.user));
+    })
+  );
+
+  /* ── clients ─────────────────────────────────────────────────── */
+
+  app.get(
+    '/api/clients',
+    need('viewer'),
+    wrap(async (req, res) => res.json(await clients.listClients(req.query)))
+  );
+  app.get('/api/clients/:id', need('viewer'), wrap(async (req, res) => res.json(await clients.getClient(req.params.id))));
+  app.post(
+    '/api/clients',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await clients.createClient(req.body || {}, req.user) }))
+  );
+  app.patch(
+    '/api/clients/:id',
+    need('editor'),
+    wrap(async (req, res) => res.json(await clients.updateClient(req.params.id, req.body || {}, req.user)))
+  );
 
   app.get(
     '/api/watches/:id/related',
