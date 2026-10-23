@@ -4,6 +4,21 @@ Decided 22 Oct 2026. Photos, PDFs and documents go to **Cloudflare R2**; the
 app and its database to **DigitalOcean** (App Platform + Managed PostgreSQL).
 About $25–30 a month at 50 GB of files (prices as known in Oct 2026 — check).
 
+**Where: Bangalore (BLR1), and R2 in Asia-Pacific** — decided 23 Oct 2026,
+because the people using it are in Pakistan and Dubai. Measured from the PC in
+Pakistan: Singapore 105 ms, Bangalore 144 ms, Frankfurt 153 ms, London 159 ms;
+Dubai is typically much closer to Bangalore (~30–50 ms) than to Europe.
+DigitalOcean has no Gulf datacentre. App and database must be in the SAME
+region — every page makes many queries.
+
+As set up on 23 Oct 2026: bucket **`purosangue-masterapp-apac`** (APAC),
+API token `masterapp` scoped to it; database **`masterapp-db`** (BLR1,
+PostgreSQL 18, Basic 1 GB, $15.15/month, moved there from London); app
+**`coral-app`** (BLR1). An R2 bucket re-created under a deleted bucket's
+name lands back in the old one's location whatever hint is given — that is
+why the bucket has a new name; an empty `purosangue-masterapp` (Western
+Europe) is left over and can be deleted.
+
 This PC stays the live copy until the move has been checked. Nothing here is
 switched off until the new one is proven.
 
@@ -27,7 +42,7 @@ GitHub, copies the photos and the database across, and checks every photo.
 2. Left menu → **R2 Object Storage** → add a payment method when asked. R2
    needs one even inside its free allowance (10 GB).
 3. **Create bucket**
-   - Name: `purosangue-masterapp`
+   - Name: `purosangue-masterapp-apac` — location hint **Asia-Pacific (APAC)**
    - Location: **Automatic** — or *Specify jurisdiction → European Union* if
      the company's data must stay in the EU. Decide now; it cannot be changed.
    - Storage class: Standard.
@@ -38,7 +53,7 @@ GitHub, copies the photos and the database across, and checks every photo.
    **Create API token**
    - Name: `masterapp`
    - Permissions: **Object Read & Write**
-   - Specify bucket(s): **only `purosangue-masterapp`**
+   - Specify bucket(s): **only `purosangue-masterapp-apac`**
    - TTL: Forever
    - Create. The next page shows the keys **once** — copy them now:
      **Access Key ID**, **Secret Access Key**, and the **S3 endpoint**
@@ -51,7 +66,7 @@ GitHub, copies the photos and the database across, and checks every photo.
    billing.
 2. **Create → Databases**
    - Engine: **PostgreSQL**, the **newest version offered**
-   - Datacenter: **London (LON1)** or **Frankfurt (FRA1)** — use the same one
+   - Datacenter: **Bangalore (BLR1)** — use the same one
      for the app in step 3
    - Plan: **Basic**, 1 GB RAM / 1 vCPU / 10 GB disk (about $15 a month; daily
      backups and a week of point-in-time restore are included)
@@ -84,10 +99,11 @@ GitHub, copies the photos and the database across, and checks every photo.
    | `NODE_ENV` | `production` (sign-in cookies only over https) |
    | `PORT` | `8080` |
    | `DATABASE_URL` | `${masterapp-db.DATABASE_URL}` (DigitalOcean fills it in) |
+   | `DATABASE_CA_CERT` | `${masterapp-db.CA_CERT}` — DigitalOcean's certificate for the database, so the app can verify it |
    | `R2_ACCOUNT_ID` | from step 1.4 |
    | `R2_ACCESS_KEY_ID` | from step 1.4 — encrypt |
    | `R2_SECRET_ACCESS_KEY` | from step 1.4 — encrypt |
-   | `R2_BUCKET` | `purosangue-masterapp` |
+   | `R2_BUCKET` | `purosangue-masterapp-apac` |
    | `R2_ENDPOINT` | only for an EU bucket: the `.eu.` endpoint from step 1.4 |
    | `CHRONOKEY_USERNAME` | the same as in this PC's `.env` — encrypt |
    | `CHRONOKEY_PASSWORD` | the same as in this PC's `.env` — encrypt |
@@ -109,7 +125,7 @@ GitHub, copies the photos and the database across, and checks every photo.
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
-R2_BUCKET=purosangue-masterapp
+R2_BUCKET=purosangue-masterapp-apac
 R2_ENDPOINT=
 TARGET_DATABASE_URL=
 APP_URL=

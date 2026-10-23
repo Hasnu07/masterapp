@@ -39,8 +39,9 @@ Node 20+, Express 5, Postgres, `sharp` for thumbnails.
 
 **Where it runs: this PC** (`npm run local`), not Railway — decided 22 Oct
 2026, because of the sheer number of photos (thousands, GBs). Next: Cloudflare
-R2 for files + DigitalOcean App Platform and Managed Postgres — the steps are
-in `HOSTING.md`. Only this PC uses it for now, so it stays on 127.0.0.1.
+R2 for files + DigitalOcean App Platform and Managed Postgres, all in
+**Bangalore / Asia-Pacific** because it is used in Pakistan and Dubai — the
+steps, the measurements and what exists are in `HOSTING.md`. Only this PC uses it for now, so it stays on 127.0.0.1.
 The database and photos under `data/` ARE the live
 data: back them up, and move them whole if it moves. The Railway notes below
 are kept for reference only.
