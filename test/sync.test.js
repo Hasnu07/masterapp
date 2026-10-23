@@ -653,8 +653,15 @@ test('the daily re-read of unsold pages: a few pages failing do not make it due 
       [finished && !error && !stats.failed, stats, error]
     );
   assert.equal(await activeDetailsDue(), true, 'never read');
-  await run({ todo: 'many', failed: 'some' }, { error: 'odd stats' });
-  assert.equal(await activeDetailsDue(), true, 'a count that is not a number breaks nothing');
+  // Finished, no error of its own, counts that are not numbers: the row the guarded casts are for.
+  await run({ todo: 'many', failed: 'some' });
+  await assert.rejects(
+    db("SELECT (stats->>'todo')::numeric FROM import_runs WHERE mode = 'details-active' AND error IS NULL"),
+    /invalid input syntax/,
+    'cast without its guard, this row fails'
+  );
+  await assert.doesNotReject(activeDetailsDue(), 'a count that is not a number breaks nothing');
+  await db("DELETE FROM import_runs WHERE mode = 'details-active'");
   await run({ todo: 200, done: 200, failed: 200 });
   assert.equal(await activeDetailsDue(), true, 'Chrono Key was down: every page failed');
   await run({ todo: 200, done: 1, failed: 1 }, { error: 'Chrono Key rejected the sign-in' });
@@ -690,22 +697,35 @@ test('a Chrono Key sign-in sent to another site is refused: its cookies go only 
   const elsewhere = [];
   const other = http.createServer((req, res) => elsewhere.push(req.headers.cookie) && res.end('ok')).listen(0, '127.0.0.1');
   await new Promise((r) => other.once('listening', r));
+  let signIns = 0;
   const ckSite = http
     .createServer((req, res) => {
       if (req.method === 'GET') return res.end('<input name="__RequestVerificationToken" value="t">');
+      signIns += 1;
       res.writeHead(302, { Location: `http://localhost:${other.address().port}/welcome`, 'Set-Cookie': 'ck=secret; path=/' });
       res.end();
     })
     .listen(0, '127.0.0.1');
   await new Promise((r) => ckSite.once('listening', r));
   const { config } = await import('../src/config.js');
-  const keep = config.chronokey.url;
+  const keep = { url: config.chronokey.url, concurrency: config.sync.concurrency };
   config.chronokey.url = `http://127.0.0.1:${ckSite.address().port}`;
+  const ckc = m.client.chronokey();
   try {
-    await assert.rejects(new m.client.ChronoKeyClient('u', 'p').login(), /another site/);
+    await assert.rejects(new m.client.ChronoKeyClient('u', 'p').login(), { message: /another site/, status: 401 });
     assert.deepEqual(elsewhere, [], 'nothing reached the other site');
+    // A pass stops there, as at a rejected password — not a sign-in for every page.
+    const pages = (await db('SELECT count(*)::int AS n FROM ck_records')).rows[0].n;
+    assert.ok(pages >= 3, 'enough pages to tell');
+    Object.assign(ckc, { loggedIn: false, cookies: {} });
+    config.sync.concurrency = 1;
+    signIns = 0;
+    await assert.rejects(m.ck.syncDetails({ mode: 'full' }), /another site/);
+    assert.equal(signIns, 1, 'one sign-in, then the pass stops');
   } finally {
-    config.chronokey.url = keep;
+    config.sync.concurrency = keep.concurrency;
+    config.chronokey.url = keep.url;
+    Object.assign(ckc, { loggedIn: false, cookies: {} });
     other.close();
     ckSite.close();
   }
@@ -714,13 +734,16 @@ test('a Chrono Key sign-in sent to another site is refused: its cookies go only 
 test("a vault photo's redirect is checked hop by hop, and the worker's key never goes with it elsewhere", async () => {
   const http = await import('node:http');
   const seenElsewhere = [];
-  const away = http.createServer((req, res) => seenElsewhere.push(req.headers) && res.end()).listen(0, '127.0.0.1');
+  const away = http
+    .createServer((req, res) => seenElsewhere.push(req.headers) && res.writeHead(200, { 'Content-Type': 'image/jpeg' }).end(jpg))
+    .listen(0, '127.0.0.1');
   await new Promise((r) => away.once('listening', r));
   const jpg = await picture(3);
   const worker = http
     .createServer((req, res) => {
       if (req.url === '/same.jpg') return res.writeHead(302, { Location: '/pic.jpg' }).end();
-      if (req.url === '/away.jpg') return res.writeHead(302, { Location: `http://127.0.0.1:${away.address().port}/pic.jpg` }).end();
+      if (req.url === '/private.jpg') return res.writeHead(302, { Location: `http://127.0.0.1:${away.address().port}/pic.jpg` }).end();
+      if (req.url === '/public.jpg') return res.writeHead(302, { Location: 'https://photos.invalid/pic.jpg' }).end();
       if (req.url === '/slow.jpg') return; // never answers
       if (req.url === '/pic.jpg' && req.headers['x-worker-token'] === 'vault-key') return res.writeHead(200, { 'Content-Type': 'image/jpeg' }).end(jpg);
       res.writeHead(403).end();
@@ -731,15 +754,49 @@ test("a vault photo's redirect is checked hop by hop, and the worker's key never
   const keep = { url: config.vault.url, timeoutMs: config.vault.timeoutMs };
   const at = `http://127.0.0.1:${worker.address().port}`;
   Object.assign(config.vault, { url: `${at}/api/state`, timeoutMs: 300 });
+  // A public host, played by `away`: getPhoto checks the public url, and the
+  // request is delivered to the stand-in — nothing leaves this machine.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => realFetch(String(url).replace('https://photos.invalid', `http://127.0.0.1:${away.address().port}`), opts);
   try {
     assert.ok((await m.vault.getPhoto(`${at}/same.jpg`)).equals(jpg), 'a redirect on the worker keeps its key');
-    assert.equal(await m.vault.getPhoto(`${at}/away.jpg`), null, 'to a private address: not followed');
-    assert.deepEqual(seenElsewhere, [], 'nothing, and no key, reached it');
+    assert.equal(await m.vault.getPhoto(`${at}/private.jpg`), null, 'to a private address: not followed');
+    assert.deepEqual(seenElsewhere, [], 'not even asked');
+    assert.ok((await m.vault.getPhoto(`${at}/public.jpg`)).equals(jpg), 'to a public host: followed');
+    assert.equal(seenElsewhere.length, 1);
+    assert.equal(seenElsewhere[0]['x-worker-token'], undefined, "and that host is not sent the worker's key");
     await assert.rejects(m.vault.getPhoto(`${at}/slow.jpg`), /abort|timeout/i, 'a photo that never comes is given up on');
   } finally {
+    globalThis.fetch = realFetch;
     Object.assign(config.vault, keep);
     worker.closeAllConnections();
     worker.close();
     away.close();
+  }
+});
+
+test('a vault photo over 50 MB is dropped as it arrives, even when its length is not given', async () => {
+  const http = await import('node:http');
+  // 50 MB and one byte, chunked (no Content-Length), and the body never finished:
+  // read whole before measuring, it would wait for an end that never comes.
+  const worker = http
+    .createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      const mb = Buffer.alloc(1024 * 1024);
+      for (let i = 0; i < 50; i += 1) res.write(mb);
+      res.write(Buffer.alloc(1));
+    })
+    .listen(0, '127.0.0.1');
+  await new Promise((r) => worker.once('listening', r));
+  const { config } = await import('../src/config.js');
+  const keep = { url: config.vault.url, timeoutMs: config.vault.timeoutMs };
+  const at = `http://127.0.0.1:${worker.address().port}`;
+  Object.assign(config.vault, { url: `${at}/api/state`, timeoutMs: 10_000 });
+  try {
+    assert.equal(await m.vault.getPhoto(`${at}/huge.jpg`), null);
+  } finally {
+    Object.assign(config.vault, keep);
+    worker.closeAllConnections();
+    worker.close();
   }
 });
