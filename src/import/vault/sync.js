@@ -255,8 +255,16 @@ export async function getPhoto(url) {
     }
     const type = res.headers.get('content-type') || '';
     if (!res.ok || !type.startsWith('image/') || Number(res.headers.get('content-length')) > MAX_PHOTO) return null;
-    const buffer = Buffer.from(await res.arrayBuffer());
-    return buffer.length > MAX_PHOTO ? null : buffer;
+    // Counted as it arrives: a body sent without its length would otherwise be
+    // held whole before its size was known. Leaving the loop drops the rest.
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of res.body || []) {
+      size += chunk.length;
+      if (size > MAX_PHOTO) return null;
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
   }
   return null;
 }
