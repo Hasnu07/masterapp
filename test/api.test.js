@@ -13,7 +13,7 @@ import sharp from 'sharp';
  */
 
 const DB = process.env.TEST_DATABASE_URL || 'postgres://postgres@localhost:5433/masterapp_test';
-let server, base, pool, dataDir, rateSource;
+let server, base, pool, dataDir, rateSource, config;
 
 before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-api-'));
@@ -47,6 +47,7 @@ before(async () => {
   await (await import('../src/db/migrate.js')).migrate({ log: () => {} });
   await (await import('../src/auth/index.js')).ensureFirstAdmin(() => {});
   pool = (await import('../src/db/index.js')).pool;
+  config = (await import('../src/config.js')).config;
   const app = (await import('../src/web/server.js')).createServer();
   server = app.listen(0);
   base = `http://127.0.0.1:${server.address().port}`;
@@ -58,6 +59,16 @@ after(async () => {
   await pool.end();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
+
+/* The tests run with SYNC=off; the import routes are tried with it on. */
+async function syncOn(fn) {
+  config.sync.enabled = true;
+  try {
+    return await fn();
+  } finally {
+    config.sync.enabled = false;
+  }
+}
 
 function client() {
   let cookie = '';
@@ -149,6 +160,7 @@ test('photos: upload, thumbnail, order, caption, remove — and only for the sig
   assert.equal((await client().call('GET', `/api/photos/${p1}`)).status, 401, 'photos are behind the sign-in');
 
   assert.equal((await editor.call('POST', `/api/watches/${id}/photos/order`, { ids: [p2] })).status, 400, 'every photo, once');
+  assert.equal((await editor.call('POST', `/api/watches/${id}/photos/order`, { ids: [p2, p2] })).status, 400, 'not one photo twice');
   assert.equal((await editor.call('POST', `/api/watches/${id}/photos/order`, { ids: [p2, p1] })).status, 200);
   await editor.call('PATCH', `/api/watches/${id}/photos/${p2}`, { caption: 'Dial' });
   let w = (await viewer.call('GET', `/api/watches/${id}`)).body;
@@ -278,6 +290,69 @@ test('rates for the converter: a source without AED is refused, the daily one is
   assert.ok(r.currencies.some((c) => c.code === 'HKD'));
 });
 
+test('what a request names that is not a field is refused, never taken for a column', async () => {
+  const w = (await editor.call('POST', '/api/watches', { stock_no: '8001', brand: 'Rolex', toString: 'x', constructor: 'x' }));
+  assert.equal(w.status, 201, 'unknown keys on a watch are dropped, as ids and timestamps are');
+  assert.deepEqual((await editor.call('PATCH', `/api/watches/${w.body.id}`, { constructor: 'x' })).body, { changed: [] });
+  assert.equal((await editor.call('POST', `/api/watches/${w.body.id}/unlock`, { field: 'constructor' })).status, 400);
+  assert.equal((await editor.call('POST', '/api/clients', { forename: 'A', constructor: 'x' })).status, 400);
+  assert.equal((await editor.call('PUT', `/api/watches/${w.body.id}/client`, { role: 'constructor', client_id: null })).status, 400);
+  const x = await editor.call('POST', '/api/expenses', { title: 'T', amount: 1, currency: 'EUR' });
+  assert.equal((await editor.call('PATCH', `/api/expenses/${x.body.id}`, { valueOf: 'x' })).status, 400);
+  assert.equal(await syncOn(async () => (await admin.call('POST', '/api/import/run', { job: 'constructor' })).status), 400);
+});
+
+test('too many files, or a mangled cookie, is a refusal — not a server error', async () => {
+  const x = await editor.call('POST', '/api/expenses', { title: 'Receipts', amount: 1, currency: 'EUR' });
+  const fd = new FormData();
+  const pic = await jpeg(20, 20, '#33a');
+  for (let i = 0; i < 11; i += 1) fd.append('files', new Blob([pic], { type: 'image/jpeg' }), `r${i}.jpg`);
+  const r = await editor.call('POST', `/api/expenses/${x.body.id}/files`, fd);
+  assert.equal(r.status, 400);
+  assert.equal(r.body.error, 'Too many files at once');
+
+  const res = await fetch(`${base}/api/me`, { headers: { Cookie: 'ma_session=%E0%A4%A' } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { user: null }, 'no session, and the page still loads');
+});
+
+const csv = () => {
+  const fd = new FormData();
+  fd.append('file', new Blob(['Stock No,Brand\n9001,Rolex\n'], { type: 'text/csv' }), 'ProductList.csv');
+  return fd;
+};
+
+test('a CSV upload waits its turn: refused while another import holds the lock', () => syncOn(async () => {
+  const other = await pool.connect(); // another process (the CLI, a second container) mid-import
+  await other.query('SELECT pg_advisory_lock(727002)');
+  try {
+    const r = await admin.call('POST', '/api/import/csv', csv());
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+  } finally {
+    await other.query('SELECT pg_advisory_unlock(727002)');
+    other.release();
+  }
+  assert.equal((await admin.call('POST', '/api/import/csv', csv())).status, 200, 'and goes ahead once it is free');
+}));
+
+test('with sync off, the Import page copies nothing either', async () => {
+  const run = await admin.call('POST', '/api/import/run', { job: 'chronokey-list' });
+  assert.equal(run.status, 409);
+  assert.match(run.body.error, /SYNC=off/);
+  assert.equal((await admin.call('POST', '/api/import/csv', csv())).status, 409);
+  assert.equal((await admin.call('GET', '/api/import/status')).body.configured.sync, false, 'and the page is told, to say so');
+});
+
+test('the page carries its script policy; the API and the files it serves do not', async () => {
+  const page = await fetch(`${base}/`);
+  const csp = page.headers.get('content-security-policy') || '';
+  assert.match(csp, /script-src 'self'(;|$)/, 'no inline script runs, whatever gets into the page');
+  assert.match(csp, /object-src 'none'/);
+  assert.match((await fetch(`${base}/index.html`)).headers.get('content-security-policy') || '', /script-src 'self'/, 'by its own name too');
+  assert.equal((await fetch(`${base}/api/me`)).headers.get('content-security-policy'), null);
+  assert.equal(page.headers.get('strict-transport-security'), null, 'https is only promised in production');
+});
+
 test('an admin cannot lock themselves out', async () => {
   const me = (await admin.call('GET', '/api/me')).body.user;
   assert.equal((await admin.call('PATCH', `/api/users/${me.id}`, { role: 'viewer' })).status, 400);
@@ -286,4 +361,22 @@ test('an admin cannot lock themselves out', async () => {
   const vi = users.find((u) => u.email === 'vi@example.com');
   assert.equal((await admin.call('PATCH', `/api/users/${vi.id}`, { disabled: true })).status, 200);
   assert.equal((await viewer.call('GET', '/api/watches')).status, 401, 'a disabled account is signed out at once');
+});
+
+test('failed sign-ins count per person and per account — not for everybody behind the same proxy', async () => {
+  config.production = true; // as on App Platform, where the person's address is in do-connecting-ip
+  const from = (address, email, password) =>
+    fetch(`${base}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'masterapp', 'do-connecting-ip': address },
+      body: JSON.stringify({ email, password }),
+    }).then((r) => r.status);
+  try {
+    for (let i = 0; i < 10; i += 1) assert.equal(await from('203.0.113.1', 'ed@example.com', 'wrong-password'), 401);
+    assert.equal(await from('203.0.113.1', 'boss@example.com', 'admin-password-1'), 429, 'that address waits');
+    assert.equal(await from('203.0.113.2', 'ed@example.com', 'editor-password'), 429, 'so does that account, from anywhere');
+    assert.equal(await from('203.0.113.3', 'boss@example.com', 'admin-password-1'), 200, 'everybody else signs in');
+  } finally {
+    config.production = false;
+  }
 });

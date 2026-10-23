@@ -99,7 +99,9 @@ marks it "✎ edited here · use Chrono Key's" (unlock). On a record added here
   still lists it; restore brings it back.
 - A photo removed here keeps its row (`deleted_at`), which is what stops the
   sync copying it back.
-- `SYNC=off` is the switch-over: nothing is copied any more.
+- `SYNC=off` is the switch-over: nothing is copied any more — not by the
+  timer, and not from the Import page (its buttons and the CSV upload answer
+  409). The command line (`npm run import`) still can, deliberately.
 
 Source strengths (`apply.js`): **own** replaces (Chrono Key's product list for
 purchase and sale; Chrono Key's euro figures; the vault's B2B, B2C and Chrono24 — its `b2chronoFinal`), **fill**
@@ -332,7 +334,13 @@ bucket), else `DATA_DIR` (Railway volume).
 
 Only paths on Chrono Key's own host are fetched (a `data:` placeholder or an
 off-host url out of a scraped page is refused); the vault's key goes only to
-the worker's own origin.
+the worker's own origin. A vault photo url is fetched only from a public
+address (not loopback, a private network or the metadata service) unless it
+is on the worker's own origin, with the vault's timeout and at most 50 MB;
+redirects are followed by hand, each hop checked, the key never carried off
+the worker's origin.
+Chrono Key's sign-in follows a redirect only on Chrono Key's own host — the
+client's cookies go with it.
 
 **The same picture comes many times.** Chrono Key's galleries and the vault
 both list a picture more than once under different file names, and the two
@@ -368,7 +376,11 @@ time with a pause; one job at a time across processes (Postgres advisory
 lock). First full read of every watch page ≈ 1,700 pages → a couple of hours,
 resumable. After that the 15-minute pass reads the list (one request) and only
 NEW watch pages; once a day it re-reads unsold and recently sold watches. A
-failed sign-in stops the run rather than failing 1,700 times.
+failed sign-in stops the run rather than failing 1,700 times. That daily pass
+counts as done when it went through with at most a tenth of its pages failing
+(the rolling pass retries those) — counting only a flawless one re-read ~200
+pages every 15 minutes while any single page kept failing (fixed 23 Oct 2026).
+A CSV upload takes the same lock.
 
 An EMPTY answer is never trusted as "nothing there" — the ported client checks
 the session first (InvoiceWEB lost hours to a dead session reading as an empty
@@ -381,8 +393,41 @@ viewer (reads), editor (+ add/edit/delete watches and photos), admin
 (+ accounts, imports). The first admin comes from `ADMIN_EMAIL` /
 `ADMIN_PASSWORD` when there are no accounts. scrypt hashes, 30-day sessions
 (stored hashed), HttpOnly SameSite=Lax cookie, and every non-GET API call must
-carry `X-Requested-With: masterapp`. Ten sign-in attempts per ten minutes per
-address. An admin cannot demote or disable themselves.
+carry `X-Requested-With: masterapp`. Ten failed sign-ins per ten minutes per
+address AND per account. The address is `do-connecting-ip` in production:
+on App Platform `x-forwarded-for` (so `req.ip`) is DigitalOcean's ingress,
+the same for everybody — counted by it, ten wrong passwords from anyone locked
+everyone out (fixed 23 Oct 2026). An admin cannot demote or disable themselves.
+
+The console page carries a Content-Security-Policy (`server.js`,
+`PAGE_POLICY`): scripts only from the app itself, so a value that ever slipped
+past `esc()` still cannot run — keep the console free of inline scripts and
+`on…=` handlers. Not on the files the API serves: a payment copy's PDF opens
+on its own, and a policy there can stop the browser's PDF viewer. HSTS in
+production. Field names from a request are looked up in prototype-free maps
+(`FIELD`, `CLIENT_FIELD`): they become column names in SQL.
+
+## Skills
+
+`.claude/skills/` holds ten skills from
+[jeffallan/claude-skills](https://github.com/jeffallan/claude-skills), copied
+unchanged (MIT; source commit in `.claude/skills/LICENSE`). They are general
+advice: where they disagree with this file, this file wins — no new
+dependencies for what they suggest (helmet, zod, bcrypt), and migrations run
+inside a transaction at start-up, so `CREATE INDEX CONCURRENTLY` is out.
+
+| Skill | Use it when |
+|---|---|
+| `security-reviewer` | auditing for vulnerabilities: auth, sessions, uploads, secrets |
+| `secure-code-guardian` | changing sign-in, roles, input handling or headers |
+| `code-reviewer` | reviewing a change or a PR before it goes to `main` |
+| `javascript-pro` | writing or debugging the Node code and the console (ESM, async) |
+| `postgres-pro` | a slow query, an index, jsonb, EXPLAIN — verify on realistic data |
+| `sql-pro` | writing or reshaping a query or a migration |
+| `api-designer` | adding or changing an `/api/…` endpoint |
+| `test-master` | adding tests in `test/` (node:test, real Postgres, stand-ins) |
+| `debugging-wizard` | a sync or import that misbehaves: logs, `import_runs`, hypotheses |
+| `devops-engineer` | DigitalOcean App Platform, R2, deploys (see `HOSTING.md`) |
 
 ## Running
 
@@ -449,5 +494,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.
+- **Port to InvoiceWEB**: its Chrono Key client follows a sign-in redirect to
+  any host, cookies and all. masterapp's (`chronokey/client.js`, `login`) now
+  refuses one off Chrono Key's host (23 Oct 2026); the two should agree again.
 - The rest of the ERP: customers/suppliers, invoices (InvoiceWEB), payments,
   consignment, accounting.

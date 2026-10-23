@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { pool, query } from '../../db/index.js';
 import { config } from '../../config.js';
 import { applyToWatch } from '../apply.js';
@@ -187,6 +188,59 @@ function primary(records) {
   return (pool.length ? pool : records).sort((a, b) => a.list.rank - b.list.rank)[0];
 }
 
+/*
+ * A photo url comes out of a record, so it is fetched only from a public
+ * address — never this machine, its private network or the cloud's metadata
+ * service — except the worker's own origin. (A name that resolves to a
+ * private address is not caught here; the vault's records are the business's own.)
+ */
+export function fetchable(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.origin === origin()) return true;
+  const h = u.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.internal')) return false;
+  if (net.isIP(h) === 4) {
+    const [a, b] = h.split('.').map(Number);
+    return !(a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168));
+  }
+  if (net.isIP(h) === 6) return !(h === '::' || h === '::1' || /^(f[cd]|fe[89ab])/.test(h) || h.startsWith('::ffff:'));
+  return h.includes('.');
+}
+
+const MAX_PHOTO = 50 * 1024 * 1024;
+
+/**
+ * One photo's bytes, or null. Redirects are followed by hand: each hop is
+ * checked like the first, and the worker's key goes to the worker's origin
+ * only (fetch would carry it along to wherever a redirect points). A photo
+ * that does not come within the vault's timeout is an error: skipped this
+ * pass, tried again the next.
+ */
+export async function getPhoto(url) {
+  const signal = AbortSignal.timeout(config.vault.timeoutMs);
+  let at = url;
+  for (let hop = 0; hop < 5; hop += 1) {
+    if (!fetchable(at)) return null;
+    const res = await fetch(at, { headers: headersFor(at), redirect: 'manual', signal });
+    const next = res.status >= 300 && res.status < 400 && res.headers.get('location');
+    if (next) {
+      at = new URL(next, at).href;
+      continue;
+    }
+    const type = res.headers.get('content-type') || '';
+    if (!res.ok || !type.startsWith('image/') || Number(res.headers.get('content-length')) > MAX_PHOTO) return null;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return buffer.length > MAX_PHOTO ? null : buffer;
+  }
+  return null;
+}
+
 async function copyPhotos(watchId, urls) {
   if (!urls.length) return 0;
   const { rows } = await query("SELECT source_ref FROM watch_photos WHERE watch_id = $1 AND source = 'vault'", [watchId]);
@@ -195,10 +249,8 @@ async function copyPhotos(watchId, urls) {
   for (const url of urls.slice(0, 30)) {
     if (have.has(url)) continue;
     try {
-      const res = await fetch(url, { headers: headersFor(url) });
-      const type = res.headers.get('content-type') || '';
-      if (!res.ok || !type.startsWith('image/')) continue;
-      const buffer = Buffer.from(await res.arrayBuffer());
+      const buffer = await getPhoto(url);
+      if (!buffer) continue;
       // The same picture under another url, or already copied from Chrono
       // Key, is recorded and not shown twice.
       const ids = await addPhotos(watchId, [{ buffer }], null, { source: 'vault', sourceRefs: [url], skipDuplicates: true });

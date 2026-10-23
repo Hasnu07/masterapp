@@ -589,7 +589,7 @@ export async function orderPhotos(watchId, ids, user) {
       [Number(watchId) || 0]
     );
     const have = rows.map((r) => r.id);
-    if (want.length !== have.length || !want.every((x) => have.includes(x))) {
+    if (want.length !== have.length || new Set(want).size !== want.length || !want.every((x) => have.includes(x))) {
       throw Object.assign(new Error('The order must list every photo of this watch exactly once'), { status: 400 });
     }
     for (let i = 0; i < want.length; i += 1) {

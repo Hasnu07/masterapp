@@ -108,6 +108,9 @@ class ChronoKeyClient {
         const loc = r.headers.location.startsWith('http')
           ? r.headers.location
           : `${base}${r.headers.location}`;
+        // Every cookie this client holds goes with the next request: only to Chrono Key's own host.
+        const host = new URL(loc).host;
+        if (host !== new URL(base).host) throw new ChronoKeyError(`Chrono Key sent the sign-in to another site (${host})`);
         r = await this.fetch(loc);
       }
 

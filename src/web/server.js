@@ -10,31 +10,79 @@ import * as expenses from '../expenses/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
-import { startJob, running } from '../import/jobs.js';
+import { startJob, running, runJob } from '../import/jobs.js';
 
 const PUBLIC = path.join(ROOT, 'src', 'web', 'public');
 
 /* Uploads are held in memory only long enough to store them. */
 const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 20 } });
 const csvUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
+const UPLOAD_REFUSED = {
+  LIMIT_FILE_SIZE: 'A file is too large',
+  LIMIT_FILE_COUNT: 'Too many files at once',
+  LIMIT_UNEXPECTED_FILE: 'Too many files at once',
+};
 
 const cookieOf = (req, name) => {
   for (const part of String(req.headers.cookie || '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+    if (i > 0 && part.slice(0, i).trim() === name) {
+      // A mangled cookie is no session — not an error on every page until it is cleared.
+      try {
+        return decodeURIComponent(part.slice(i + 1).trim());
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
 };
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-/* Sign-in attempts per address: ten in ten minutes. */
+/*
+ * The console page's own policy: scripts only from here, so a value that ever
+ * slipped past esc() still cannot run. Styles inline (the page has its own
+ * <style> and style="" attributes) and Google's fonts. Only on the page: a
+ * payment copy's PDF opens on its own, and a policy there can stop the
+ * browser's PDF viewer.
+ */
+const PAGE_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+/*
+ * Failed sign-ins: ten in ten minutes per address, and per account — the
+ * account limit holds whatever the address is.
+ *
+ * The address: on App Platform x-forwarded-for carries DigitalOcean's ingress,
+ * not the person (DigitalOcean's docs), so req.ip was the same for everybody
+ * and ten wrong passwords from anyone locked everyone out. The person's
+ * address is in do-connecting-ip.
+ */
 const attempts = new Map();
-function tooMany(ip) {
+const clientAddress = (req) => (config.production && req.get('do-connecting-ip')) || req.ip;
+function recent(key, now) {
+  const list = (attempts.get(key) || []).filter((t) => now - t < 10 * 60_000);
+  if (list.length) attempts.set(key, list);
+  else attempts.delete(key);
+  return list;
+}
+const tooMany = (keys) => keys.some((k) => recent(k, Date.now()).length >= 10);
+function failed(keys) {
   const now = Date.now();
-  const list = (attempts.get(ip) || []).filter((t) => now - t < 10 * 60_000);
-  attempts.set(ip, list);
-  return list.length >= 10;
+  for (const k of keys) attempts.set(k, [...recent(k, now), now]);
+  // Addresses that never come back are dropped, so the map cannot grow for ever.
+  if (attempts.size > 10_000) for (const k of [...attempts.keys()]) recent(k, now);
 }
 
 export function createServer() {
@@ -47,6 +95,8 @@ export function createServer() {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'same-origin');
     res.set('X-Frame-Options', 'DENY');
+    // Served over https only (App Platform): the browser is told never to try http.
+    if (config.production) res.set('Strict-Transport-Security', 'max-age=31536000');
     next();
   });
 
@@ -83,10 +133,11 @@ export function createServer() {
   app.post(
     '/api/login',
     wrap(async (req, res) => {
-      if (tooMany(req.ip)) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
+      const keys = [`address ${clientAddress(req)}`, `account ${String(req.body?.email || '').trim().toLowerCase()}`];
+      if (tooMany(keys)) return res.status(429).json({ error: 'Too many attempts — wait ten minutes' });
       const r = await auth.signIn(req.body?.email, req.body?.password);
       if (!r) {
-        attempts.get(req.ip).push(Date.now());
+        failed(keys);
         return res.status(401).json({ error: 'Wrong email or password' });
       }
       res.cookie(auth.COOKIE, r.token, {
@@ -453,20 +504,34 @@ export function createServer() {
     })
   );
 
+  /*
+   * SYNC=off is the switch-over: masterapp is the master, and a click on the
+   * Import page must not copy Chrono Key over it either. (The command line,
+   * `npm run import`, still can — deliberately.)
+   */
+  const syncOn = (req, res, next) =>
+    config.sync.enabled
+      ? next()
+      : res.status(409).json({ error: 'Sync is off (SYNC=off): masterapp is the master — nothing is copied from Chrono Key or the vault' });
+
   app.post(
     '/api/import/csv',
     need('admin'),
+    syncOn,
     csvUpload.single('file'),
     wrap(async (req, res) => {
       if (!req.file) return res.status(400).json({ error: 'No file was sent' });
-      if (running()) return res.status(409).json({ error: `An import is already running (${running().name})` });
-      res.json({ stats: await importProductCsv(req.file.buffer.toString('utf8'), { user: req.user }) });
+      // Under the same lock as every other import (409 while one runs, here or in
+      // another process), so the 15-minute sync cannot start in the middle of it.
+      const stats = await runJob('csv upload', () => importProductCsv(req.file.buffer.toString('utf8'), { user: req.user }));
+      res.json({ stats });
     })
   );
 
   app.post(
     '/api/import/run',
     need('admin'),
+    syncOn,
     wrap(async (req, res) => {
       const job = String(req.body?.job || '');
       if (job.startsWith('chronokey') && !config.chronokey.configured) {
@@ -509,15 +574,21 @@ export function createServer() {
 
   /* ── the page ────────────────────────────────────────────────── */
 
-  app.use(express.static(PUBLIC, { index: false, maxAge: 0 }));
+  const page = (res) => res.set('Content-Security-Policy', PAGE_POLICY);
+  app.use(express.static(PUBLIC, { index: false, maxAge: 0, setHeaders: (res, file) => file.endsWith('.html') && page(res) }));
   app.get('/{*page}', (req, res) => {
     res.set('Cache-Control', 'no-cache');
+    page(res);
     res.sendFile(path.join(PUBLIC, 'index.html'));
   });
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
+    // An upload over the limits (too large, too many files at once) is the sender's mistake, not a crash.
+    if (err instanceof multer.MulterError) {
+      return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ error: UPLOAD_REFUSED[err.code] || err.message });
+    }
+    const status = err.status || 500;
     if (status >= 500) console.error(err);
     res.status(status).json({ error: status >= 500 && config.production ? 'Something went wrong on the server' : err.message });
   });
