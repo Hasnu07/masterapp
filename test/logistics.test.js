@@ -1,0 +1,374 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import pg from 'pg';
+import sharp from 'sharp';
+
+/*
+ * The logistics app's records in masterapp: the copy from the worker's
+ * document (against a stand-in), the rules it keeps (locks, soft deletes, a
+ * broken read is not a clear-out, its passwords never copied), what a watch's
+ * page says about where it is, and the API. Against a real Postgres
+ * (TEST_DATABASE_URL), which is EMPTIED first.
+ */
+
+const DB = process.env.TEST_DATABASE_URL || 'postgres://postgres@localhost:5433/masterapp_test';
+let worker, base, m, db, dataDir, server, api, state;
+
+const jpeg = (w, h, color) => sharp({ create: { width: w, height: h, channels: 3, background: color } }).jpeg().toBuffer();
+
+async function fixture() {
+  const inline = (await jpeg(40, 30, '#c33')).toString('base64');
+  return {
+    settings: { fobPassword: 'secret-fob', workerToken: 'tok-in-settings', claudeKey: 'k-claude' },
+    notepad: 'a private note',
+    clients: [
+      { id: 'c1', name: 'Dealer One', country: 'UAE' },
+      { id: 'c2', name: 'Buyer Two' },
+    ],
+    londonStock: [
+      {
+        id: 'L1', stockNumber: '1668', brand: 'Rolex', watchModel: 'Lady-Datejust', status: 'moved',
+        movements: [{ id: 'm1', ts: 1760000000000, moveType: 'dubai', destination: 'Dubai', carrier: 'by hand' }],
+      },
+    ],
+    dubaiStock: [
+      {
+        id: 'D1', stockNumber: '1668', brand: 'Rolex', watchModel: 'Lady-Datejust', status: 'current', inOffice: true,
+        receivedAt: 1760100000000, vaultPin: '9911',
+        photos: [`data:image/jpeg;base64,${inline}`, `${base}/photos/p1.jpg`],
+      },
+      { id: 'D2', stockNumber: '1700', brand: 'Patek Philippe', status: 'current', polish: { status: 'at_polish', sentTo: 'Polisher X', sentDate: '2026-10-01' } },
+    ],
+    hkStock: [],
+    safeStock: [],
+    soldStocks: [],
+    readyForDelivery: [],
+    incomings: [
+      { id: 'I1', stockNumber: '1900', brand: 'Rolex', reference: 'GMT', supplier: 'Dealer One', status: 'pending', eta: '2026-11-02', costAmount: 9000, costCurrency: 'USD' },
+      { id: 'I2', stockNumber: '1950', brand: 'Tudor', supplier: 'Dealer One', status: 'pending' },
+    ],
+    shipments: [
+      {
+        id: 'S1', stockNumber: '1668, 1700', date: '2026-10-20', fromText: 'Dubai', toClientId: 'c2', tracking: '7777', status: 'pending',
+        costAmount: 300, costCurrency: 'USD',
+        fedex: { lastStatus: { status: 'Clearance delay - Import', derivedCode: 'CD', location: 'LONDON GB' } }, fedexUpdatedAt: 1761000000000,
+      },
+      { id: 'S2', stockNumber: '-', items: 'Spare straps', status: 'delivered' },
+    ],
+    logisticCosts: [
+      { id: 'C1', stockNumber: '1668,1700', title: 'Courier', amount: 200, currency: 'AED', date: '2026-10-20', shipmentId: 'S1' },
+      { id: 'C2', stockNumber: '1668', title: 'Insurance', amount: 50, currency: 'USD', date: '2026-10-21' },
+      { id: 'C3', stockNumber: '1668', title: 'From a trip', amount: 999, currency: 'USD', tripId: 'T1' },
+    ],
+    personTrips: [
+      {
+        id: 'T1', personName: 'Kashan', fromLocation: 'Dubai', toLocation: 'London', startDate: '2026-10-25', status: 'in_progress',
+        stockIds: ['dubai-D1', 'dubai-D2'], costs: [{ id: 'tc1', category: 'Flight', amount: 1000, currency: 'GBP' }],
+      },
+    ],
+    goldSoukTasks: Array.from({ length: 15 }, (_, i) => ({ id: `g${i}`, title: `Task ${i}` })),
+    activity: [{ id: 'a1', text: 'Shipment created', ts: 1761000000000 }],
+    someNewList: [{ id: 'n1', title: 'A list the catalog does not know yet' }],
+  };
+}
+
+before(async () => {
+  const photo = await jpeg(60, 40, '#3a6');
+  worker = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://x');
+    if (url.pathname.startsWith('/api/')) {
+      if (req.headers['x-worker-token'] !== 'vault-key') {
+        res.statusCode = 401;
+        return res.end('{"error":"Unauthorized"}');
+      }
+      res.setHeader('Content-Type', 'application/json');
+      if (url.pathname === '/api/state') return res.end(JSON.stringify({ data: state }));
+      if (url.pathname === '/api/vault-photos') return res.end('{"data":{}}');
+      if (url.pathname === '/api/version') return res.end('{"version":1}');
+    }
+    if (url.pathname === '/photos/p1.jpg') {
+      res.setHeader('Content-Type', 'image/jpeg');
+      return res.end(photo);
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise((r) => worker.listen(0, '127.0.0.1', r));
+  base = `http://127.0.0.1:${worker.address().port}`;
+  state = await fixture();
+
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-lg-'));
+  Object.assign(process.env, {
+    DATABASE_URL: DB,
+    DATA_DIR: dataDir,
+    VAULT_URL: `${base}/api/state`,
+    VAULT_TOKEN: 'vault-key',
+    CHRONOKEY_USERNAME: '',
+    CHRONOKEY_PASSWORD: '',
+    ADMIN_EMAIL: 'boss@example.com',
+    ADMIN_PASSWORD: 'admin-password-1',
+    SYNC: 'off',
+  });
+  const reset = new pg.Client({ connectionString: DB });
+  await reset.connect();
+  await reset.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+  await reset.end();
+
+  m = {
+    db: await import('../src/db/index.js'),
+    sync: await import('../src/import/logistics/sync.js'),
+    lg: await import('../src/logistics/index.js'),
+    situation: await import('../src/logistics/situation.js'),
+    kinds: await import('../src/logistics/kinds.js'),
+  };
+  await (await import('../src/db/migrate.js')).migrate({ log: () => {} });
+  await (await import('../src/auth/index.js')).ensureFirstAdmin(() => {});
+  db = m.db.query;
+  server = (await import('../src/web/server.js')).createServer().listen(0);
+  api = `http://127.0.0.1:${server.address().port}`;
+});
+
+after(async () => {
+  server.close();
+  worker.close();
+  await m.db.pool.end();
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+const item = async (kind, sourceId) => (await db('SELECT * FROM logistics_items WHERE kind = $1 AND source_id = $2', [kind, sourceId])).rows[0];
+const events = async (id) => (await db('SELECT * FROM logistics_events WHERE item_id = $1 ORDER BY id', [id])).rows;
+
+/* ── pure rules ── */
+
+test('stock numbers: lists, "#", the "-" placeholder and SHIP- stand-ins', () => {
+  const { stockList } = m.kinds;
+  assert.deepEqual(stockList('1668, 1700 ;\n#1801'), ['1668', '1700', '1801']);
+  assert.deepEqual(stockList('-'), []);
+  assert.deepEqual(stockList('SHIP-12'), []);
+  assert.deepEqual(stockList(['1668', '1668', { stockNumber: '1700' }]), ['1668', '1700']);
+});
+
+test('moments: milliseconds, days and the app’s DD/MM/YYYY all read', () => {
+  const { when } = m.situation;
+  assert.equal(when(1760000000000), 1760000000000);
+  assert.equal(when('2026-10-20'), Date.UTC(2026, 9, 20));
+  assert.equal(when('02/11/2026'), Date.UTC(2026, 10, 2));
+  assert.equal(when(''), null);
+});
+
+test('a shipment’s stage: the carrier knows better than a status set by hand', () => {
+  const { stage } = m.situation;
+  assert.equal(stage({ status: 'pending', tracking: '1', fedex: { lastStatus: { derivedCode: 'CD', status: 'x' } } }).key, 'customs');
+  assert.equal(stage({ status: 'pending', tracking: '1', fedex: { lastStatus: { delivered: true, status: 'Delivered' } } }).key, 'delivered');
+  assert.equal(stage({ status: 'pending', tracking: '1', dhl: { description: 'Shipment on hold — refused' } }).key, 'exception');
+  assert.equal(stage({ status: 'cancelled', tracking: '1' }).key, 'cancelled');
+  assert.equal(stage({ status: 'pending' }).key, 'no_tracking');
+});
+
+/* ── the copy ── */
+
+test('every list is copied — its settings, passwords and notes never are', async () => {
+  const s = await m.sync.syncLogistics();
+  // 2 clients, 3 places' rows, 2 incomings, 2 shipments, 3 costs, 1 trip, 15 tasks, 1 activity line, 1 new list.
+  assert.equal(s.created, 30, JSON.stringify(s));
+  const kinds = (await db('SELECT DISTINCT kind FROM logistics_items')).rows.map((r) => r.kind);
+  assert.ok(!kinds.includes('settings') && !kinds.includes('notepad'));
+  assert.ok(kinds.includes('someNewList'), 'a list the catalog does not know yet is kept too');
+  const everything = JSON.stringify((await db('SELECT data FROM logistics_items UNION ALL SELECT data FROM logistics_records')).rows);
+  for (const secret of ['secret-fob', 'tok-in-settings', 'k-claude', '9911', 'a private note']) {
+    assert.ok(!everything.includes(secret), `${secret} is not copied`);
+  }
+});
+
+test('stock numbers are split, placeholders skipped, and a trip’s row ids found', async () => {
+  assert.deepEqual((await item('shipments', 'S1')).stock_nos, ['1668', '1700']);
+  assert.deepEqual((await item('shipments', 'S2')).stock_nos, [], '"-" is no watch');
+  assert.deepEqual((await item('personTrips', 'T1')).stock_nos.sort(), ['1668', '1700'], 'dubai-D1, dubai-D2');
+});
+
+test('pictures inside records become files; the worker’s own are copied too', async () => {
+  const d1 = await item('dubaiStock', 'D1');
+  assert.match(d1.data.photos[0], /^lgfile:\d+$/, 'the inline picture');
+  assert.match(d1.data.photos[1], /^lgfile:\d+$/, 'the one on the worker');
+  const raw = (await db("SELECT data FROM logistics_records WHERE kind = 'dubaiStock' AND source_id = 'D1'")).rows[0].data;
+  assert.equal(raw.photos[1], `${base}/photos/p1.jpg`, 'the raw record keeps the address it gave');
+  assert.equal((await db('SELECT count(*)::int AS n FROM logistics_files')).rows[0].n, 2);
+});
+
+test('an unchanged document changes nothing — and leaves no run behind', async () => {
+  const runs = (await db("SELECT count(*)::int AS n FROM import_runs WHERE source = 'logistics'")).rows[0].n;
+  const evs = (await db('SELECT count(*)::int AS n FROM logistics_events')).rows[0].n;
+  const s = await m.sync.syncLogistics();
+  assert.equal(s.created + s.updated + s.gone, 0);
+  assert.equal(s.unchanged, s.records);
+  assert.equal((await db('SELECT count(*)::int AS n FROM logistics_events')).rows[0].n, evs);
+  assert.equal((await db("SELECT count(*)::int AS n FROM import_runs WHERE source = 'logistics'")).rows[0].n, runs);
+});
+
+test('the app’s changes come through, except a field somebody edited here', async () => {
+  const s1 = await item('shipments', 'S1');
+  await m.lg.updateItem(s1.id, { tracking: 'TYPED-HERE' }, null);
+  state.shipments[0].status = 'in_transit';
+  state.shipments[0].tracking = '8888';
+  await m.sync.syncLogistics();
+  const after1 = await item('shipments', 'S1');
+  assert.equal(after1.data.status, 'in_transit', 'not locked: the app wins');
+  assert.equal(after1.data.tracking, 'TYPED-HERE', 'locked: the person wins');
+  assert.deepEqual(after1.locked_fields, ['tracking']);
+  const sync = (await events(s1.id)).find((e) => e.action === 'sync');
+  assert.deepEqual(sync.changes.status, ['pending', 'in_transit']);
+  assert.equal(sync.changes.tracking, undefined, 'a locked field is no sync change');
+
+  await m.lg.unlockField(s1.id, 'tracking', null);
+  const after2 = await item('shipments', 'S1');
+  assert.equal(after2.data.tracking, '8888', 'handed back: the app’s value at once');
+  assert.deepEqual(after2.locked_fields, []);
+});
+
+test('a record the app drops is deleted softly, and comes back with it; a person’s deletion stands', async () => {
+  const [inc] = state.incomings.splice(0, 1);
+  await m.sync.syncLogistics();
+  const gone = await item('incomings', 'I1');
+  assert.ok(gone.deleted_at && gone.source_gone_at, 'deleted by the sync');
+  state.incomings.push(inc);
+  await m.sync.syncLogistics();
+  assert.equal((await item('incomings', 'I1')).deleted_at, null, 'restored when listed again');
+
+  const c2 = await item('logisticCosts', 'C2');
+  await m.lg.deleteItem(c2.id, null);
+  const [cost] = state.logisticCosts.splice(1, 1);
+  await m.sync.syncLogistics();
+  state.logisticCosts.splice(1, 0, cost);
+  await m.sync.syncLogistics();
+  assert.ok((await item('logisticCosts', 'C2')).deleted_at, 'deleted here: stays deleted');
+  await m.lg.deleteItem(c2.id, null, { restore: true });
+});
+
+test('a list that loses most of its records at once is a broken read, not a clear-out', async () => {
+  const kept = state.goldSoukTasks;
+  state.goldSoukTasks = kept.slice(0, 3);
+  const s = await m.sync.syncLogistics();
+  assert.equal(s.refused.goldSoukTasks, 12);
+  assert.equal((await db("SELECT count(*)::int AS n FROM logistics_items WHERE kind = 'goldSoukTasks' AND deleted_at IS NULL")).rows[0].n, 15);
+  state.goldSoukTasks = kept;
+});
+
+test('an activity line falling off the app’s last 200 is not a deletion', async () => {
+  state.activity = [{ id: 'a2', text: 'Newer line', ts: 1762000000000 }];
+  await m.sync.syncLogistics();
+  assert.equal((await item('activity', 'a1')).deleted_at, null);
+});
+
+test('the app’s answer without its lists is refused, not read as an empty app', async () => {
+  const saved = state;
+  state = { settings: {} };
+  await assert.rejects(m.sync.syncLogistics(), /without its lists/);
+  state = saved;
+  assert.equal((await db("SELECT count(*)::int AS n FROM logistics_items WHERE deleted_at IS NOT NULL AND kind = 'shipments'")).rows[0].n, 0);
+});
+
+/* ── one watch ── */
+
+test('where a watch is: its place, what is moving it, its history and what moving it cost', async () => {
+  const { rows } = await db("INSERT INTO watches(stock_no, origin, status) VALUES ('1668','manual','in_stock'), ('1700','manual','in_stock') RETURNING id, stock_no");
+  const id = rows.find((r) => r.stock_no === '1668').id;
+  const w = await m.lg.forWatch(id);
+  assert.equal(w.now.headline, 'In Dubai');
+  assert.match(w.now.detail, /office/);
+  const ship = w.now.overlays.find((o) => o.text.startsWith('On a shipment'));
+  assert.ok(ship, JSON.stringify(w.now.overlays));
+  assert.match(ship.text, /Dubai → Buyer Two/, 'the client’s name, not its id');
+  assert.match(ship.text, /At customs/, 'FedEx CD');
+  assert.ok(w.now.overlays.some((o) => /Kashan’s trip/.test(o.text)));
+  assert.ok(w.timeline.some((e) => e.text === 'Moved to Dubai'), 'the moved London row’s movement');
+
+  // The logistics app's own costing, line for line.
+  assert.deepEqual(w.costs.totals, { AED: 100, USD: 50, GBP: 500 }, JSON.stringify(w.costs.lines));
+  assert.ok(!w.costs.lines.some((l) => l.source === 'Shipment'), 'S1’s own cost is already the Courier line');
+
+  const other = await m.lg.forWatch(rows.find((r) => r.stock_no === '1700').id);
+  assert.equal(other.now.headline, 'At polish with Polisher X');
+});
+
+/* ── the API ── */
+
+function client() {
+  let cookie = '';
+  const call = async (method, url, body, { csrf = true } = {}) => {
+    const headers = {};
+    if (cookie) headers.Cookie = cookie;
+    if (csrf) headers['X-Requested-With'] = 'masterapp';
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await fetch(api + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    const type = res.headers.get('content-type') || '';
+    return { status: res.status, body: type.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer()), type };
+  };
+  return { call, login: (email, password) => call('POST', '/api/login', { email, password }) };
+}
+
+test('the API: read by anyone signed in, changed by editors, from our own page only', async () => {
+  const admin = client();
+  await admin.login('boss@example.com', 'admin-password-1');
+  await admin.call('POST', '/api/users', { email: 'ed@example.com', role: 'editor', password: 'editor-password' });
+  await admin.call('POST', '/api/users', { email: 'vi@example.com', role: 'viewer', password: 'viewer-password' });
+  const editor = client();
+  const viewer = client();
+  await editor.login('ed@example.com', 'editor-password');
+  await viewer.login('vi@example.com', 'viewer-password');
+
+  const meta = (await viewer.call('GET', '/api/meta')).body;
+  assert.ok(meta.logistics.groups.some((g) => g.key === 'shipments'));
+  assert.ok(meta.logistics.kinds.some((k) => k.key === 'shipments' && k.fields.length));
+
+  assert.equal((await client().call('GET', '/api/logistics/items')).status, 401, 'signed out reads nothing');
+  const list = (await viewer.call('GET', '/api/logistics/items?group=shipments')).body;
+  assert.ok(list.items.some((i) => i.kind === 'shipments' && i.summary.sub.includes('Buyer Two')));
+  assert.ok(list.kinds.some((k) => k.kind === 'shipments' && k.n === 2));
+  const found = (await viewer.call('GET', '/api/logistics/items?q=Polisher')).body;
+  assert.deepEqual(found.items.map((i) => i.source_id), ['D2'], 'searched across every field');
+
+  const s1 = await item('shipments', 'S1');
+  assert.equal((await viewer.call('PATCH', `/api/logistics/items/${s1.id}`, { status: 'delivered' })).status, 403, 'a viewer cannot edit');
+  assert.equal((await editor.call('PATCH', `/api/logistics/items/${s1.id}`, { status: 'delivered' }, { csrf: false })).status, 403, 'no header, no write');
+  assert.equal((await editor.call('PATCH', `/api/logistics/items/${s1.id}`, { status: 'lost' })).status, 400, 'not one of the statuses');
+  assert.equal((await editor.call('PATCH', `/api/logistics/items/${s1.id}`, { fedex: { x: 1 } })).status, 400, 'a nested record is not edited loose');
+  assert.equal((await editor.call('PATCH', `/api/logistics/items/${s1.id}`, { constructor: 'x' })).status, 400);
+  const e = await editor.call('PATCH', `/api/logistics/items/${s1.id}`, { status: 'delivered', deliveredAt: '2026-10-24', costAmount: '1,250.50' });
+  assert.equal(e.status, 200, JSON.stringify(e.body));
+  const got = (await viewer.call('GET', `/api/logistics/items/${s1.id}`)).body;
+  assert.equal(got.data.costAmount, 1250.5);
+  assert.deepEqual(got.locked_fields.sort(), ['costAmount', 'deliveredAt', 'status']);
+  assert.ok((await viewer.call('GET', `/api/logistics/items/${s1.id}/events`)).body.events.some((x) => x.action === 'update'));
+
+  assert.equal((await editor.call('POST', '/api/logistics/items', { kind: 'settings', data: {} })).status, 400);
+  const made = await editor.call('POST', '/api/logistics/items', { kind: 'logisticCosts', data: { title: 'Taxi', stockNumber: '1668', amount: '40', currency: 'gbp', date: '2026-10-24' } });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  const mine = (await viewer.call('GET', `/api/logistics/items/${made.body.id}`)).body;
+  assert.equal(mine.origin, 'manual');
+  assert.deepEqual(mine.stock_nos, ['1668']);
+  assert.equal(mine.data.currency, 'GBP');
+  assert.ok(mine.watches.some((w) => w.stock_no === '1668'), 'linked to our watch by its stock number');
+  assert.equal((await editor.call('DELETE', `/api/logistics/items/${made.body.id}`)).status, 200);
+  assert.equal((await editor.call('POST', `/api/logistics/items/${made.body.id}/restore`)).status, 200);
+
+  const watchId = (await db("SELECT id FROM watches WHERE stock_no = '1668'")).rows[0].id;
+  const wl = (await viewer.call('GET', `/api/watches/${watchId}/logistics`)).body;
+  assert.equal(wl.now.headline, 'In Dubai');
+  assert.ok(wl.as_of, 'says when the logistics app was last read');
+  assert.equal(wl.costs.totals.GBP, 540, 'the taxi added here counts too');
+
+  const ov = (await viewer.call('GET', '/api/logistics/overview')).body;
+  assert.ok(Array.isArray(ov.shipments) && Array.isArray(ov.recent));
+
+  const fileId = Number((await item('dubaiStock', 'D1')).data.photos[0].slice('lgfile:'.length));
+  assert.equal((await client().call('GET', `/api/logistics/files/${fileId}`)).status, 401, 'files are behind the sign-in');
+  const pic = await viewer.call('GET', `/api/logistics/files/${fileId}?thumb=1`);
+  assert.equal(pic.status, 200);
+  assert.equal(pic.type, 'image/jpeg');
+});

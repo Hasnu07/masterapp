@@ -156,7 +156,26 @@ function fieldsOf(w, list) {
   };
 }
 
-async function fetchState() {
+/*
+ * The document is read ONCE per pass: the vault's lists and the logistics
+ * records are two readings of the same multi-megabyte download, so the second
+ * step of a pass (reuse) takes the copy the first one fetched.
+ */
+let cached = null;
+const REUSE_MS = 120_000;
+
+/** The worker's version stamp (a number that changes on every save) — a few bytes, to see whether anything changed. */
+export async function fetchVersion() {
+  const json = await getJson(new URL('/api/version', config.vault.url).href);
+  return json?.version ?? null;
+}
+
+export function forgetState() {
+  cached = null;
+}
+
+export async function fetchState({ reuse = false } = {}) {
+  if (reuse && cached && Date.now() - cached.at < REUSE_MS) return cached.state;
   const json = await getJson(config.vault.url);
   const state = json?.data || json;
   let photoMap = {};
@@ -173,6 +192,7 @@ async function fetchState() {
       if (Array.isArray(urls)) w.vaultPhotos = urls;
     }
   }
+  cached = { at: Date.now(), state };
   return state;
 }
 
@@ -262,12 +282,12 @@ async function copyPhotos(watchId, urls) {
   return copied;
 }
 
-export async function syncVault({ user, photos = true } = {}) {
+export async function syncVault({ user, photos = true, reuse = false } = {}) {
   if (!config.vault.configured) throw new Error('The Watch vault is not configured (VAULT_URL)');
   const run = await startRun('vault', 'full', user);
   const stats = { records: 0, stockNumbers: 0, created: 0, updated: 0, unchanged: 0, noStockNumber: 0, photos: 0 };
   try {
-    const state = await fetchState();
+    const state = await fetchState({ reuse });
     if (!LISTS.some((l) => Array.isArray(state?.[l.key]))) {
       throw new Error('The vault answered without any of its stock lists — not reading that as an empty vault');
     }

@@ -7,6 +7,7 @@ import * as watches from '../watches/index.js';
 import * as rates from '../rates/index.js';
 import * as clients from '../clients/index.js';
 import * as expenses from '../expenses/index.js';
+import * as logistics from '../logistics/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -174,11 +175,13 @@ export function createServer() {
       clientFields: clients.CLIENT_FIELDS,
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
+      logistics: logistics.catalog(),
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
         chronokey: config.chronokey.configured,
         vault: config.vault.configured && Boolean(config.vault.token),
+        logistics: config.logistics.enabled && config.vault.configured && Boolean(config.vault.token),
       },
     });
   });
@@ -470,6 +473,67 @@ export function createServer() {
     })
   );
 
+  /* ── logistics ───────────────────────────────────────────────── */
+
+  app.get('/api/logistics/overview', need('viewer'), wrap(async (req, res) => res.json(await logistics.overview())));
+  app.get('/api/logistics/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await logistics.clientChoices() })));
+  app.get('/api/logistics/items', need('viewer'), wrap(async (req, res) => res.json(await logistics.listItems(req.query))));
+  app.get('/api/logistics/items/:id', need('viewer'), wrap(async (req, res) => res.json(await logistics.getItem(req.params.id))));
+  app.get(
+    '/api/logistics/items/:id/events',
+    need('viewer'),
+    wrap(async (req, res) => res.json({ events: await logistics.itemEvents(req.params.id) }))
+  );
+  app.post(
+    '/api/logistics/items',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await logistics.createItem(String(req.body?.kind || ''), req.body?.data || {}, req.user) }))
+  );
+  app.patch(
+    '/api/logistics/items/:id',
+    need('editor'),
+    wrap(async (req, res) => res.json(await logistics.updateItem(req.params.id, req.body || {}, req.user)))
+  );
+  app.post(
+    '/api/logistics/items/:id/unlock',
+    need('editor'),
+    wrap(async (req, res) => {
+      await logistics.unlockField(req.params.id, String(req.body?.field || ''), req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.delete(
+    '/api/logistics/items/:id',
+    need('editor'),
+    wrap(async (req, res) => {
+      await logistics.deleteItem(req.params.id, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.post(
+    '/api/logistics/items/:id/restore',
+    need('editor'),
+    wrap(async (req, res) => {
+      await logistics.deleteItem(req.params.id, req.user, { restore: true });
+      res.json({ ok: true });
+    })
+  );
+  /* Behind the sign-in: customs papers, passports and serials are in these. */
+  app.get(
+    '/api/logistics/files/:fid',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await logistics.file(req.params.fid, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      if (req.query.download === '1') res.attachment(`logistics-${Number(req.params.fid)}.${f.type.split('/')[1]}`);
+      res.send(f.buffer);
+    })
+  );
+  app.get('/api/watches/:id/logistics', need('viewer'), wrap(async (req, res) => res.json(await logistics.forWatch(req.params.id))));
+
   /* ── import ──────────────────────────────────────────────────── */
 
   app.get(
@@ -487,6 +551,7 @@ export function createServer() {
                  (SELECT count(*)::int FROM ck_records WHERE detail_at IS NOT NULL AND error IS NULL) AS ck_details,
                  (SELECT count(*)::int FROM ck_records WHERE error IS NOT NULL) AS ck_errors,
                  (SELECT count(*)::int FROM vault_records) AS vault_records,
+                 (SELECT count(*)::int FROM logistics_items WHERE deleted_at IS NULL) AS logistics_items,
                  (SELECT count(*)::int FROM watch_photos WHERE deleted_at IS NULL) AS photos,
                  (SELECT count(*)::int FROM watches WHERE deleted_at IS NULL AND purchase_price > 0
                      AND purchase_currency = '') AS currency_not_stated`),
@@ -499,6 +564,7 @@ export function createServer() {
           chronokey: config.chronokey.configured,
           vault: config.vault.configured && Boolean(config.vault.token),
           sync: config.sync.enabled,
+          logistics: config.logistics.enabled,
         },
       });
     })
@@ -509,10 +575,17 @@ export function createServer() {
    * Import page must not copy Chrono Key over it either. (The command line,
    * `npm run import`, still can — deliberately.)
    */
-  const syncOn = (req, res, next) =>
-    config.sync.enabled
+  const syncOn = (req, res, next) => {
+    // The logistics app has its own switch (LOGISTICS_SYNC): its switch-over need not be Chrono Key's.
+    if (req.body?.job === 'logistics') {
+      return config.logistics.enabled
+        ? next()
+        : res.status(409).json({ error: 'Logistics sync is off (LOGISTICS_SYNC=off): masterapp is the master for logistics' });
+    }
+    return config.sync.enabled
       ? next()
       : res.status(409).json({ error: 'Sync is off (SYNC=off): masterapp is the master — nothing is copied from Chrono Key or the vault' });
+  };
 
   app.post(
     '/api/import/csv',
@@ -537,7 +610,7 @@ export function createServer() {
       if (job.startsWith('chronokey') && !config.chronokey.configured) {
         return res.status(400).json({ error: 'Chrono Key is not configured — set CHRONOKEY_USERNAME and CHRONOKEY_PASSWORD' });
       }
-      if (job === 'vault' && !(config.vault.configured && config.vault.token)) {
+      if ((job === 'vault' || job === 'logistics') && !(config.vault.configured && config.vault.token)) {
         return res.status(400).json({ error: 'The Watch vault needs its key — set VAULT_TOKEN' });
       }
       startJob(job, req.user);
