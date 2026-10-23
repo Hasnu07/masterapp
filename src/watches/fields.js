@@ -89,7 +89,9 @@ export const PAYMENT_KINDS = [
   { key: 'paypal', label: 'PayPal / Chrono24' },
 ];
 
-export const FIELD = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
+// No prototype: a key from a request ("constructor", "toString") must not
+// pass as a field — field names go into SQL as column names.
+export const FIELD = Object.assign(Object.create(null), Object.fromEntries(FIELDS.map((f) => [f.key, f])));
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 

@@ -24,7 +24,8 @@ export const EXPENSE_FIELDS = [
   { key: 'cost_eur', label: 'Cost in EUR', type: 'money', fixedCurrency: 'EUR' },
   { key: 'exclude_from_profit', label: 'Left out of profit (Loan Book)', type: 'bool' },
 ];
-const FIELD = Object.fromEntries(EXPENSE_FIELDS.map((f) => [f.key, f]));
+// No prototype, as watches' FIELD: "constructor" from a request is not a column.
+const FIELD = Object.assign(Object.create(null), Object.fromEntries(EXPENSE_FIELDS.map((f) => [f.key, f])));
 export const MAX_FILES = 10;
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });

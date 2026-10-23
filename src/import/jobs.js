@@ -54,10 +54,30 @@ export function startJob(name, user) {
       await syncVault({ user });
     },
   };
-  const fn = jobs[name];
+  const fn = Object.hasOwn(jobs, name) ? jobs[name] : null;
   if (!fn) throw Object.assign(new Error(`Unknown job ${name}`), { status: 400 });
   if (current) throw Object.assign(new Error(`An import is already running (${current.name})`), { status: 409 });
   runJob(name, fn).catch((err) => console.error(`[import] ${name}: ${err.message}`));
+}
+
+/*
+ * The daily re-read of unsold and recent watch pages is due when none went
+ * through in the last day. A pass that read its pages with a few failing
+ * (`ok` false, no error of its own) counts: those pages are retried by the
+ * rolling pass. Counting only a pass with no failure at all ran the ~200 pages
+ * every 15 minutes while any one page kept failing. One that stopped (a
+ * rejected sign-in) or lost most of its pages (Chrono Key down) does not count.
+ */
+export async function activeDetailsDue(now = Date.now()) {
+  // The counts are read only where they are numbers: a cast that failed here would stop every pass.
+  const { rows } = await query(
+    `SELECT max(started_at) AS at FROM import_runs
+      WHERE source = 'chronokey' AND mode = 'details-active' AND finished_at IS NOT NULL AND error IS NULL
+        AND COALESCE(CASE WHEN jsonb_typeof(stats->'failed') = 'number' THEN (stats->>'failed')::numeric END, 0) * 10
+            <= COALESCE(CASE WHEN jsonb_typeof(stats->'todo') = 'number' THEN (stats->>'todo')::numeric END, 0)`
+  );
+  const last = rows[0]?.at ? new Date(rows[0].at).getTime() : 0;
+  return now - last > config.sync.fullEveryHours * 3600_000;
 }
 
 /** The light pass: what is new on Chrono Key, and the vault. */
@@ -73,13 +93,7 @@ async function cycle() {
     steps.push(['new details', () => syncDetails({ mode: 'new', limit: 200 })]);
     // 40 watch pages a pass, the longest unread first: every page refreshed within about ten hours.
     steps.push(['rolling details', () => syncDetails({ mode: 'rolling', limit: 40 })]);
-    const { rows } = await query(
-      "SELECT max(started_at) AS at FROM import_runs WHERE source = 'chronokey' AND mode = 'details-active' AND ok"
-    );
-    const last = rows[0]?.at ? new Date(rows[0].at).getTime() : 0;
-    if (Date.now() - last > config.sync.fullEveryHours * 3600_000) {
-      steps.push(['active details', () => syncDetails({ mode: 'active' })]);
-    }
+    if (await activeDetailsDue()) steps.push(['active details', () => syncDetails({ mode: 'active' })]);
   }
   if (config.vault.configured && config.vault.token) steps.push(['vault', () => syncVault()]);
   for (const [name, fn] of steps) {

@@ -368,7 +368,11 @@ time with a pause; one job at a time across processes (Postgres advisory
 lock). First full read of every watch page ≈ 1,700 pages → a couple of hours,
 resumable. After that the 15-minute pass reads the list (one request) and only
 NEW watch pages; once a day it re-reads unsold and recently sold watches. A
-failed sign-in stops the run rather than failing 1,700 times.
+failed sign-in stops the run rather than failing 1,700 times. That daily pass
+counts as done when it went through with at most a tenth of its pages failing
+(the rolling pass retries those) — counting only a flawless one re-read ~200
+pages every 15 minutes while any single page kept failing (fixed 23 Oct 2026).
+A CSV upload takes the same lock.
 
 An EMPTY answer is never trusted as "nothing there" — the ported client checks
 the session first (InvoiceWEB lost hours to a dead session reading as an empty
@@ -383,6 +387,36 @@ viewer (reads), editor (+ add/edit/delete watches and photos), admin
 (stored hashed), HttpOnly SameSite=Lax cookie, and every non-GET API call must
 carry `X-Requested-With: masterapp`. Ten sign-in attempts per ten minutes per
 address. An admin cannot demote or disable themselves.
+
+The console page carries a Content-Security-Policy (`server.js`,
+`PAGE_POLICY`): scripts only from the app itself, so a value that ever slipped
+past `esc()` still cannot run — keep the console free of inline scripts and
+`on…=` handlers. Not on the files the API serves: a payment copy's PDF opens
+on its own, and a policy there can stop the browser's PDF viewer. HSTS in
+production. Field names from a request are looked up in prototype-free maps
+(`FIELD`, `CLIENT_FIELD`): they become column names in SQL.
+
+## Skills
+
+`.claude/skills/` holds ten skills from
+[jeffallan/claude-skills](https://github.com/jeffallan/claude-skills), copied
+unchanged (MIT; source commit in `.claude/skills/LICENSE`). They are general
+advice: where they disagree with this file, this file wins — no new
+dependencies for what they suggest (helmet, zod, bcrypt), and migrations run
+inside a transaction at start-up, so `CREATE INDEX CONCURRENTLY` is out.
+
+| Skill | Use it when |
+|---|---|
+| `security-reviewer` | auditing for vulnerabilities: auth, sessions, uploads, secrets |
+| `secure-code-guardian` | changing sign-in, roles, input handling or headers |
+| `code-reviewer` | reviewing a change or a PR before it goes to `main` |
+| `javascript-pro` | writing or debugging the Node code and the console (ESM, async) |
+| `postgres-pro` | a slow query, an index, jsonb, EXPLAIN — verify on realistic data |
+| `sql-pro` | writing or reshaping a query or a migration |
+| `api-designer` | adding or changing an `/api/…` endpoint |
+| `test-master` | adding tests in `test/` (node:test, real Postgres, stand-ins) |
+| `debugging-wizard` | a sync or import that misbehaves: logs, `import_runs`, hypotheses |
+| `devops-engineer` | DigitalOcean App Platform, R2, deploys (see `HOSTING.md`) |
 
 ## Running
 

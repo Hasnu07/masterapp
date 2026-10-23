@@ -37,7 +37,8 @@ export const CLIENT_FIELDS = [
   { key: 'country', label: 'Country', type: 'text' },
   { key: 'notes', label: 'Notes', type: 'longtext' },
 ];
-const CLIENT_FIELD = Object.fromEntries(CLIENT_FIELDS.map((f) => [f.key, f]));
+// No prototype, as watches' FIELD: "constructor" from a request is not a column.
+const CLIENT_FIELD = Object.assign(Object.create(null), Object.fromEntries(CLIENT_FIELDS.map((f) => [f.key, f])));
 
 /* A watch's two client links, as they are named in watches.locked_fields. */
 export const LINKS = {
@@ -243,7 +244,7 @@ export async function updateClient(id, patch, user) {
  * set at once to what Chrono Key's grid says.
  */
 export async function linkWatch(watchId, role, clientId, user) {
-  const link = LINKS[role];
+  const link = Object.hasOwn(LINKS, role) ? LINKS[role] : null;
   if (!link) throw bad('Say purchase or sale');
   return tx(async (db) => {
     const { rows } = await db.query('SELECT * FROM watches WHERE id = $1 FOR UPDATE', [Number(watchId) || 0]);

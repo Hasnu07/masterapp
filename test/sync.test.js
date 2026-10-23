@@ -642,3 +642,26 @@ test('a wrong Chrono Key password and a wrong vault key are said, not read as em
   await assert.rejects(m.vault.syncVault({ photos: false }), /rejected its key/);
   config.vault.token = 'vault-key';
 });
+
+test('the daily re-read of unsold pages: a few pages failing do not make it due again every 15 minutes', async () => {
+  const { activeDetailsDue } = await import('../src/import/jobs.js');
+  await db("DELETE FROM import_runs WHERE mode = 'details-active'");
+  const run = (stats, { error = null, finished = true } = {}) =>
+    db(
+      `INSERT INTO import_runs(source, mode, started_at, finished_at, ok, stats, error)
+       VALUES ('chronokey', 'details-active', now() - interval '1 hour', ${finished ? 'now()' : 'NULL'}, $1, $2, $3)`,
+      [finished && !error && !stats.failed, stats, error]
+    );
+  assert.equal(await activeDetailsDue(), true, 'never read');
+  await run({ todo: 'many', failed: 'some' }, { error: 'odd stats' });
+  assert.equal(await activeDetailsDue(), true, 'a count that is not a number breaks nothing');
+  await run({ todo: 200, done: 200, failed: 200 });
+  assert.equal(await activeDetailsDue(), true, 'Chrono Key was down: every page failed');
+  await run({ todo: 200, done: 1, failed: 1 }, { error: 'Chrono Key rejected the sign-in' });
+  assert.equal(await activeDetailsDue(), true, 'the pass stopped');
+  await run({ todo: 200, done: 80 }, { finished: false });
+  assert.equal(await activeDetailsDue(), true, 'cut short by a deploy');
+  await run({ todo: 200, done: 200, failed: 3 });
+  assert.equal(await activeDetailsDue(), false, 'three pages failing is a pass done — the rolling pass retries them');
+  assert.equal(await activeDetailsDue(Date.now() + 25 * 3600_000), true, 'and due again a day later');
+});
