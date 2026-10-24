@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import multer from 'multer';
@@ -41,6 +42,30 @@ const cookieOf = (req, name) => {
 };
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+/*
+ * The console's build: one fingerprint of its files, taken at start-up.
+ *
+ * Reported 24 Oct 2026: after a deploy, a tab showed the new Overview's
+ * script on the old page — no styles for any of it. A page open across a
+ * deploy (or loaded while the old and new copies both answered) mixes the
+ * two, and the platform stamps every file 1 Jan 1980, so neither the date nor
+ * express's size-and-date ETag tells one version from the next (a fix that
+ * kept a file's size would never have reached a browser). So: the page asks
+ * for its scripts by this fingerprint (/app.js?v=…), kept for good under it;
+ * the page itself is never kept; and every API answer carries it, so a page
+ * left open sees a newer one and offers to reload.
+ */
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js'];
+function consolePage() {
+  const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+  const hash = crypto.createHash('sha256').update(html);
+  for (const f of CONSOLE_SCRIPTS) hash.update(fs.readFileSync(path.join(PUBLIC, f)));
+  const build = hash.digest('hex').slice(0, 12);
+  let page = html.replace('<meta charset="utf-8">', `<meta charset="utf-8">\n<meta name="build" content="${build}">`);
+  for (const f of CONSOLE_SCRIPTS) page = page.replace(`<script src="/${f}">`, `<script src="/${f}?v=${build}">`);
+  return { build, page };
+}
 
 /*
  * The console page's own policy: scripts only from here, so a value that ever
@@ -129,6 +154,7 @@ function giveBackAttempt({ keys, now }) {
 export const attemptKeys = () => [...attempts.keys()];
 
 export function createServer() {
+  const CONSOLE = consolePage();
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
@@ -159,6 +185,7 @@ export function createServer() {
    * another site cannot send.
    */
   app.use('/api', (req, res, next) => {
+    res.set('X-Masterapp-Build', CONSOLE.build);
     if (req.method !== 'GET' && req.method !== 'HEAD' && req.get('X-Requested-With') !== 'masterapp') {
       return res.status(403).json({ error: 'Refused: not sent by masterapp' });
     }
@@ -719,12 +746,23 @@ export function createServer() {
   /* ── the page ────────────────────────────────────────────────── */
 
   const page = (res) => res.set('Content-Security-Policy', PAGE_POLICY);
-  app.use(express.static(PUBLIC, { index: false, maxAge: 0, setHeaders: (res, file) => file.endsWith('.html') && page(res) }));
-  app.get('/{*page}', (req, res) => {
-    res.set('Cache-Control', 'no-cache');
+  const sendPage = (req, res) => {
+    res.set('Cache-Control', 'no-store');
     page(res);
-    res.sendFile(path.join(PUBLIC, 'index.html'));
-  });
+    res.type('html').send(CONSOLE.page);
+  };
+  app.get(['/', '/index.html'], sendPage);
+  // A script asked for by this build's fingerprint is kept for good; anything else is fetched again every time
+  // — no date or size-based ETag to answer "not modified" with an old copy.
+  app.use(
+    express.static(PUBLIC, {
+      index: false,
+      etag: false,
+      lastModified: false,
+      setHeaders: (res) => res.set('Cache-Control', res.req.query.v === CONSOLE.build ? 'public, max-age=31536000, immutable' : 'no-cache'),
+    })
+  );
+  app.get('/{*page}', sendPage);
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
