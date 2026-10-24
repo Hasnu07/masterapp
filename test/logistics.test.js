@@ -141,6 +141,7 @@ before(async () => {
     db: await import('../src/db/index.js'),
     sync: await import('../src/import/logistics/sync.js'),
     lg: await import('../src/logistics/index.js'),
+    lgc: await import('../src/logistics/clients.js'),
     situation: await import('../src/logistics/situation.js'),
     kinds: await import('../src/logistics/kinds.js'),
   };
@@ -326,6 +327,21 @@ test('two records the app gives one id are both kept — not one written over th
   await m.sync.syncLogistics();
   await m.sync.syncLogistics();
   assert.equal(await count(), before, 'the next passes change nothing');
+  delete state.hkSituation;
+});
+
+test('late, titles and changes in words: one rule for Late, no brand or reference twice, a block of details named', () => {
+  assert.equal(m.lg.lateSince({ status: 'pending', deliveryDate: '2020-01-01' }), '2020-01-01');
+  assert.equal(m.lg.lateSince({ status: 'in_transit', deliveryDate: '01/01/2020' }), '2020-01-01', 'day first');
+  assert.equal(m.lg.lateSince({ status: 'pending', deliveryDate: 'Oct 30' }), null, 'words are no date');
+  assert.equal(m.lg.lateSince({ status: 'delivered', deliveryDate: '2020-01-01' }), null);
+  const ctx = { client: () => '', route: () => '', stage: () => ({}) };
+  assert.equal(m.kinds.KIND.dubaiStock.summary({ brand: 'Rolex', watchModel: 'Rolex Daytona', watchReference: '116500LN' }, ctx).title, 'Rolex Daytona 116500LN');
+  assert.equal(m.kinds.KIND.readyForDelivery.summary({ brand: 'Patek Philippe', watchModel: '5740/1G-001', watchReference: '5740/1G-001' }, ctx).title, 'Patek Philippe 5740/1G-001');
+  assert.deepEqual(
+    m.lg.readableChanges({ polish: [null, { sentTo: 'Sina Star' }], trackingNumber: ['', '7712'], deliveredAt: [null, 1792827369915], movements: [[], [{ a: 1 }]] }),
+    { polish: [null, '(details)'], trackingNumber: ['', '7712'], deliveredAt: [null, 1792827369915] }
+  );
 });
 
 test('the vault’s photo store is not part of a logistics record', async () => {
@@ -454,6 +470,21 @@ test('the overview’s figures are the logistics app’s own: deliveries, access
   const ids = o.recent.map((e) => e.item.id);
   assert.equal(ids.length, new Set(ids).size, 'each record once');
   assert.ok(o.recent.every((e) => !Object.keys(e.changes).some((k) => /fedex|UpdatedAt/.test(k))));
+  // One record with two real changes and carrier noise between; another with nothing but carrier noise.
+  const add = async (kind) => (await db("INSERT INTO logistics_items(kind, data, origin) VALUES ($1, '{\"status\":\"pending\"}', 'manual') RETURNING id", [kind])).rows[0].id;
+  const [real, noisy] = [await add('shipments'), await add('shipments')];
+  const ev = (id, at, changes) => db("INSERT INTO logistics_events(item_id, at, source, action, changes) VALUES ($1, $2, 'logistics', 'sync', $3)", [id, at, changes]);
+  await ev(real, '2030-01-01T10:00Z', { status: ['pending', 'in_transit'] });
+  await ev(real, '2030-01-01T11:00Z', { fedex: [null, { s: 1 }], fedexUpdatedAt: [1, 2] });
+  await ev(real, '2030-01-01T12:00Z', { status: ['in_transit', 'delivered'] });
+  await ev(noisy, '2030-01-01T13:00Z', { fedex: [null, { s: 2 }], fedexUpdatedAt: [2, 3] });
+  const feed = (await m.lg.overview()).recent;
+  const line = feed.find((e) => e.item.id === real);
+  assert.deepEqual([line.changes, line.earlier], [{ status: ['in_transit', 'delivered'] }, 1], 'its newest change, and one earlier');
+  assert.ok(!feed.some((e) => e.item.id === noisy), 'carrier noise alone is no change');
+  assert.ok(feed.length <= 12);
+  await db('DELETE FROM logistics_events WHERE item_id = ANY($1)', [[real, noisy]]);
+  await db('DELETE FROM logistics_items WHERE id = ANY($1)', [[real, noisy]]);
 
   // A delivery date typed as words is no date to be late against (guessed, "Oct 30" is 2001).
   const typed = (await db(`INSERT INTO logistics_items(kind, data, origin) VALUES ('shipments', '{"status":"pending","deliveryDate":"Oct 30"}', 'manual') RETURNING id`)).rows[0];
@@ -643,4 +674,81 @@ test('a trip keeps the watches it carried after one of them is sold (its row id 
   state.personTrips[0].notes = 'edited after the sale';
   await m.sync.syncLogistics();
   assert.deepEqual((await item('personTrips', 'T1')).stock_nos.sort(), ['1668', '1700']);
+});
+
+test('a logistics client is our client by the watches, else by a full name; a person’s choice wins; its situation', async () => {
+  // Our 1668 was sold to Bertrand Twofold (Chrono Key's link); the logistics app sold 1668 to "Buyer Two" — the same person.
+  const x = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Bertrand', 'Twofold', 'manual') RETURNING id")).rows[0].id;
+  await db("UPDATE watches SET sold_to_client_id = $1 WHERE stock_no = '1668'", [x]);
+  m.lgc.forgetClientSnapshot();
+  const list = await m.lgc.listLogisticsClients();
+  const two = list.clients.find((c) => c.name === 'Buyer Two');
+  assert.deepEqual([two.link.client_id, two.link.how, two.link.stocks], [x, 'watches', ['1668']], 'by the watch, not the name');
+  assert.deepEqual([two.we_give, two.they_give], [2, 3], 'what is still owed either way');
+  const one = list.clients.find((c) => c.name === 'Dealer One');
+  assert.equal(one.link.how, 'name', 'no watch decides it: the full name that is one client of ours');
+  assert.equal(list.clients.find((c) => c.name === 'New Dealer').link.client_id, null, 'no watch and no name: not linked');
+  assert.deepEqual((await m.lgc.listLogisticsClients({ q: 'twofold' })).clients.map((c) => c.name), ['Buyer Two'], 'found by our client’s name too');
+  // A parcel alone proves nothing: New Dealer only shipped 1700, which we bought from someone else.
+  const y = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Yannick', 'Elsewhere', 'manual') RETURNING id")).rows[0].id;
+  await db("UPDATE watches SET purchased_from_client_id = $1 WHERE stock_no = '1700'", [y]);
+  const nd = list.clients.find((c) => c.name === 'New Dealer');
+  await db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ('shipments', $1, '{1700}', 'manual')", [{ stockNumber: '1700', fromClientId: `ma-${nd.id}`, status: 'pending' }]);
+  m.lgc.forgetClientSnapshot();
+  assert.equal((await m.lgc.listLogisticsClients()).clients.find((c) => c.name === 'New Dealer').link.client_id, null, 'a shipment alone links no one');
+
+  const v = await m.lgc.logisticsClient(two.id);
+  assert.equal(v.situation.counts.we_give, 2);
+  assert.deepEqual(v.situation.accessories.we_give[0].items, [{ accessory: 'Box', qty: 2 }]);
+  assert.ok(v.situation.shipments.some((s) => s.dir === 'to_them' && s.item.stock_nos.includes('1668')), 'the shipment to them');
+  assert.ok(v.situation.stocks.some((s) => s.dir === 'sold' && s.stock === '1668' && s.watch), 'the watch sold to them, linked to ours');
+
+  const ours = await m.lgc.forOurClient(x);
+  assert.deepEqual(ours.linked.map((c) => c.name), ['Buyer Two']);
+  assert.equal(ours.situation.counts.they_give, 3);
+  assert.ok(ours.watch_now['1668']?.headline, 'where each of their watches is now');
+
+  // A person says "none of ours": no longer linked, and not suggested again; "auto" works it out again.
+  await m.lgc.setClientLink(two.id, null, null);
+  assert.deepEqual((await m.lgc.forOurClient(x)).linked, []);
+  assert.deepEqual((await m.lgc.forOurClient(x)).suggestions, []);
+  await m.lgc.setClientLink(two.id, 'auto', null);
+  assert.equal((await m.lgc.forOurClient(x)).linked.length, 1);
+  await assert.rejects(m.lgc.setClientLink(two.id, 999999, null), /No such client of ours/);
+  const events = await db("SELECT changes FROM logistics_events WHERE item_id = $1 AND source = 'user' ORDER BY id", [two.id]);
+  assert.deepEqual(
+    events.rows.map((e) => e.changes.our_client),
+    [
+      [`Bertrand Twofold (#${x}), by the watches`, 'none of ours (chosen by a person)'],
+      ['none of ours (chosen by a person)', `Bertrand Twofold (#${x}), by the watches`],
+    ],
+    'each change in its history, saying what was decided'
+  );
+  // A person's link to a client of ours deleted since counts for nothing: the worked-out match shows instead.
+  const z = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Zed', 'Gone', 'manual') RETURNING id")).rows[0].id;
+  await m.lgc.setClientLink(two.id, z, null);
+  await db('UPDATE clients SET deleted_at = now(), updated_at = now() WHERE id = $1', [z]);
+  const after = (await m.lgc.listLogisticsClients()).clients.find((c) => c.name === 'Buyer Two').link;
+  assert.deepEqual([after.client_id, after.how], [x, 'watches']);
+  await m.lgc.setClientLink(two.id, 'auto', null);
+
+  // Names in any script are names; a consignment says which way it goes.
+  assert.equal(m.lgc.normName('  محمد  العلي '), 'محمد العلي');
+  assert.equal(m.lgc.normName('Rooh Ul-Amín'), 'rooh ul amin');
+  const add = (kind, data, stock) => db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ($1, $2, $3, 'manual')", [kind, data, stock]);
+  await add('londonStock', { stockNumber: '2801', status: 'consignment', consignment: { with: 'Buyer Two', direction: 'from_client' } }, ['2801']);
+  await add('londonStock', { stockNumber: '2802', status: 'consignment', consignment: { with: 'Buyer Two', direction: 'to_client' } }, ['2802']);
+  await add('readyForDelivery', { stockNumber: '2803', soldToBuyer: 'Buyer Two', status: 'shipped' }, ['2803']);
+  const w = (await m.lgc.logisticsClient(two.id)).situation.with_them.map((x) => `${x.label}:${x.item.stock_nos[0]}`).sort();
+  assert.deepEqual(w, ['On consignment from them:2801', 'Ours, on consignment with them:2802', 'Sold to them, on its way:2803']);
+
+  // The API: anyone signed in reads, only an editor links, and only with a client of ours, none, or auto.
+  const admin = client();
+  await admin.login('boss@example.com', 'admin-password-1');
+  assert.equal((await admin.call('GET', `/api/clients/${x}/logistics`)).body.linked[0].name, 'Buyer Two');
+  assert.equal((await admin.call('PUT', `/api/logistics/client-view/${two.id}/link`, { client_id: 'x' })).status, 400);
+  const viewer = client();
+  await viewer.login('vi@example.com', 'viewer-password');
+  assert.equal((await viewer.call('GET', `/api/logistics/client-view/${two.id}`)).status, 200);
+  assert.equal((await viewer.call('PUT', `/api/logistics/client-view/${two.id}/link`, { client_id: null })).status, 403);
 });

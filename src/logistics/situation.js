@@ -126,7 +126,7 @@ export function stage(s) {
   if (s?.status === 'delivered' || t?.delivered) return { key: 'delivered', label: 'Delivered', track: t };
   if (t?.stage === 'exception') return { key: 'exception', label: 'Delivery problem', track: t };
   if (t?.stage) return { key: t.stage, label: STAGES[t.stage] || 'In transit', track: t };
-  if (!s?.tracking) return { key: 'no_tracking', label: s?.status === 'in_transit' ? 'In transit' : 'Pending (no tracking)', track: null };
+  if (!s?.tracking) return { key: 'no_tracking', label: s?.status === 'in_transit' ? 'In transit' : 'Not sent yet — no tracking number', track: null };
   if (s.status === 'in_transit') return { key: 'in_transit', label: 'In transit', track: t };
   return { key: 'pending', label: 'Pending', track: t };
 }

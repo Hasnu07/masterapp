@@ -55,7 +55,7 @@ const kindOf = (key) =>
 const CLIENT_ID = "COALESCE(source_id, 'ma-' || id)";
 
 /* The logistics clients by id, for every summary that names one. */
-async function context() {
+export async function context() {
   const { rows } = await query(`SELECT ${CLIENT_ID} AS id, data->>'name' AS name FROM logistics_items WHERE kind = 'clients'`);
   const names = new Map(rows.map((r) => [r.id, r.name || '']));
   const client = (id) => (id ? names.get(String(id)) || '' : '');
@@ -81,7 +81,7 @@ function summarise(row, ctx) {
   };
 }
 
-const view = (row, ctx) => ({
+export const view = (row, ctx) => ({
   id: row.id,
   kind: row.kind,
   kind_label: kindOf(row.kind).label,
@@ -157,7 +157,7 @@ async function watchesFor(stockNos) {
  * Our watches, for a page of logistics records: each record's stock numbers
  * point at OUR watch where we hold it — one watch, never a second copy.
  */
-async function withWatches(views) {
+export async function withWatches(views) {
   const nos = [...new Set(views.flatMap((v) => v.stock_nos || []))];
   const ours = await watchesFor(nos);
   const by = new Map(ours.map((w) => [w.stock_no, { id: w.id, stock_no: w.stock_no }]));
@@ -723,22 +723,35 @@ export async function overview() {
             WHERE deleted_at IS NULL AND kind IN ('londonStock','dubaiStock','hkStock','safeStock','checkoutStock')
               AND COALESCE(data->>'status','current') IN ('current','consignment')
             GROUP BY kind`),
+    // Only changes a person can read — the carrier's answers and timestamps are left out here, in the query, so a
+    // busy stretch of tracking cannot push every real change out of the window — and without the records' data.
     query(
-      `SELECT e.at, e.source, e.action, e.changes, u.name AS user_name, i.id, i.kind, i.data, i.stock_nos, i.origin, i.source_id,
-              i.locked_fields, i.created_at, i.updated_at, i.deleted_at
-         FROM logistics_events e JOIN logistics_items i ON i.id = e.item_id LEFT JOIN users u ON u.id = e.user_id
-        WHERE e.action <> 'create' OR e.source = 'user'
-        ORDER BY e.at DESC, e.id DESC LIMIT 300`
+      `SELECT e.at, e.source, e.action, (e.changes - $1::text[]) AS changes, u.name AS user_name, e.item_id
+         FROM logistics_events e LEFT JOIN users u ON u.id = e.user_id
+        WHERE (e.action <> 'create' OR e.source = 'user')
+          AND (e.action NOT IN ('sync', 'update', 'unlock')
+               OR EXISTS (SELECT 1 FROM jsonb_object_keys(e.changes) k WHERE k NOT IN ('back', 'gone') AND k !~ $2 AND k !~ $3))
+        ORDER BY e.at DESC, e.id DESC LIMIT 400`,
+      [QUIET_LIST, QUIET_NAMES.source, QUIET_TIMES.source]
     ),
     asOf(),
   ]);
-  const withStage = (r) => ({ ...view(r, ctx), stage: situation.stage(r.data).key });
+  const withStage = (r) => ({ ...view(r, ctx), stage: situation.stage(r.data).key, late: lateSince(r.data) });
   const [dash, polish] = await Promise.all([dashboard(), needPolish(ctx)]);
+  // Fresh: read, or found unchanged, within three of the minute checks (with them off: within one and a half 15-minute passes).
+  const freshMs = (config.logistics.pollSec > 0 ? Math.max(3 * config.logistics.pollSec, 180) : 1.5 * Math.max(5, config.sync.intervalMin) * 60) * 1000;
   return {
     as_of: at,
+    fresh: Boolean(at && Date.now() - new Date(at).getTime() < freshMs),
     ...dash,
     need_polish: await withWatches(polish),
-    shipments: await withWatches(shipments.rows.filter((r) => situation.shipmentOpen(r.data)).map(withStage)),
+    // The late ones first.
+    shipments: await withWatches(
+      shipments.rows
+        .filter((r) => situation.shipmentOpen(r.data))
+        .map(withStage)
+        .sort((a, b) => (b.late ? 1 : 0) - (a.late ? 1 : 0))
+    ),
     ready: await withWatches(ready.rows.map((r) => view(r, ctx))),
     incoming: await withWatches(incoming.rows.map((r) => view(r, ctx))),
     places: counts.rows.map((r) => ({ ...r, label: kindOf(r.kind).label })),
@@ -753,15 +766,20 @@ export async function overview() {
  * record, and not a blank turning into another blank. A copy that changed
  * nothing readable is left out. (Asked 24 Oct 2026: "easy to understand".)
  */
-const QUIET_KEYS = /^(fedex|dhl|ups|aramex|tracking[A-Z]\w*|photos|receivingPhotos|vaultPhotos|files|movements|history|polishHistory|_key)$|(^createdAt|^updatedAt|UpdatedAt|^ts)$/;
+const QUIET_LIST = ['fedex', 'dhl', 'ups', 'aramex', 'photos', 'receivingPhotos', 'vaultPhotos', 'files', 'movements', 'history', 'polishHistory', '_key'];
+const QUIET_NAMES = new RegExp(`^(${QUIET_LIST.join('|')})$`);
+const QUIET_TIMES = /(^createdAt|^updatedAt|UpdatedAt|^ts)$/;
 const blankValue = (v) => v === null || v === undefined || v === '';
+// A block of details inside the record (a polish, a consignment) is named, not shown: "(details)".
+const scalar = (v) => (v !== null && typeof v === 'object' && !Array.isArray(v) ? '(details)' : v);
 export function readableChanges(changes) {
   const out = {};
   for (const [k, pair] of Object.entries(changes || {})) {
-    if (k === 'back' || k === 'gone' || QUIET_KEYS.test(k) || !Array.isArray(pair)) continue;
-    const [a, b] = pair;
-    if ((a !== null && typeof a === 'object') || (b !== null && typeof b === 'object')) continue;
+    if (k === 'back' || k === 'gone' || QUIET_NAMES.test(k) || QUIET_TIMES.test(k) || !Array.isArray(pair)) continue;
+    const [a, b] = pair.map(scalar);
+    if (Array.isArray(a) || Array.isArray(b)) continue;
     if (blankValue(a) && blankValue(b)) continue;
+    if (a === b) continue;
     out[k] = [a ?? null, b ?? null];
   }
   return out;
@@ -772,20 +790,42 @@ async function latestChanges(rows, ctx, limit = 12) {
   for (const r of rows) {
     const changes = readableChanges(r.changes);
     if (['sync', 'update', 'unlock'].includes(r.action) && !Object.keys(changes).length) continue;
-    const seen = byItem.get(r.id);
+    const seen = byItem.get(r.item_id);
     if (seen) {
       seen.earlier += 1;
       continue;
     }
     if (byItem.size >= limit) continue;
-    byItem.set(r.id, { at: r.at, source: r.source, action: r.action, changes, user_name: r.user_name, earlier: 0, item: view(r, ctx) });
+    byItem.set(r.item_id, { at: r.at, source: r.source, action: r.action, changes, user_name: r.user_name, earlier: 0 });
   }
-  const list = [...byItem.values()];
-  const items = await withWatches(list.map((c) => c.item));
-  return list.map((c, k) => ({ ...c, item: items[k] }));
+  if (!byItem.size) return [];
+  const { rows: items } = await query('SELECT * FROM logistics_items WHERE id = ANY($1)', [[...byItem.keys()]]);
+  const views = await withWatches(items.map((r) => view(r, ctx)));
+  const byId = new Map(views.map((v) => [v.id, v]));
+  return [...byItem.entries()].filter(([id]) => byId.has(id)).map(([id, c]) => ({ ...c, item: byId.get(id) }));
 }
 
 const RATE_TARGETS = ['USD', 'EUR', 'GBP', 'AED', 'HKD', 'CHF'];
+
+const todayUtc = () => {
+  const t = new Date();
+  return Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate());
+};
+
+/*
+ * A shipment past its delivery day — the Overview's Late count and the rows it
+ * marks, by one rule: pending or in transit, and the day it was due (as the
+ * app writes it, YYYY-MM-DD, or day first, DD/MM/YYYY) is before today.
+ * Anything else ("Oct 30", typed here) is no date to be late against: guessed,
+ * it lands in 2001. Returns the due day, or null.
+ */
+export function lateSince(d, todayAt = todayUtc()) {
+  if (d?.status !== 'pending' && d?.status !== 'in_transit') return null;
+  const due = String(d.deliveryDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}/.test(due) && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(due)) return null;
+  const t = situation.when(due);
+  return t !== null && t < todayAt ? new Date(t).toISOString().slice(0, 10) : null;
+}
 
 /*
  * The converter's rates, without holding the Overview up: a rate source that
@@ -830,18 +870,10 @@ async function dashboard() {
     query("SELECT data->'items' AS items FROM logistics_items WHERE kind = 'transactions' AND deleted_at IS NULL"),
     query("SELECT data->>'currency' AS currency, data->>'amount' AS amount FROM logistics_items WHERE kind = 'logisticCosts' AND deleted_at IS NULL"),
   ]);
-  const today = new Date();
-  const todayAt = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const todayAt = todayUtc();
   const active = ships.rows.filter((s) => s.status === 'pending' || s.status === 'in_transit');
   const delivered = ships.rows.filter((s) => s.status === 'delivered').length;
-  // Past its delivery date — a day as the app writes it (YYYY-MM-DD), or day first (DD/MM/YYYY). Anything else
-  // ("Oct 30", typed here) is no date to be late against: guessed, it lands in 2001.
-  const delayed = active.filter((s) => {
-    const due = String(s.due ?? '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}/.test(due) && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(due)) return false;
-    const t = situation.when(due);
-    return t !== null && t < todayAt;
-  }).length;
+  const delayed = active.filter((s) => lateSince({ status: s.status, deliveryDate: s.due }, todayAt)).length;
   const { rows: readyRows } = await query("SELECT count(*)::int AS n FROM logistics_items WHERE kind = 'readyForDelivery' AND deleted_at IS NULL");
 
   let give = 0;

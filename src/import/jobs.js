@@ -4,7 +4,7 @@ import { syncList, syncDetails } from './chronokey/sync.js';
 import { syncVault, fetchVersion, forgetState } from './vault/sync.js';
 import { syncClients } from './chronokey/clients.js';
 import { syncExpenses } from './chronokey/expenses.js';
-import { syncLogistics } from './logistics/sync.js';
+import { syncLogistics, noteLogisticsUnchanged } from './logistics/sync.js';
 
 /*
  * The copy from Chrono Key and the vault, run on a timer until the
@@ -141,6 +141,7 @@ async function checkVersion() {
     console.warn(`[logistics] version not read: ${err.message}`);
     return;
   }
+  if (v !== null && v === lastVersion) noteLogisticsUnchanged();
   if (v === null || v === lastVersion) return;
   const first = lastVersion === null;
   lastVersion = v;
