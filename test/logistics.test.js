@@ -679,11 +679,12 @@ test('a trip keeps the watches it carried after one of them is sold (its row id 
 test('a logistics client is our client by the watches, else by a full name; a person’s choice wins; its situation', async () => {
   // Our 1668 was sold to Bertrand Twofold (Chrono Key's link); the logistics app sold 1668 to "Buyer Two" — the same person.
   const x = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Bertrand', 'Twofold', 'manual') RETURNING id")).rows[0].id;
-  await db("UPDATE watches SET sold_to_client_id = $1 WHERE stock_no = '1668'", [x]);
+  await db("UPDATE watches SET sold_to_client_id = $1 WHERE stock_no IN ('1668', '1700')", [x]);
+  await db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ('soldStocks', $1, '{1700}', 'manual')", [{ stockNumber: '1700', soldToBuyer: 'Buyer Two' }]);
   m.lgc.forgetClientSnapshot();
   const list = await m.lgc.listLogisticsClients();
   const two = list.clients.find((c) => c.name === 'Buyer Two');
-  assert.deepEqual([two.link.client_id, two.link.how, two.link.stocks], [x, 'watches', ['1668']], 'by the watch, not the name');
+  assert.deepEqual([two.link.client_id, two.link.how, two.link.stocks], [x, 'watches', ['1668', '1700']], 'by the watches, not the name');
   assert.deepEqual([two.we_give, two.they_give], [2, 3], 'what is still owed either way');
   const one = list.clients.find((c) => c.name === 'Dealer One');
   assert.equal(one.link.how, 'name', 'no watch decides it: the full name that is one client of ours');
@@ -696,6 +697,21 @@ test('a logistics client is our client by the watches, else by a full name; a pe
   await db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ('shipments', $1, '{1700}', 'manual')", [{ stockNumber: '1700', fromClientId: `ma-${nd.id}`, status: 'pending' }]);
   m.lgc.forgetClientSnapshot();
   assert.equal((await m.lgc.listLogisticsClients()).clients.find((c) => c.name === 'New Dealer').link.client_id, null, 'a shipment alone links no one');
+  // One watch alone links only a name that looks alike; a place or a polisher typed as a client is suggested, not linked.
+  const q = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Quentin', 'Farrow', 'manual') RETURNING id")).rows[0].id;
+  const lcClient = async (name, stock) => {
+    const id = (await db("INSERT INTO logistics_items(kind, data, origin) VALUES ('clients', $1, 'manual') RETURNING id", [{ name }])).rows[0].id;
+    await db("INSERT INTO watches(stock_no, origin, status, purchased_from_client_id) VALUES ($1, 'manual', 'in_stock', $2)", [stock, q]);
+    await db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ('transactions', $1, $2, 'manual')", [{ type: 'bought', clientId: `ma-${id}`, stockNumber: stock }, [stock]]);
+    return id;
+  };
+  const [pete, hk, quenten] = [await lcClient('Sina Star', '2950'), await lcClient('HK', '2951'), await lcClient('Quenten Farow', '2952')];
+  m.lgc.forgetClientSnapshot();
+  const now = (await m.lgc.listLogisticsClients()).clients;
+  assert.equal(now.find((c) => c.id === pete).link.client_id, null, 'one watch and a name nothing like ours');
+  assert.equal(now.find((c) => c.id === hk).link.client_id, null, 'a place is not a person');
+  assert.deepEqual([now.find((c) => c.id === quenten).link.client_id, now.find((c) => c.id === quenten).link.how], [q, 'watches'], 'one watch, the name typed another way');
+  assert.ok((await m.lgc.logisticsClient(pete)).candidates.some((x) => x.client_id === q), 'still suggested, for a person to decide');
 
   const v = await m.lgc.logisticsClient(two.id);
   assert.equal(v.situation.counts.we_give, 2);

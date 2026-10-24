@@ -367,7 +367,12 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   id, incomings by supplier, sales by buyer, a place row's "bought from")
   vote for who OUR watch with that number was bought from / sold to
   (Chrono Key's ids). A shipment only backs a match up, never makes one (a
-  forwarder in Belfast sent three watches bought from a dealer in Spain); a
+  forwarder in Belfast sent three watches bought from a dealer in Spain); ONE
+  watch alone links only when the names look alike ("Victor" / "viktor",
+  "Shouaib" / "suhaib" — `namesAlike`), and a place or placeholder typed as a
+  client ("HK", "Need to confirm") is never linked on its own — first live
+  read: 144 linked by watches, 15 by name, 30 not, and these slipped through
+  (the polisher "Sina Star", "HK" → robin casanova) until this rule; a
   full name decides only when no watch does. Worked out each time it is shown
   (held 30 s); a person's choice (`logistics_client_links`, migration 010,
   NULL = "none of ours") always wins and goes in the record's history.
