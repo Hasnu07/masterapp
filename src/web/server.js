@@ -523,6 +523,17 @@ export function createServer() {
   /* ── logistics ───────────────────────────────────────────────── */
 
   app.get('/api/logistics/overview', need('viewer'), wrap(async (req, res) => res.json(await logistics.overview())));
+  /* Search everything: our watches and clients, and the logistics records — nothing twice. */
+  app.get(
+    '/api/logistics/search',
+    need('viewer'),
+    wrap(async (req, res) => res.json(await logistics.search({ q: String(req.query.q || '').slice(0, 200), scope: String(req.query.scope || 'all') })))
+  );
+  app.post(
+    '/api/logistics/items/:id/polish',
+    need('editor'),
+    wrap(async (req, res) => res.json(await logistics.polishAction(req.params.id, req.body || {}, req.user)))
+  );
   app.get('/api/logistics/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await logistics.clientChoices() })));
   app.get('/api/logistics/items', need('viewer'), wrap(async (req, res) => res.json(await logistics.listItems(req.query))));
   app.get('/api/logistics/items/:id', need('viewer'), wrap(async (req, res) => res.json(await logistics.getItem(req.params.id))));
