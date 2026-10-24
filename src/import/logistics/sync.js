@@ -379,6 +379,22 @@ function rowIndex(state) {
   };
 }
 
+/*
+ * Two records of one list with the same id — the app shows both (seen on its
+ * HK list, 24 Oct 2026) — are two records here too: the second is "<id>~2".
+ * Kept under one id, each pass wrote one over the other: a change every pass,
+ * for ever (55 on one watch in a day), and only ever half of what the app holds.
+ */
+function distinctIds(pairs) {
+  const used = new Map();
+  return pairs.map(([id, r]) => {
+    if (id === null) return [id, r];
+    const n = (used.get(id) || 0) + 1;
+    used.set(id, n);
+    return [n === 1 ? id : `${id}~${n}`, r];
+  });
+}
+
 /** The document's lists: [kind, [[sourceId, record]]]. A map (vaultTracking) is a list keyed by its keys. */
 function listsOf(state) {
   const out = [];
@@ -388,7 +404,7 @@ function listsOf(state) {
       if (!v.some((r) => r && typeof r === 'object' && !Array.isArray(r))) {
         if (v.length) continue; // a list of plain values is not records
       }
-      out.push([kind, v.filter((r) => r && typeof r === 'object' && !Array.isArray(r)).map((r) => [r.id == null ? null : String(r.id), r])]);
+      out.push([kind, distinctIds(v.filter((r) => r && typeof r === 'object' && !Array.isArray(r)).map((r) => [r.id == null ? null : String(r.id), r]))]);
     } else if (KIND[kind]?.map && v && typeof v === 'object') {
       out.push([kind, Object.entries(v).filter(([, r]) => r && typeof r === 'object').map(([k, r]) => [String(k), r])]);
     }

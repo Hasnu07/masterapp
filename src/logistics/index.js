@@ -728,7 +728,7 @@ export async function overview() {
               i.locked_fields, i.created_at, i.updated_at, i.deleted_at
          FROM logistics_events e JOIN logistics_items i ON i.id = e.item_id LEFT JOIN users u ON u.id = e.user_id
         WHERE e.action <> 'create' OR e.source = 'user'
-        ORDER BY e.at DESC, e.id DESC LIMIT 40`
+        ORDER BY e.at DESC, e.id DESC LIMIT 300`
     ),
     asOf(),
   ]);
@@ -742,8 +742,47 @@ export async function overview() {
     ready: await withWatches(ready.rows.map((r) => view(r, ctx))),
     incoming: await withWatches(incoming.rows.map((r) => view(r, ctx))),
     places: counts.rows.map((r) => ({ ...r, label: kindOf(r.kind).label })),
-    recent: recent.rows.map((r) => ({ at: r.at, source: r.source, action: r.action, changes: r.changes, user_name: r.user_name, item: view(r, ctx) })),
+    recent: await latestChanges(recent.rows, ctx),
   };
+}
+
+/*
+ * The Overview's latest changes, as a person reads them: one line per record
+ * (its newest change, and how many before it), only what changed in words —
+ * not the carrier's raw answers, timestamps, pictures or lists inside the
+ * record, and not a blank turning into another blank. A copy that changed
+ * nothing readable is left out. (Asked 24 Oct 2026: "easy to understand".)
+ */
+const QUIET_KEYS = /^(fedex|dhl|ups|aramex|tracking[A-Z]\w*|photos|receivingPhotos|vaultPhotos|files|movements|history|polishHistory|_key)$|(^createdAt|^updatedAt|UpdatedAt|^ts)$/;
+const blankValue = (v) => v === null || v === undefined || v === '';
+export function readableChanges(changes) {
+  const out = {};
+  for (const [k, pair] of Object.entries(changes || {})) {
+    if (k === 'back' || k === 'gone' || QUIET_KEYS.test(k) || !Array.isArray(pair)) continue;
+    const [a, b] = pair;
+    if ((a !== null && typeof a === 'object') || (b !== null && typeof b === 'object')) continue;
+    if (blankValue(a) && blankValue(b)) continue;
+    out[k] = [a ?? null, b ?? null];
+  }
+  return out;
+}
+
+async function latestChanges(rows, ctx, limit = 12) {
+  const byItem = new Map();
+  for (const r of rows) {
+    const changes = readableChanges(r.changes);
+    if (['sync', 'update', 'unlock'].includes(r.action) && !Object.keys(changes).length) continue;
+    const seen = byItem.get(r.id);
+    if (seen) {
+      seen.earlier += 1;
+      continue;
+    }
+    if (byItem.size >= limit) continue;
+    byItem.set(r.id, { at: r.at, source: r.source, action: r.action, changes, user_name: r.user_name, earlier: 0, item: view(r, ctx) });
+  }
+  const list = [...byItem.values()];
+  const items = await withWatches(list.map((c) => c.item));
+  return list.map((c, k) => ({ ...c, item: items[k] }));
 }
 
 const RATE_TARGETS = ['USD', 'EUR', 'GBP', 'AED', 'HKD', 'CHF'];

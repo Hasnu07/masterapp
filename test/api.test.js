@@ -359,6 +359,25 @@ test('the page carries its script policy; the API and the files it serves do not
   assert.equal(page.headers.get('strict-transport-security'), null, 'https is only promised in production');
 });
 
+test('a deploy is never a mix of an old page and new scripts: scripts by fingerprint, the page never kept', async () => {
+  const res = await fetch(`${base}/`);
+  const html = await res.text();
+  const build = html.match(/<meta name="build" content="([0-9a-f]{12})">/)?.[1];
+  assert.ok(build, 'the page names its build');
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  for (const f of ['app.js', 'logistics.js', 'fxchip.js']) assert.ok(html.includes(`<script src="/${f}?v=${build}"></script>`), f);
+  assert.equal((await fetch(`${base}/api/me`)).headers.get('x-masterapp-build'), build, 'every API answer says which build it is');
+
+  const kept = await fetch(`${base}/app.js?v=${build}`);
+  assert.match(kept.headers.get('cache-control'), /immutable/);
+  const plain = await fetch(`${base}/app.js`);
+  assert.equal(plain.headers.get('cache-control'), 'no-cache');
+  assert.equal(plain.headers.get('etag'), null, 'no size-and-date ETag: the platform dates every file 1980');
+  assert.equal(plain.headers.get('last-modified'), null);
+  assert.equal((await fetch(`${base}/app.js?v=000000000000`)).headers.get('cache-control'), 'no-cache', 'another build’s address is not kept');
+  assert.match(await (await fetch(`${base}/clients`)).text(), new RegExp(`/logistics.js\\?v=${build}`), 'any page address gets the same page');
+});
+
 test('an admin cannot lock themselves out', async () => {
   const me = (await admin.call('GET', '/api/me')).body.user;
   assert.equal((await admin.call('PATCH', `/api/users/${me.id}`, { role: 'viewer' })).status, 400);

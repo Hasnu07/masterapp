@@ -311,6 +311,23 @@ test('one record Postgres refuses is skipped, not the end of the pass', async ()
   delete state.brokenList;
 });
 
+test('two records the app gives one id are both kept — not one written over the other every pass', async () => {
+  state.hkSituation = [
+    { id: 'H1', stockNumber: '2700', section: 'in_hand', brand: 'Patek Philippe', notes: 'the full copy' },
+    { id: 'H1', stockNumber: '2700', section: 'in_hand' },
+  ];
+  await m.sync.syncLogistics();
+  const a = await item('hkSituation', 'H1');
+  const b = await item('hkSituation', 'H1~2');
+  assert.equal(a.data.notes, 'the full copy');
+  assert.equal(b.data.notes, undefined);
+  const count = async () => (await events(a.id)).length + (await events(b.id)).length;
+  const before = await count();
+  await m.sync.syncLogistics();
+  await m.sync.syncLogistics();
+  assert.equal(await count(), before, 'the next passes change nothing');
+});
+
 test('the vault’s photo store is not part of a logistics record', async () => {
   state.dubaiStock[0].vaultPhotos = ['https://example.invalid/v.jpg'];
   const s = await m.sync.syncLogistics();
@@ -420,6 +437,23 @@ test('the overview’s figures are the logistics app’s own: deliveries, access
   const polish = o.need_polish.map((r) => [r.source_id, Boolean(r.polish), r.can_polish]);
   assert.deepEqual(polish.sort(), [['D1', false, true], ['D2', true, true]], 'the moved London copy is left out');
   assert.ok(o.need_polish.every((r) => r.watches.length === 1), 'each points at OUR watch');
+
+  // Latest changes: one line per record, and only what a person can read.
+  assert.deepEqual(
+    m.lg.readableChanges({
+      status: ['pending', 'delivered'],
+      notes: ['', 'with the client'],
+      fedexUpdatedAt: [1792788490091, 1792827369915],
+      fedex: [{ a: 1 }, { a: 2 }],
+      dial: [null, ''],
+      photos: [[], ['lgfile:1']],
+      createdAt: [null, 1760000000000],
+    }),
+    { status: ['pending', 'delivered'], notes: ['', 'with the client'] }
+  );
+  const ids = o.recent.map((e) => e.item.id);
+  assert.equal(ids.length, new Set(ids).size, 'each record once');
+  assert.ok(o.recent.every((e) => !Object.keys(e.changes).some((k) => /fedex|UpdatedAt/.test(k))));
 
   // A delivery date typed as words is no date to be late against (guessed, "Oct 30" is 2001).
   const typed = (await db(`INSERT INTO logistics_items(kind, data, origin) VALUES ('shipments', '{"status":"pending","deliveryDate":"Oct 30"}', 'manual') RETURNING id`)).rows[0];

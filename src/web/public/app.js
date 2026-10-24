@@ -20,6 +20,23 @@ const state = {
   expenses: { q: '', type: '', from: '', to: '' },
 };
 
+/*
+ * The build this page was served as (server.js, consolePage). An API answer
+ * from a newer one means masterapp was updated while this page was open: its
+ * scripts and styles may no longer match what the server sends, so it says so
+ * and offers a reload — never on its own, a half-typed form would be lost.
+ */
+const PAGE_BUILD = document.querySelector('meta[name="build"]')?.content || '';
+function newerBuild() {
+  if ($('#update-bar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'update-bar';
+  bar.className = 'update-bar';
+  bar.innerHTML = '<span>masterapp has been updated — reload to get the new version.</span><button class="btn small primary" type="button">Reload</button>';
+  bar.querySelector('button').addEventListener('click', () => location.reload());
+  document.body.append(bar);
+}
+
 async function api(path, opts = {}) {
   const init = { method: opts.method || 'GET', headers: { 'X-Requested-With': 'masterapp' } };
   if (opts.body instanceof FormData) init.body = opts.body;
@@ -28,6 +45,8 @@ async function api(path, opts = {}) {
     init.body = JSON.stringify(opts.body);
   }
   const res = await fetch(path, init);
+  const build = res.headers.get('X-Masterapp-Build');
+  if (build && PAGE_BUILD && build !== PAGE_BUILD) newerBuild();
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && path !== '/api/login') {
     state.user = null;

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Setup UI/UX Skills"
+  short_description: "Configure taste, a11y, bans, and voice for this project"
+policy:
+  allow_implicit_invocation: false
