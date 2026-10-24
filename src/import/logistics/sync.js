@@ -412,9 +412,18 @@ function listsOf(state) {
   return out;
 }
 
-/* When the document was last read whole — even by a pass that found nothing new (and so kept no run). */
+/*
+ * When our copy was last known to be current: the document read whole (even by
+ * a pass that found nothing new, and so kept no run) — or, since, the minute
+ * check finding the worker's version unchanged, which says the same thing. A
+ * quiet logistics app is not a stale copy.
+ */
 let lastRead = null;
-export const lastLogisticsRead = () => lastRead;
+let lastSame = null;
+export const lastLogisticsRead = () => (lastRead && lastSame && lastSame > lastRead ? lastSame : lastRead);
+export const noteLogisticsUnchanged = () => {
+  if (lastRead) lastSame = new Date();
+};
 
 const MAIN_LISTS = ['shipments', 'incomings', 'londonStock', 'dubaiStock', 'soldStocks', 'clients'];
 

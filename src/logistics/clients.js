@@ -31,13 +31,13 @@ const CLIENT_ID = "COALESCE(source_id, 'ma-' || id)";
 const RECORD_KINDS = ['transactions', 'shipments', 'incomings', 'soldStocks', 'readyForDelivery', 'londonStock', 'dubaiStock', 'hkStock', 'safeStock'];
 const PLACE_KINDS = ['londonStock', 'dubaiStock', 'hkStock'];
 
-/* A name as compared here: lower case, no accents, punctuation or double spaces — "Rooh Ul Amin" is "rooh ul amin". */
+/* A name as compared here: lower case, no accents, punctuation or double spaces — "Rooh Ul Amin" is "rooh ul amin". Any script: "محمد العلي" stays itself. */
 export const normName = (s) =>
   String(s ?? '')
     .toLowerCase()
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 
 /* The logistics app's own locations ("Company · Dubai"): that is us, never a client of ours. */
@@ -48,22 +48,35 @@ const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 /*
  * Everything the matching and the situations read, in one go — the logistics
  * clients, every record that names a client, our watches by stock number, our
- * clients' names, and what people decided — held 30 seconds, since the Clients
- * tab and a client page read it together. Each record is filed under the
- * logistics clients it names, with what it says about them.
+ * clients' names, and what people decided. Each record is filed under the
+ * logistics clients it names, with what it says about them. Kept until any of
+ * it changes (a record edited, synced, deleted; a watch's client changed; a
+ * link chosen): a few-bytes stamp says so, so a page never shows figures from
+ * before an edit made a moment ago.
  */
 let held = null;
 export const forgetClientSnapshot = () => {
   held = null;
 };
+async function stamp() {
+  const { rows } = await query(
+    `SELECT concat_ws('|', (SELECT max(updated_at) FROM logistics_items), (SELECT count(*) FROM logistics_items),
+                           (SELECT max(updated_at) FROM watches), (SELECT max(updated_at) FROM clients),
+                           (SELECT max(at) FROM logistics_client_links), (SELECT count(*) FROM logistics_client_links)) AS s`
+  );
+  return rows[0].s;
+}
 async function snapshot() {
-  if (held && Date.now() - held.at < 30_000) return held.snap;
+  const now = await stamp();
+  if (held && held.stamp === now && Date.now() - held.at < 10 * 60_000) return held.snap;
   const [lc, recs, ws, cs, links] = await Promise.all([
     query(`SELECT id, source_id, ${CLIENT_ID} AS cid, data FROM logistics_items WHERE kind = 'clients' AND deleted_at IS NULL ORDER BY id`),
-    query('SELECT * FROM logistics_items WHERE deleted_at IS NULL AND kind = ANY($1)', [RECORD_KINDS]),
+    // Newest first, so every list built from them comes out in the logistics app's order.
+    query('SELECT * FROM logistics_items WHERE deleted_at IS NULL AND kind = ANY($1) ORDER BY happened_at DESC NULLS LAST, id DESC', [RECORD_KINDS]),
     query('SELECT id, stock_no, purchased_from_client_id AS bought_from, sold_to_client_id AS sold_to FROM watches WHERE deleted_at IS NULL'),
     query('SELECT id, forename, surname, nickname, company FROM clients WHERE deleted_at IS NULL'),
-    query('SELECT item_id, client_id FROM logistics_client_links'),
+    // A person's link to a client of ours deleted since counts for nothing: the worked-out match shows instead.
+    query('SELECT l.item_id, l.client_id FROM logistics_client_links l LEFT JOIN clients c ON c.id = l.client_id WHERE l.client_id IS NULL OR c.deleted_at IS NULL'),
   ]);
   const clients = lc.rows.map((r) => ({ id: r.id, cid: r.cid, data: r.data || {}, name: String(r.data?.name || '').trim(), us: isUs(r.data) }));
   const byCid = new Map(clients.map((c) => [c.cid, c]));
@@ -104,9 +117,20 @@ async function snapshot() {
         if ((d.status || 'current') === 'current') fileByName(d.from, row, 'in_safe');
         break;
       default:
-        // A place's row: bought from whoever it names, and maybe on consignment with a client now.
+        // A place's row: bought from whoever it names — and maybe on consignment: ours with a client, or a client's with us.
         if (d.status !== 'moved') fileByName(d.from, row, 'bought');
-        if (d.status === 'consignment' && d.consignment?.with) fileByName(d.consignment.with, row, 'consigned_out');
+        if (d.status === 'consignment' && d.consignment?.with) fileByName(d.consignment.with, row, d.consignment.direction === 'from_client' ? 'consigned_in' : 'consigned_out');
+    }
+  }
+  // What a watch arrived without, by stock number — its London row, else its Dubai row (as the app looks).
+  const missingOf = new Map();
+  for (const row of recs.rows) {
+    if (row.kind !== 'londonStock' && row.kind !== 'dubaiStock') continue;
+    const m = row.data?.accessoriesMissing;
+    const list = (Array.isArray(m) ? m : String(m || '').split(',')).map((x) => String(x).trim()).filter(Boolean);
+    for (const s of row.stock_nos || []) {
+      const had = missingOf.get(s);
+      if (!had || (had.kind !== 'londonStock' && row.kind === 'londonStock')) missingOf.set(s, { kind: row.kind, list });
     }
   }
   const watchByStock = new Map(ws.rows.map((w) => [w.stock_no, w]));
@@ -120,9 +144,9 @@ async function snapshot() {
     }
   }
   const decided = new Map(links.rows.map((r) => [r.item_id, r.client_id]));
-  const snap = { clients, byId: new Map(clients.map((c) => [c.id, c])), byName, filed, watchByStock, ourNames, ourName, decided };
+  const snap = { clients, byId: new Map(clients.map((c) => [c.id, c])), byName, filed, watchByStock, ourNames, ourName, decided, missingOf };
   for (const c of clients) c.match = matchOf(c, snap);
-  held = { at: Date.now(), snap };
+  held = { at: Date.now(), stamp: now, snap };
   return snap;
 }
 
@@ -194,6 +218,41 @@ const qty = (it) => Math.max(Number(it?.qty) || 1, 1);
 const pending = (it) => it && it.status === 'pending';
 
 /*
+ * What is still owed on a client's accessory transactions — their pending
+ * items, grouped by watch as the app groups them — and, as the app adds, what
+ * a watch bought from them arrived without (its London row, else its Dubai
+ * row), unless that watch already has items owed. One rule for the Clients
+ * list and the client's page, so the two never give different numbers.
+ */
+function owedOf(txRows, snap) {
+  const weGive = [];
+  const theyGive = [];
+  const receiving = new Set();
+  const bought = new Set();
+  for (const row of txRows) {
+    const d = row.data || {};
+    const items = Array.isArray(d.items) ? d.items : [];
+    const line = (list) => ({ tx: row.id, stock: String(d.stockNumber || ''), title: [d.brand, d.reference].filter(Boolean).join(' '), items: list.map((it) => ({ accessory: String(it.accessory || 'Item'), qty: qty(it) })) });
+    const give = items.filter((it) => pending(it) && it.direction === 'give');
+    const get = items.filter((it) => pending(it) && it.direction !== 'give');
+    if (give.length) weGive.push(line(give));
+    if (get.length) {
+      theyGive.push(line(get));
+      receiving.add(String(d.stockNumber || ''));
+    }
+    if (d.type !== 'sold') for (const s of row.stock_nos || []) bought.add(s);
+  }
+  const missing = [];
+  for (const s of bought) {
+    if (receiving.has(s)) continue;
+    const m = snap.missingOf.get(s);
+    if (m?.list.length) missing.push({ stock: s, items: m.list });
+  }
+  const sum = (lines) => lines.reduce((a, l) => a + l.items.reduce((b, it) => b + (typeof it === 'string' ? 1 : it.qty), 0), 0);
+  return { we_give: weGive, they_give: theyGive, missing, give_n: sum(weGive), owed_n: sum(theyGive) + sum(missing) };
+}
+
+/*
  * The logistics situation of one or more logistics clients (more when two of
  * theirs are one client of ours: "Rooh Ul Amin" and "Rooh ul Amin"), the way the
  * logistics app's client page adds it up: the watches traded, what is with
@@ -214,40 +273,17 @@ async function situationOf(cs, snap) {
   const txs = all.filter((r) => r.row.kind === 'transactions');
   const ships = all.filter((r) => r.row.kind === 'shipments');
 
-  // Accessories: the transactions' items, pending, either way — by stock, as the app groups them.
-  const label = (d) => [d.brand, d.reference].filter(Boolean).join(' ');
-  const weGive = [];
-  const theyGive = [];
-  const receiving = new Set();
+  // Accessories still owed either way (the transactions' pending items, and what their watches arrived without);
+  // and what was already given and collected, newest first.
+  const owed = owedOf(txs.map((r) => r.row), snap);
   const history = [];
   for (const { row } of txs) {
     const d = row.data || {};
-    const items = Array.isArray(d.items) ? d.items : [];
-    const give = items.filter((it) => pending(it) && it.direction === 'give');
-    const get = items.filter((it) => pending(it) && it.direction !== 'give');
-    const line = (list) => ({ tx: row.id, stock: String(d.stockNumber || ''), title: label(d), items: list.map((it) => ({ accessory: String(it.accessory || 'Item'), qty: qty(it) })) });
-    if (give.length) weGive.push(line(give));
-    if (get.length) {
-      theyGive.push(line(get));
-      receiving.add(String(d.stockNumber || ''));
-    }
-    for (const it of items.filter((x) => x && x.status === 'done')) {
-      history.push({ tx: row.id, stock: String(d.stockNumber || ''), dir: it.direction === 'give' ? 'given' : 'collected', accessory: String(it.accessory || 'Item'), qty: qty(it), at: row.data?.date || null });
+    for (const it of (Array.isArray(d.items) ? d.items : []).filter((x) => x && x.status === 'done')) {
+      history.push({ tx: row.id, stock: String(d.stockNumber || ''), dir: it.direction === 'give' ? 'given' : 'collected', accessory: String(it.accessory || 'Item'), qty: qty(it), at: d.date || null });
     }
   }
-  // …and, as the app adds, what a watch bought from them arrived without (its London or Dubai row) — unless already owed.
-  const missing = [];
-  const boughtStocks = new Set(all.filter((r) => has(r, 'bought') && r.row.kind === 'transactions').flatMap((r) => r.row.stock_nos || []));
-  if (boughtStocks.size) {
-    const { rows } = await query("SELECT kind, data, stock_nos FROM logistics_items WHERE deleted_at IS NULL AND kind IN ('londonStock','dubaiStock') AND stock_nos && $1::text[]", [[...boughtStocks]]);
-    for (const s of boughtStocks) {
-      if (receiving.has(s)) continue;
-      const row = rows.find((r) => r.kind === 'londonStock' && r.stock_nos.includes(s)) || rows.find((r) => r.stock_nos.includes(s));
-      const m = row?.data?.accessoriesMissing;
-      const list = (Array.isArray(m) ? m : String(m || '').split(',')).map((x) => String(x).trim()).filter(Boolean);
-      if (list.length) missing.push({ stock: s, items: list });
-    }
-  }
+  history.sort((a, b) => (situation.when(b.at) || 0) - (situation.when(a.at) || 0));
 
   // What is with them now: their consignment with us, a sale not delivered yet, our watch on consignment with them, theirs in our safe.
   const WITH = [
@@ -259,8 +295,8 @@ async function situationOf(cs, snap) {
   const withThem = [];
   for (const [role, text] of WITH) {
     for (const r of all.filter((x) => x.roles.has(role))) {
-      if (role === 'awaiting' && r.row.data?.status === 'shipped') continue;
-      withThem.push({ label: text, row: r.row });
+      // Shipped but not delivered is still theirs-to-receive: the app keeps it on the list until it is delivered.
+      withThem.push({ label: role === 'awaiting' && r.row.data?.status === 'shipped' ? 'Sold to them, on its way' : text, row: r.row });
     }
   }
 
@@ -302,8 +338,6 @@ async function situationOf(cs, snap) {
       return { dir: s.dir, stock: s.stock, title: v.summary.title, date: v.summary.date, now: nowOf.get(s.stock) || null, watch: (v.watches || []).find((w) => w.stock_no === s.stock) || null, item: v.id };
     })
     .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-  const sum = (lines) => lines.reduce((a, l) => a + l.items.reduce((b, it) => b + (typeof it === 'string' ? 1 : it.qty), 0), 0);
-
   return {
     counts: {
       transactions: txs.length,
@@ -311,14 +345,15 @@ async function situationOf(cs, snap) {
       shipments_open: shipments.filter((s) => s.open).length,
       stocks: stockList.length,
       with_them: withThem.length,
-      we_give: sum(weGive),
-      they_give: sum(theyGive) + sum(missing),
+      we_give: owed.give_n,
+      they_give: owed.owed_n,
     },
     with_them: withThem.map((w) => ({ label: w.label, item: viewOf.get(w.row.id) })),
-    accessories: { we_give: weGive, they_give: theyGive, missing },
+    accessories: { we_give: owed.we_give, they_give: owed.they_give, missing: owed.missing },
     stocks: stockList,
     shipments,
-    history: history.slice(-40).reverse(),
+    history: history.slice(0, 40),
+    history_total: history.length,
   };
 }
 
@@ -331,20 +366,9 @@ export async function listLogisticsClients({ q = '' } = {}) {
   const rows = snap.clients.map((c) => {
     const link = linkOf(c, snap);
     const recs = snap.filed.get(c.id) || [];
-    let weGive = 0;
-    let theyGive = 0;
-    let txCount = 0;
-    let shipOpen = 0;
-    for (const { row, role } of recs) {
-      if (row.kind === 'transactions') {
-        txCount += 1;
-        for (const it of Array.isArray(row.data?.items) ? row.data.items : []) {
-          if (!pending(it)) continue;
-          if (it.direction === 'give') weGive += qty(it);
-          else theyGive += qty(it);
-        }
-      } else if (row.kind === 'shipments' && (role === 'ship_to' || role === 'ship_from') && situation.shipmentOpen(row.data)) shipOpen += 1;
-    }
+    const txs = recs.filter((r) => r.row.kind === 'transactions').map((r) => r.row);
+    const owed = owedOf(txs, snap);
+    const shipOpen = recs.filter((r) => r.row.kind === 'shipments' && situation.shipmentOpen(r.row.data)).length;
     const stocks = new Set(recs.filter((r) => r.row.kind !== 'shipments').flatMap((r) => r.row.stock_nos || []));
     return {
       id: c.id,
@@ -352,9 +376,9 @@ export async function listLogisticsClients({ q = '' } = {}) {
       country: String(c.data.country || '').trim(),
       us: c.us,
       link,
-      transactions: txCount,
-      we_give: weGive,
-      they_give: theyGive,
+      transactions: txs.length,
+      we_give: owed.give_n,
+      they_give: owed.owed_n,
       shipments_open: shipOpen,
       watches: stocks.size,
     };
@@ -425,6 +449,14 @@ export async function forOurClient(clientId) {
   };
 }
 
+/* A link in the record's history: who, with their number, and how it was decided — so the line says what changed. */
+const linkWords = (l) =>
+  l.client_id
+    ? `${l.client_name || 'a client of ours'} (#${l.client_id}), ${l.how === 'person' ? 'chosen by a person' : l.how === 'name' ? 'by the name' : 'by the watches'}`
+    : l.how === 'person'
+      ? 'none of ours (chosen by a person)'
+      : 'not linked';
+
 /**
  * A person says who a logistics client is: one of our clients (a number), none
  * of ours (null), or "work it out again" ('auto'). Kept apart from the record's
@@ -432,6 +464,7 @@ export async function forOurClient(clientId) {
  */
 export async function setClientLink(itemId, clientId, user) {
   const id = Number(itemId) || 0;
+  if (id > 2147483647) throw bad('No such logistics client', 404);
   const { rows } = await query("SELECT id FROM logistics_items WHERE id = $1 AND kind = 'clients'", [id]);
   if (!rows.length) throw bad('No such logistics client', 404);
   const none = { id, match: { client_id: null, how: null, stocks: [], candidates: [] } };
@@ -442,7 +475,7 @@ export async function setClientLink(itemId, clientId, user) {
   } else {
     const cid = clientId === null ? null : Number(clientId);
     if (cid !== null) {
-      if (!Number.isInteger(cid) || cid <= 0) throw bad('Choose one of our clients');
+      if (!Number.isInteger(cid) || cid <= 0 || cid > 2147483647) throw bad('Choose one of our clients');
       const { rows: ok } = await query('SELECT 1 FROM clients WHERE id = $1 AND deleted_at IS NULL', [cid]);
       if (!ok.length) throw bad('No such client of ours');
     }
@@ -455,11 +488,11 @@ export async function setClientLink(itemId, clientId, user) {
   forgetClientSnapshot();
   const now = await snapshot();
   const after = linkOf(now.byId.get(id) || none, now);
-  if (before.client_id !== after.client_id || before.how !== after.how) {
+  if (linkWords(before) !== linkWords(after)) {
     await query("INSERT INTO logistics_events(item_id, user_id, source, action, changes) VALUES ($1, $2, 'user', 'update', $3)", [
       id,
       user?.id || null,
-      { our_client: [before.client_name || null, after.client_name || null] },
+      { our_client: [linkWords(before), linkWords(after)] },
     ]);
   }
   return after;

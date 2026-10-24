@@ -988,6 +988,7 @@ async function loadClients(more = false) {
 }
 
 async function showClient(id) {
+  lcOurs.r = null; // each visit reads the logistics situation afresh (Edit and Cancel reuse it)
   let c;
   try {
     c = await api(`/api/clients/${id}`);

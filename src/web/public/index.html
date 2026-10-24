@@ -219,7 +219,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 .ov-tile.bad::before { background: var(--bad); }
 .ov-tile.bad b { color: var(--bad); }
 .ov-tile.bad small { color: var(--ink); }
-.ov-tile:hover { border-color: #cdbf9f; }
+a.ov-tile:hover { border-color: #cdbf9f; }
 .ov-tile-label { font-size: 16px; font-weight: 600; }
 .ov-tile b { font: 600 34px/1.1 var(--serif); }
 .ov-tile small { font-size: 14px; color: var(--muted); }
@@ -228,7 +228,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 
 .ov-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; align-items: start; }
 .ov-stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.ov-panel { padding: 18px 20px; }
+.ov-panel { padding: 18px 20px; scroll-margin-top: 72px; }
 .ov-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 4px 16px; }
 .ov-h { font: 600 18px/1.25 var(--sans); margin: 0; color: var(--ink); }
 .ov-n { margin-left: 6px; color: var(--muted); font-weight: 500; }
@@ -321,7 +321,10 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 .cw-now { color: var(--muted); }
 .cw-now:empty { display: none; }
 #lc-found, #clg-found { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-@media (max-width: 767.98px) { .lc-link .btn, #c-logistics .btn, #lc-filters .pill { min-height: 44px; } }
+@media (max-width: 767.98px) {
+  .lc-link .btn, #c-logistics .btn, #lc-filters .pill { min-height: 44px; }
+  .ov-meta a, .lc-link a, .lc-who a, a.lc-back, a.count[href^="#/logistics"] { display: inline-flex; align-items: center; min-height: 44px; }
+}
 
 /* logistics: its own tabs across the top, its lists' kinds in a row under them */
 .lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }

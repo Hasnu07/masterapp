@@ -353,6 +353,24 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   finds 11668 or a timestamp). A logistics contact is hidden only when our
   client of that name is in the same answer. Chips: the HK list by its
   section; the safe (clients' watches) only under All; moved copies never.
+- **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
+  tab "Clients" (was Contacts) lists every logistics client, which of OUR
+  clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds
+  up what the app's own client page shows — with them now, accessories owed
+  either way (the transactions' pending items, plus what a watch bought from
+  them arrived without), their watches with where each is now, shipments,
+  what was given and collected. Our client's page has the same in a Logistics
+  panel, and "now: …" on each of their watches. `src/logistics/clients.js`.
+- **Which of ours it is — by the watches, not the name.** Live: 197 logistics
+  clients, 107 match one of our 647 by name, 87 none, 30 names twice there.
+  So the stock numbers the app ties to the client (purchases by its client
+  id, incomings by supplier, sales by buyer, a place row's "bought from")
+  vote for who OUR watch with that number was bought from / sold to
+  (Chrono Key's ids). A shipment only backs a match up, never makes one (a
+  forwarder in Belfast sent three watches bought from a dealer in Spain); a
+  full name decides only when no watch does. Worked out each time it is shown
+  (held 30 s); a person's choice (`logistics_client_links`, migration 010,
+  NULL = "none of ours") always wins and goes in the record's history.
 - First copy of the June snapshot (on a stand-in worker): 699 records, 18
   lists, 59 pictures. `npm run import -- logistics` runs it by hand.
 - **Found in the logistics app, for its owner** (not ours to fix): its

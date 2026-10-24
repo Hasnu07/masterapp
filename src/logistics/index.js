@@ -738,8 +738,11 @@ export async function overview() {
   ]);
   const withStage = (r) => ({ ...view(r, ctx), stage: situation.stage(r.data).key, late: lateSince(r.data) });
   const [dash, polish] = await Promise.all([dashboard(), needPolish(ctx)]);
+  // Fresh: read, or found unchanged, within three of the minute checks (with them off: within one and a half 15-minute passes).
+  const freshMs = (config.logistics.pollSec > 0 ? Math.max(3 * config.logistics.pollSec, 180) : 1.5 * Math.max(5, config.sync.intervalMin) * 60) * 1000;
   return {
     as_of: at,
+    fresh: Boolean(at && Date.now() - new Date(at).getTime() < freshMs),
     ...dash,
     need_polish: await withWatches(polish),
     // The late ones first.

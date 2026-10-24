@@ -38,8 +38,18 @@ const humanKey = (k) => String(k).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace
 function lgWhen(v) {
   if (v === null || v === undefined || v === '') return '';
   if (typeof v === 'number' || /^\d{10,13}$/.test(String(v))) return fmtWhen(Number(v));
-  if (/^\d{4}-\d{2}-\d{2}/.test(String(v))) return fmtDate(v);
-  return String(v);
+  return dayWords(v);
+}
+
+/* A day as people read it — "20 Jun 2026" — from YYYY-MM-DD or day-first DD/MM/YYYY; anything else as it was typed. */
+const DAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function dayWords(v) {
+  const s = String(v ?? '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${Number(m[3])} ${DAY_MONTHS[Number(m[2]) - 1] || m[2]} ${m[1]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${Number(m[1])} ${DAY_MONTHS[Number(m[2]) - 1] || m[2]} ${m[3]}`;
+  return s;
 }
 
 /* ── values, whatever shape the logistics app gave them ──────────── */
@@ -268,8 +278,8 @@ const stockLinksOf = (i) =>
     .join(' ');
 
 /* A panel's heading: what it is, how many, and a link to its whole tab. */
-const ovHead = (title, n, href, linkText) =>
-  `<div class="ov-head"><h2 class="ov-h">${esc(title)}${n === null || n === undefined ? '' : `<span class="ov-n">${esc(n)}</span>`}</h2>${
+const ovHead = (title, n, href, linkText, level = 'h2') =>
+  `<div class="ov-head"><${level} class="ov-h">${esc(title)}${n === null || n === undefined ? '' : `<span class="ov-n">${esc(n)}</span>`}</${level}>${
     href ? `<a class="ov-more" href="${esc(href)}">${esc(linkText)}</a>` : ''
   }</div>`;
 const ovExplain = (text) => `<p class="ov-explain">${esc(text)}</p>`;
@@ -377,13 +387,33 @@ function ovAgo(at) {
 }
 
 function renderOverview(o) {
-  // "Live" only while the copy really is fresh (read in the last five minutes); older, it says so.
+  // The minute's redraw keeps the keyboard where it was: the same link or button, found again by what it is.
+  const had = document.activeElement;
+  const back = had && had !== document.body && had.closest?.('.ov-panel, #ov-cards')
+    ? { panel: had.closest('.ov-panel, #ov-cards').id, ovall: had.dataset?.ovall, href: had.getAttribute('href'), pick: had.dataset?.psend || had.dataset?.pdone }
+    : null;
+  drawOverview(o);
+  if (back) {
+    const root = document.getElementById(back.panel);
+    const again = back.ovall
+      ? root?.querySelector(`[data-ovall="${CSS.escape(back.ovall)}"]`)
+      : back.pick
+        ? root?.querySelector(`[data-psend="${CSS.escape(back.pick)}"], [data-pdone="${CSS.escape(back.pick)}"]`)
+        : back.href
+          ? root?.querySelector(`[href="${CSS.escape(back.href)}"]`)
+          : null;
+    again?.focus({ preventScroll: true });
+  }
+}
+
+function drawOverview(o) {
+  // "Live" only while the copy is fresh — the server says (read, or found unchanged, within the last few checks).
   if (o.as_of) {
     const at = new Date(o.as_of);
     const time = at.toDateString() === new Date().toDateString() ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : fmtWhen(o.as_of);
     $('#ov-asof').innerHTML =
-      Date.now() - at.getTime() < 5 * 60_000
-        ? `<span class="ov-live" title="Checks the logistics app for changes every minute">Live</span> Updated ${esc(time)}`
+      o.fresh
+        ? `<span class="ov-live" title="Checks the logistics app for changes every minute">Live</span> Up to date at ${esc(time)}`
         : `<span class="ov-stale">Not updated since ${esc(time)}</span> The logistics app has not been read since then.`;
   } else $('#ov-asof').textContent = 'Not read from the logistics app yet';
 
@@ -743,7 +773,7 @@ async function runOverviewSearch() {
     }</span><span class="count" style="margin:0">${esc(c.bought)} bought · ${esc(c.sold)} sold</span></a>`
   );
   const recordRows = r.records.map(
-    (i) => `<div class="lg-line"><span>${stockLinksOf(i) || `<span class="lg-stock">${esc(i.kind_label)}</span>`}</span><a class="grow" href="#/lg/${i.id}" style="color:inherit;text-decoration:none"><span class="ov-strong">${esc(i.summary.title)}</span>${
+    (i) => `<div class="lg-line"><span>${stockLinksOf(i) || `<span class="lg-stock">${esc(i.kind_label)}</span>`}</span><a class="grow" href="${i.kind === 'clients' ? `#/lg-client/${i.id}` : `#/lg/${i.id}`}" style="color:inherit;text-decoration:none"><span class="ov-strong">${esc(i.summary.title)}</span>${
       i.summary.sub ? ` <span class="count" style="margin:0">· ${esc(i.summary.sub)}</span>` : ''
     } <span class="count" style="margin:0">· ${esc(i.kind_label)}</span></a>${lgChip(i.summary.status)}</div>`
   );
@@ -823,6 +853,7 @@ async function showLogisticsItem(id, { editing = false } = {}) {
         <div class="row">${lgStockLinks(it.stock_nos.join(', '), it.watches)} ${it.deleted_at ? '<span class="chip deleted">deleted</span>' : lgChip(it.summary.status)}
           <span class="count" style="margin:0">${esc(k.label)} · ${it.origin === 'manual' ? 'added in masterapp' : 'from the logistics app'}</span></div>
         ${it.summary.sub ? `<p class="desc">${esc(it.summary.sub)}</p>` : ''}
+        ${it.kind === 'clients' && !it.deleted_at ? `<p style="margin:6px 0 0"><a class="ov-more" href="#/lg-client/${it.id}">See their logistics situation</a></p>` : ''}
       </div>
       <div class="row">
         ${editor && !editing ? '<button class="btn primary" id="lg-edit">Edit</button>' : ''}
@@ -1052,8 +1083,31 @@ const lcLine = (title, href, meta = [], side = '') => `<div class="ov-row">
     </div>${side ? `<div class="ov-row-side">${side}</div>` : ''}
   </div>`;
 
+/* What is open with a client, in the same words as its page. */
 const lcOpenWords = (c) =>
-  [c.we_give && `${c.we_give} to give`, c.they_give && `${c.they_give} owed to us`, c.shipments_open && `${c.shipments_open} on the way`].filter(Boolean).join(' · ');
+  [c.we_give && `${c.we_give} we must give`, c.they_give && `${c.they_give} they must give`, c.shipments_open && `${c.shipments_open} on the way`].filter(Boolean).join(' · ');
+
+/* A search box that only ever shows the answer to what is in it now — an older, slower answer is dropped. */
+function lcFinder(input, out, ask, render) {
+  let timer;
+  let seq = 0;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const q = input.value.trim();
+      const mine = ++seq;
+      if (!q) return (out.innerHTML = '');
+      let res;
+      try {
+        res = await ask(q);
+      } catch (err) {
+        if (mine === seq && out.isConnected) out.innerHTML = `<p class="err">The search did not work (${esc(err.message)}). Try again.</p>`;
+        return;
+      }
+      if (mine === seq && out.isConnected) render(res, q);
+    }, 220);
+  });
+}
 
 async function showLogisticsClients() {
   const seq = ++lgPage;
@@ -1072,41 +1126,52 @@ async function showLogisticsClients() {
       <div id="lc-rows">${ovSkeleton}</div>
     </section>`;
   let r;
+  let loadSeq = 0;
   const draw = () => {
     const rows = r.clients.filter((c) => (lc.filter === 'open' ? lcOpenWords(c) : lc.filter === 'unlinked' ? !c.us && !c.link.client_id : true));
+    const filtered = lc.q || lc.filter !== 'all';
     $('#lc-rows').innerHTML =
       `<p class="ov-explain" style="margin-top:12px">${esc(`${r.linked} linked to our clients, ${r.unlinked} not yet.`)}</p>` +
-      ovList(
-        'lc-list',
-        rows,
-        (c) =>
-          lcLine(
-            c.name,
-            `#/lg-client/${c.id}`,
-            [
-              esc(c.country),
-              c.us
-                ? 'one of our own locations'
-                : c.link.client_id
-                  ? `our client <a href="#/client/${c.link.client_id}">${esc(c.link.client_name)}</a>`
-                  : '<span class="ov-warn-text">not linked to our clients yet</span>',
-              c.watches ? esc(`${c.watches} watch${c.watches === 1 ? '' : 'es'}`) : '',
-            ],
-            lcOpenWords(c) ? `<span class="chip lg-warn">${esc(lcOpenWords(c))}</span>` : ''
-          ),
-        lc.q ? `No client matches “${lc.q}”.` : 'No clients here.',
-        40
-      );
+      (rows.length
+        ? ovList(
+            'lc-list',
+            rows,
+            (c) =>
+              lcLine(
+                c.name,
+                `#/lg-client/${c.id}`,
+                [
+                  esc(c.country),
+                  c.us
+                    ? 'one of our own locations'
+                    : c.link.client_id
+                      ? `our client <a href="#/client/${c.link.client_id}">${esc(c.link.client_name)}</a>`
+                      : '<span class="ov-warn-text">not linked to our clients yet</span>',
+                  c.watches ? esc(`${c.watches} watch${c.watches === 1 ? '' : 'es'}`) : '',
+                ],
+                lcOpenWords(c) ? `<span class="chip lg-warn">${esc(lcOpenWords(c))}</span>` : ''
+              ),
+            '',
+            40
+          )
+        : `<div class="ov-empty">${filtered ? `<span class="ov-strong">No client matches${lc.q ? ` “${esc(lc.q)}”` : ''}${lc.filter !== 'all' ? ' with this filter' : ''}.</span> <button type="button" class="btn small" id="lc-clear">Show all clients</button>` : 'The logistics app has no clients yet.'}</div>`);
     ovListToggles($('#lc-rows'), draw);
+    $('#lc-clear')?.addEventListener('click', () => {
+      lc.q = '';
+      lc.filter = 'all';
+      showLogisticsClients();
+    });
   };
   const load = async () => {
+    const mine = ++loadSeq;
     try {
       r = await api(`/api/logistics/client-list?${new URLSearchParams({ q: lc.q })}`);
     } catch (err) {
-      if (seq === lgPage) $('#lc-rows').innerHTML = `<p class="err">${esc(err.message)}</p>`;
+      const box = $('#lc-rows');
+      if (seq === lgPage && mine === loadSeq && box) box.innerHTML = `<p class="err">The clients could not be loaded (${esc(err.message)}). Try again in a moment.</p>`;
       return;
     }
-    if (seq === lgPage && $('#lc-rows')) draw();
+    if (seq === lgPage && mine === loadSeq && $('#lc-rows')) draw();
   };
   let timer;
   $('#lcq').addEventListener('input', (e) => {
@@ -1129,44 +1194,52 @@ async function showLogisticsClients() {
   await load();
 }
 
-/* The situation's figures, as tiles. */
-function lcTiles(n) {
-  const tile = (tone, label, value, help) => `<div class="ov-tile ${tone}"><span class="ov-tile-label">${esc(label)}</span><b>${esc(value)}</b><small>${esc(help)}</small></div>`;
+/* The situation's figures, as tiles that take you to their list. */
+function lcTiles(n, prefix) {
+  const tile = (tone, label, value, help, to) =>
+    `<a class="ov-tile ${tone}" href="#" data-to="${prefix}-${to}"><span class="ov-tile-label">${esc(label)}</span><b>${esc(value)}</b><small>${esc(help)}</small></a>`;
   return `<div class="ov-tiles lc-tiles">${[
-    tile('', 'Watches', n.stocks, 'bought from them or sold to them'),
-    tile('blue', 'With them now', n.with_them, 'on consignment, sold and not delivered, in our safe'),
-    tile(n.we_give ? 'bad' : 'good', 'We must give', n.we_give, n.we_give ? `item${n.we_give === 1 ? '' : 's'} still to give them` : 'nothing — all given'),
-    tile(n.they_give ? 'warn' : 'good', 'They must give', n.they_give, n.they_give ? `item${n.they_give === 1 ? '' : 's'} still to come from them` : 'nothing — all received'),
-    tile('blue', 'On the way', n.shipments_open, `shipment${n.shipments_open === 1 ? '' : 's'} not delivered · ${n.shipments} in all`),
+    tile('', 'Watches', n.stocks, 'bought from them or sold to them', 'stocks'),
+    tile('blue', 'With them now', n.with_them, 'on consignment, sold and not delivered, in our safe', 'with'),
+    tile(n.we_give ? 'bad' : 'good', 'We must give', n.we_give, n.we_give ? `item${n.we_give === 1 ? '' : 's'} still to give them` : 'nothing — all given', 'acc'),
+    tile(n.they_give ? 'warn' : 'good', 'They must give', n.they_give, n.they_give ? `item${n.they_give === 1 ? '' : 's'} still to come from them` : 'nothing — all received', 'acc'),
+    tile('blue', 'On the way', n.shipments_open, `shipment${n.shipments_open === 1 ? '' : 's'} not delivered · ${n.shipments} in all`, 'ships'),
   ].join('')}</div>`;
 }
+const lcTileClicks = (root) =>
+  $$('[data-to]', root).forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById(a.dataset.to)?.scrollIntoView({ block: 'start' });
+    })
+  );
 
 const LC_DIR = { bought: 'Bought from them', sold: 'Sold to them', incoming: 'Coming in from them' };
 const lcItems = (items) => items.map((it) => (typeof it === 'string' ? esc(it) : `${esc(it.accessory)}${it.qty > 1 ? ` × ${esc(it.qty)}` : ''}`)).join(', ');
 
 /* The panels of a situation: what is with them, the accessories, their watches, the shipments, the history. */
-function lcPanels(s, prefix) {
+function lcPanels(s, prefix, level = 'h2') {
+  const head = (title, n) => ovHead(title, n, '', '', level);
+  const sub = level === 'h2' ? 'h3' : 'h5';
   const acc = s.accessories;
   const accLine = (l) => lcLine(`#${l.stock || '—'}${l.title ? ` ${l.title}` : ''}`, `#/lg/${l.tx}`, [lcItems(l.items)]);
   const accessories =
     acc.we_give.length || acc.they_give.length || acc.missing.length
-      ? `${acc.we_give.length ? `<h3 class="ov-subh">We must give them</h3>${acc.we_give.map(accLine).join('')}` : ''}
+      ? `${acc.we_give.length ? `<${sub} class="ov-subh">We must give them</${sub}>${acc.we_give.map(accLine).join('')}` : ''}
          ${
            acc.they_give.length || acc.missing.length
-             ? `<h3 class="ov-subh">They must give us</h3>${acc.they_give.map(accLine).join('')}${acc.missing
+             ? `<${sub} class="ov-subh">They must give us</${sub}>${acc.they_give.map(accLine).join('')}${acc.missing
                  .map((m) => lcLine(`#${m.stock}`, '#/logistics/stock', [`arrived without: ${lcItems(m.items)}`]))
                  .join('')}`
              : ''
          }`
       : ovEmpty('Nothing is owed either way.');
   return {
-    withThem:
-      ovHead('With them now', s.with_them.length) +
-      ovExplain('Watches with them, or theirs with us, right now.') +
+    with: head('With them now', s.with_them.length) + ovExplain('Watches with them, or theirs with us, right now.') +
       ovList(`${prefix}-with`, s.with_them, (w) => lcLine(w.item.summary.title, `#/lg/${w.item.id}`, [esc(w.label), stockLinksOf(w.item), esc(w.item.summary.sub)]), 'Nothing is with them right now.'),
-    accessories: ovHead('Accessories still to settle', null) + ovExplain('Boxes, papers and other items, by watch.') + accessories,
+    acc: head('Accessories still to settle', null) + ovExplain('Boxes, papers and other items, by watch.') + accessories,
     stocks:
-      ovHead('Their watches', s.stocks.length) +
+      head('Their watches', s.stocks.length) +
       ovExplain('Every watch bought from them or sold to them, newest first, and where it is now.') +
       ovList(
         `${prefix}-stocks`,
@@ -1176,12 +1249,12 @@ function lcPanels(s, prefix) {
             esc(LC_DIR[w.dir] || w.dir),
             w.watch ? `<a class="lg-stock" href="#/watch/${w.watch.id}">#${esc(w.stock)}</a>` : `<span class="lg-stock">#${esc(w.stock)}</span>`,
             w.now ? `now: ${esc(w.now.headline)}` : '',
-            w.date ? esc(fmtDate(w.date)) : '',
+            w.date ? esc(lgWhen(w.date.slice(0, 10))) : '',
           ]),
         'No watches with them in the logistics app.'
       ),
-    shipments:
-      ovHead('Shipments', s.shipments.length) +
+    ships:
+      head('Shipments', s.shipments.length) +
       ovExplain('To them and from them — the ones not delivered first.') +
       ovList(
         `${prefix}-ships`,
@@ -1189,8 +1262,9 @@ function lcPanels(s, prefix) {
         (x) => lcLine(x.item.summary.title, `#/lg/${x.item.id}`, [x.dir === 'to_them' ? 'to them' : 'from them', stockLinksOf(x.item), esc(x.item.summary.sub)], lgChip(x.item.summary.status)),
         'No shipments to or from them.'
       ),
-    history:
-      ovHead('Already given and collected', null) +
+    hist:
+      head('Already given and collected', null) +
+      (s.history_total > s.history.length ? ovExplain(`The newest ${s.history.length} of ${s.history_total}.`) : '') +
       ovList(
         `${prefix}-hist`,
         s.history,
@@ -1200,95 +1274,116 @@ function lcPanels(s, prefix) {
   };
 }
 
+/* Our client, on a button that links them: the name, and what tells two of the same name apart. */
+const lcClientButton = (c) =>
+  `<button type="button" class="btn small" data-pick="${c.id}" data-name="${esc(c.name)}">Link to ${esc(c.name)}${[
+    c.company,
+    c.type && clientTypeLabel(c.type),
+    c.country,
+    c.phone && `phone …${String(c.phone).replace(/\D/g, '').slice(-4)}`,
+    `${c.bought} bought · ${c.sold} sold`,
+  ]
+    .filter(Boolean)
+    .map((x) => ` · ${esc(x)}`)
+    .join('')}</button>`;
+
 async function showLogisticsClient(id) {
   const seq = ++lgPage;
-  $('#app').innerHTML = `${lgHeader('contacts')}<a href="#/logistics/contacts" class="count" style="text-decoration:none">← Clients</a><div id="lc-page">${ovSkeleton}</div>`;
+  const here = () => seq === lgPage && location.hash === `#/lg-client/${id}`;
+  $('#app').innerHTML = `${lgHeader('contacts')}<a href="#/logistics/contacts" class="count lc-back" style="text-decoration:none">← Clients</a><div id="lc-page">${ovSkeleton}</div>`;
   let v;
   try {
     v = await api(`/api/logistics/client-view/${id}`);
   } catch (err) {
-    if (seq === lgPage) $('#lc-page').innerHTML = `<p class="err">${esc(err.message)}</p>`;
+    if (here() && $('#lc-page')) $('#lc-page').innerHTML = `<p class="err">This client could not be loaded (${esc(err.message)}).</p>`;
     return;
   }
-  if (seq !== lgPage || !$('#lc-page')) return;
-  const draw = () => {
-    const p = lcPanels(v.situation, 'lc');
-    $('#lc-page').innerHTML = `
-      <h1 class="lg-title">${esc(v.name)}</h1>
-      <p class="sub">${[v.country, v.phone, v.notes].filter(Boolean).map(esc).join(' · ') || 'Logistics client'}</p>
-      <section class="panel ov-panel lc-link" id="lc-link"></section>
-      ${lcTiles(v.situation.counts)}
-      <div class="ov-cols">
-        <div class="ov-stack"><section class="panel ov-panel" style="order:1">${p.withThem}</section><section class="panel ov-panel" style="order:2">${p.accessories}</section><section class="panel ov-panel" style="order:4">${p.shipments}</section></div>
-        <div class="ov-stack"><section class="panel ov-panel" style="order:3">${p.stocks}</section><section class="panel ov-panel" style="order:5">${p.history}</section></div>
-      </div>`;
-    $$('#lc-page .ov-panel').forEach((panel) => ovListToggles(panel, draw));
-    drawLink();
+  if (!here() || !$('#lc-page')) return;
+  const PANELS = [
+    ['with', 1, 'left'],
+    ['acc', 2, 'left'],
+    ['ships', 4, 'left'],
+    ['stocks', 3, 'right'],
+    ['hist', 5, 'right'],
+  ];
+  $('#lc-page').innerHTML = `
+    <h2 class="lg-title">${esc(v.name)}</h2>
+    <p class="sub">${[v.country, v.phone, v.notes].filter(Boolean).map(esc).join(' · ') || 'Logistics client'}</p>
+    <section class="panel ov-panel lc-link" id="lc-link"></section>
+    ${lcTiles(v.situation.counts, 'lc')}
+    <div class="ov-cols">
+      <div class="ov-stack">${PANELS.filter((p) => p[2] === 'left').map(([k, o]) => `<section class="panel ov-panel" id="lc-${k}" style="order:${o}"></section>`).join('')}</div>
+      <div class="ov-stack">${PANELS.filter((p) => p[2] === 'right').map(([k, o]) => `<section class="panel ov-panel" id="lc-${k}" style="order:${o}"></section>`).join('')}</div>
+    </div>`;
+  lcTileClicks($('#lc-page'));
+  // Each panel redraws itself only ("Show all"), never the link box above with a search typed in it.
+  const drawPanel = (key) => {
+    const box = $(`#lc-${key}`);
+    if (!box) return;
+    box.innerHTML = lcPanels(v.situation, 'lc')[key];
+    ovListToggles(box, () => drawPanel(key));
   };
-  const drawLink = () => {
-    const L = v.link;
-    const editor = can('editor');
-    const same = v.same_name.length
-      ? `<p class="ov-explain">Also in the logistics app with the same name: ${v.same_name.map((x) => `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>${x.country ? ` (${esc(x.country)})` : ''}`).join(', ')}.</p>`
-      : '';
-    $('#lc-link').innerHTML = v.us
-      ? '<p class="ov-explain" style="margin:0">This is one of our own locations in the logistics app, not a client.</p>'
-      : `${
-          L.client_id
-            ? `<p class="lc-who">Our client: <a href="#/client/${L.client_id}">${esc(L.client_name)}</a> <span class="count" style="margin:0">— ${esc(lcReason(L))}</span></p>`
-            : `<p class="lc-who">${L.how === 'person' ? 'A person said this is none of our clients.' : 'Not linked to one of our clients yet.'}</p>${
-                v.candidates.length
-                  ? `<p class="ov-explain">Maybe: ${v.candidates
-                      .map((x) =>
-                        editor
-                          ? `<button type="button" class="btn small" data-link="${x.client_id}">${esc(x.name)}${x.stocks.length ? ` — ${x.stocks.length} watch${x.stocks.length === 1 ? '' : 'es'}` : ' — same name'}</button>`
-                          : `<a href="#/client/${x.client_id}">${esc(x.name)}</a>`
-                      )
-                      .join(' ')}</p>`
-                  : ''
-              }`
-        }${same}${editor ? '<div class="row"><button type="button" class="btn small" id="lc-change">Choose another client</button></div><div id="lc-chooser"></div>' : ''}`;
-    $$('#lc-link [data-link]').forEach((b) => b.addEventListener('click', () => setLink(Number(b.dataset.link))));
-    $('#lc-change')?.addEventListener('click', openChooser);
-  };
-  const setLink = async (clientId) => {
+  PANELS.forEach(([k]) => drawPanel(k));
+
+  const setLink = async (clientId, buttons) => {
+    buttons.forEach((b) => (b.disabled = true));
     try {
       await api(`/api/logistics/client-view/${v.id}/link`, { method: 'PUT', body: { client_id: clientId } });
-      flash(clientId === null ? 'Marked as none of our clients' : clientId === 'auto' ? 'Worked out again from the watches' : 'Linked to our client');
-      showLogisticsClient(v.id);
+      flash(clientId === null ? 'Marked as not our client' : clientId === 'auto' ? 'Worked out again from the watches' : 'Linked to our client');
+      if (location.hash === `#/lg-client/${v.id}`) showLogisticsClient(v.id);
     } catch (err) {
+      buttons.forEach((b) => (b.disabled = false));
       flash(err.message, true);
     }
   };
-  const openChooser = () => {
+  const box = $('#lc-link');
+  const L = v.link;
+  const editor = can('editor');
+  const same = v.same_name.length
+    ? `<p class="ov-explain">Also in the logistics app with the same name: ${v.same_name.map((x) => `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>${x.country ? ` (${esc(x.country)})` : ''}`).join(', ')}.</p>`
+    : '';
+  box.innerHTML = v.us
+    ? '<p class="ov-explain" style="margin:0">This is one of our own locations in the logistics app, not a client.</p>'
+    : `${
+        L.client_id
+          ? `<p class="lc-who">Our client: <a href="#/client/${L.client_id}">${esc(L.client_name)}</a> <span class="count" style="margin:0">— ${esc(lcReason(L))}</span></p>`
+          : `<p class="lc-who">${L.how === 'person' ? 'A person said this is not one of our clients.' : 'Not linked to one of our clients yet.'}</p>${
+              v.candidates.length
+                ? `<p class="ov-explain">It may be: ${v.candidates
+                    .map((x) =>
+                      editor
+                        ? `<button type="button" class="btn small" data-link="${x.client_id}">Link to ${esc(x.name)}${x.stocks.length ? ` — ${x.stocks.length} watch${x.stocks.length === 1 ? '' : 'es'} in both` : ' — same name'}</button>`
+                        : `<a href="#/client/${x.client_id}">${esc(x.name)}</a>`
+                    )
+                    .join(' ')}</p>`
+                : ''
+            }`
+      }${same}${editor ? '<div class="row"><button type="button" class="btn small" id="lc-change">Choose another client</button></div><div id="lc-chooser"></div>' : ''}`;
+  $$('#lc-link [data-link]').forEach((b) => b.addEventListener('click', () => setLink(Number(b.dataset.link), $$('#lc-link button'))));
+  $('#lc-change')?.addEventListener('click', () => {
     $('#lc-chooser').innerHTML = `<div class="ov-form">
         <label>Our client<input type="search" id="lc-find" placeholder="A name, a company or a phone number" autocomplete="off"></label>
         <div id="lc-found"></div>
         <div class="row" style="margin-top:8px">
-          <button type="button" class="btn small" id="lc-none">None of our clients</button>
-          ${v.link.how === 'person' ? '<button type="button" class="btn small" id="lc-auto">Work it out from the watches again</button>' : ''}
+          <button type="button" class="btn small" id="lc-none">Mark as not our client</button>
+          ${L.how === 'person' ? '<button type="button" class="btn small" id="lc-auto">Work it out from the watches again</button>' : ''}
           <button type="button" class="btn small" id="lc-cancel">Cancel</button>
         </div></div>`;
     $('#lc-find').focus();
-    let timer;
-    $('#lc-find').addEventListener('input', (e) => {
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        const q = e.target.value.trim();
-        if (!q) return ($('#lc-found').innerHTML = '');
-        const res = await api(`/api/clients?${new URLSearchParams({ q, limit: 8 })}`).catch(() => ({ clients: [] }));
-        if (!$('#lc-found')) return;
-        $('#lc-found').innerHTML = res.clients.length
-          ? res.clients.map((c) => `<button type="button" class="btn small" data-pick="${c.id}">${esc(c.name)}${c.company ? ` · ${esc(c.company)}` : ''}</button>`).join(' ')
-          : '<p class="ov-explain">No client of ours matches.</p>';
-        $$('#lc-found [data-pick]').forEach((b) => b.addEventListener('click', () => setLink(Number(b.dataset.pick))));
-      }, 220);
+    lcFinder($('#lc-find'), $('#lc-found'), (q) => api(`/api/clients?${new URLSearchParams({ q, limit: 8 })}`), (res) => {
+      $('#lc-found').innerHTML = res.clients.length ? res.clients.map(lcClientButton).join(' ') : '<p class="ov-explain">No client of ours matches.</p>';
+      $$('#lc-found [data-pick]').forEach((b) => b.addEventListener('click', () => setLink(Number(b.dataset.pick), $$('#lc-link button'))));
     });
-    $('#lc-none').addEventListener('click', () => setLink(null));
-    $('#lc-auto')?.addEventListener('click', () => setLink('auto'));
-    $('#lc-cancel').addEventListener('click', () => ($('#lc-chooser').innerHTML = ''));
-  };
-  draw();
+    $('#lc-chooser').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') $('#lc-cancel').click();
+    });
+    $('#lc-none').addEventListener('click', () => setLink(null, $$('#lc-link button')));
+    $('#lc-auto')?.addEventListener('click', () => setLink('auto', $$('#lc-link button')));
+    $('#lc-cancel').addEventListener('click', () => {
+      $('#lc-chooser').innerHTML = '';
+      $('#lc-change')?.focus();
+    });
+  });
 }
 
 /*
@@ -1296,30 +1391,43 @@ async function showLogisticsClient(id) {
  * logistics client(s) that are them, what is with them and owed either way,
  * shipments on the way — and where each of their watches is now. When none is
  * linked yet: the logistics clients that may be them, to link in one tap.
+ * Read once per visit: Edit and Cancel, and "Show all", draw it again from what
+ * was read.
  */
-async function loadClientLogistics(c) {
+const lcOurs = { id: null, r: null };
+async function loadClientLogistics(c, { fresh = false } = {}) {
   const box = $('#c-logistics');
   if (!box) return;
-  const here = () => location.hash === `#/client/${c.id}` && $('#c-logistics');
-  let r;
-  try {
-    r = await api(`/api/clients/${c.id}/logistics`);
-  } catch (err) {
-    if (here()) box.innerHTML = `<h3>Logistics</h3><p class="err">${esc(err.message)}</p>`;
-    return;
+  if (fresh || lcOurs.id !== c.id || !lcOurs.r) {
+    let r;
+    try {
+      r = await api(`/api/clients/${c.id}/logistics`);
+    } catch (err) {
+      if (box.isConnected && location.hash === `#/client/${c.id}`) box.innerHTML = `<h3>Logistics</h3><p class="err">The logistics situation could not be loaded (${esc(err.message)}).</p>`;
+      return;
+    }
+    Object.assign(lcOurs, { id: c.id, r });
   }
-  if (!here()) return;
+  const now = $('#c-logistics');
+  if (now && location.hash === `#/client/${c.id}`) renderClientLogistics(c, now, lcOurs.r);
+}
+
+function renderClientLogistics(c, box, r) {
   $$('.cw-now').forEach((el) => {
     const n = r.watch_now[el.dataset.stock];
-    if (n) el.textContent = `now: ${n.headline}`;
+    el.textContent = n ? `now: ${n.headline}` : '';
   });
   const editor = can('editor');
-  const link = async (lcId) => {
+  const link = async (lc0, buttons) => {
+    // A logistics client already linked to another of our clients moves only when the person says so.
+    if (lc0.link?.client_id && lc0.link.client_id !== c.id && !window.confirm(`${lc0.name} is linked to ${lc0.link.client_name}. Link it to ${c.name} instead?`)) return;
+    buttons.forEach((b) => (b.disabled = true));
     try {
-      await api(`/api/logistics/client-view/${lcId}/link`, { method: 'PUT', body: { client_id: c.id } });
+      await api(`/api/logistics/client-view/${lc0.id}/link`, { method: 'PUT', body: { client_id: c.id } });
       flash('Linked to the logistics client');
-      loadClientLogistics(c);
+      if (location.hash === `#/client/${c.id}`) loadClientLogistics(c, { fresh: true });
     } catch (err) {
+      buttons.forEach((b) => (b.disabled = false));
       flash(err.message, true);
     }
   };
@@ -1328,43 +1436,40 @@ async function loadClientLogistics(c) {
       <p class="ov-explain" style="margin-top:0">Not linked to a client in the logistics app yet.</p>
       ${
         r.suggestions.length
-          ? `<p class="ov-explain">Maybe: ${r.suggestions
+          ? `<p class="ov-explain">It may be: ${r.suggestions
               .map((x) =>
                 editor
-                  ? `<button type="button" class="btn small" data-lc="${x.id}">${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ''}${x.stocks.length ? ` — ${x.stocks.length} watch${x.stocks.length === 1 ? '' : 'es'}` : ''}</button>`
+                  ? `<button type="button" class="btn small" data-lc="${x.id}">Link to ${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ''}${x.stocks.length ? ` — ${x.stocks.length} watch${x.stocks.length === 1 ? '' : 'es'} in both` : ''}</button>`
                   : `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>`
               )
               .join(' ')}</p>`
           : ''
       }
       ${editor ? '<label class="count" style="display:block;margin:8px 0 0">Find them in the logistics app<input type="search" id="clg-find" placeholder="Their name there" autocomplete="off"></label><div id="clg-found"></div>' : ''}`;
-    $$('#c-logistics [data-lc]').forEach((b) => b.addEventListener('click', () => link(Number(b.dataset.lc))));
-    let timer;
-    $('#clg-find')?.addEventListener('input', (e) => {
-      clearTimeout(timer);
-      timer = setTimeout(async () => {
-        const q = e.target.value.trim();
-        if (!q) return ($('#clg-found').innerHTML = '');
-        const res = await api(`/api/logistics/client-list?${new URLSearchParams({ q })}`).catch(() => ({ clients: [] }));
-        if (!$('#clg-found')) return;
+    $$('#c-logistics [data-lc]').forEach((b) =>
+      b.addEventListener('click', () => link(r.suggestions.find((x) => String(x.id) === b.dataset.lc) || { id: Number(b.dataset.lc) }, $$('#c-logistics button')))
+    );
+    if ($('#clg-find')) {
+      lcFinder($('#clg-find'), $('#clg-found'), (q) => api(`/api/logistics/client-list?${new URLSearchParams({ q })}`), (res) => {
         const list = res.clients.filter((x) => !x.us).slice(0, 8);
         $('#clg-found').innerHTML = list.length
           ? list
               .map(
                 (x) =>
-                  `<button type="button" class="btn small" data-lc="${x.id}">${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ''}${x.link.client_id ? ` — now: ${esc(x.link.client_name)}` : ''}</button>`
+                  `<button type="button" class="btn small" data-lc="${x.id}">Link to ${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ''}${x.watches ? ` · ${x.watches} watch${x.watches === 1 ? '' : 'es'}` : ''}${
+                    x.link.client_id ? ` · now linked to ${esc(x.link.client_name)}` : ''
+                  }</button>`
               )
               .join(' ')
           : '<p class="ov-explain">Nobody in the logistics app matches.</p>';
-        $$('#clg-found [data-lc]').forEach((b) => b.addEventListener('click', () => link(Number(b.dataset.lc))));
-      }, 220);
-    });
+        $$('#clg-found [data-lc]').forEach((b) => b.addEventListener('click', () => link(list.find((x) => String(x.id) === b.dataset.lc), $$('#c-logistics button'))));
+      });
+    }
     return;
   }
   const s = r.situation;
   const n = s.counts;
   const fig = (value, label, tone = '') => `<div class="${tone}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
-  const p = lcPanels(s, 'clg');
   box.innerHTML = `<h3>Logistics</h3>
     <p class="lc-who" style="margin-top:0">In the logistics app: ${r.linked
       .map((x) => `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>${x.country ? ` (${esc(x.country)})` : ''} <span class="count" style="margin:0">— ${esc(lcReason(x.link))}</span>`)
@@ -1375,11 +1480,17 @@ async function loadClientLogistics(c) {
       ${fig(n.they_give, n.they_give === 1 ? 'item they must give' : 'items they must give', n.they_give ? 'owed' : '')}
       ${fig(n.shipments_open, 'on the way')}
     </div>
-    <div class="lc-part">${p.withThem}</div>
-    <div class="lc-part">${p.accessories}</div>
-    <div class="lc-part">${p.shipments}</div>
+    <div class="lc-part" id="clg-with"></div>
+    <div class="lc-part" id="clg-acc"></div>
+    <div class="lc-part" id="clg-ships"></div>
     <p style="margin:12px 0 0">${r.linked.map((x) => `<a class="ov-more" href="#/lg-client/${x.id}">See everything for ${esc(x.name)} in Logistics</a>`).join('<br>')}</p>`;
-  $$('#c-logistics .lc-part').forEach((part) => ovListToggles(part, () => loadClientLogistics(c)));
+  const drawPart = (key) => {
+    const part = $(`#clg-${key}`);
+    if (!part) return;
+    part.innerHTML = lcPanels(s, 'clg', 'h4')[key];
+    ovListToggles(part, () => drawPart(key));
+  };
+  ['with', 'acc', 'ships'].forEach(drawPart);
 }
 
 /* ── on a watch's page ──────────────────────────────────────────── */

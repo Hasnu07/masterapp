@@ -716,7 +716,31 @@ test('a logistics client is our client by the watches, else by a full name; a pe
   assert.equal((await m.lgc.forOurClient(x)).linked.length, 1);
   await assert.rejects(m.lgc.setClientLink(two.id, 999999, null), /No such client of ours/);
   const events = await db("SELECT changes FROM logistics_events WHERE item_id = $1 AND source = 'user' ORDER BY id", [two.id]);
-  assert.deepEqual(events.rows.map((e) => e.changes.our_client), [['Bertrand Twofold', null], [null, 'Bertrand Twofold']], 'each change in its history');
+  assert.deepEqual(
+    events.rows.map((e) => e.changes.our_client),
+    [
+      [`Bertrand Twofold (#${x}), by the watches`, 'none of ours (chosen by a person)'],
+      ['none of ours (chosen by a person)', `Bertrand Twofold (#${x}), by the watches`],
+    ],
+    'each change in its history, saying what was decided'
+  );
+  // A person's link to a client of ours deleted since counts for nothing: the worked-out match shows instead.
+  const z = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Zed', 'Gone', 'manual') RETURNING id")).rows[0].id;
+  await m.lgc.setClientLink(two.id, z, null);
+  await db('UPDATE clients SET deleted_at = now(), updated_at = now() WHERE id = $1', [z]);
+  const after = (await m.lgc.listLogisticsClients()).clients.find((c) => c.name === 'Buyer Two').link;
+  assert.deepEqual([after.client_id, after.how], [x, 'watches']);
+  await m.lgc.setClientLink(two.id, 'auto', null);
+
+  // Names in any script are names; a consignment says which way it goes.
+  assert.equal(m.lgc.normName('  محمد  العلي '), 'محمد العلي');
+  assert.equal(m.lgc.normName('Rooh Ul-Amín'), 'rooh ul amin');
+  const add = (kind, data, stock) => db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ($1, $2, $3, 'manual')", [kind, data, stock]);
+  await add('londonStock', { stockNumber: '2801', status: 'consignment', consignment: { with: 'Buyer Two', direction: 'from_client' } }, ['2801']);
+  await add('londonStock', { stockNumber: '2802', status: 'consignment', consignment: { with: 'Buyer Two', direction: 'to_client' } }, ['2802']);
+  await add('readyForDelivery', { stockNumber: '2803', soldToBuyer: 'Buyer Two', status: 'shipped' }, ['2803']);
+  const w = (await m.lgc.logisticsClient(two.id)).situation.with_them.map((x) => `${x.label}:${x.item.stock_nos[0]}`).sort();
+  assert.deepEqual(w, ['On consignment from them:2801', 'Ours, on consignment with them:2802', 'Sold to them, on its way:2803']);
 
   // The API: anyone signed in reads, only an editor links, and only with a client of ours, none, or auto.
   const admin = client();
