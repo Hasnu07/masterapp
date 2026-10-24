@@ -10,6 +10,7 @@ import * as rates from '../rates/index.js';
 import * as clients from '../clients/index.js';
 import * as expenses from '../expenses/index.js';
 import * as logistics from '../logistics/index.js';
+import * as lgClients from '../logistics/clients.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -574,6 +575,20 @@ export function createServer() {
     need('editor'),
     wrap(async (req, res) => res.status(201).json({ id: await logistics.createItem(String(req.body?.kind || ''), req.body?.data || {}, req.user) }))
   );
+
+  // A client's logistics situation: the Logistics → Clients tab, one logistics client, and who of ours it is.
+  app.get('/api/logistics/client-list', need('viewer'), wrap(async (req, res) => res.json(await lgClients.listLogisticsClients({ q: String(req.query.q || '') }))));
+  app.get('/api/logistics/client-view/:id', need('viewer'), wrap(async (req, res) => res.json(await lgClients.logisticsClient(req.params.id))));
+  app.put(
+    '/api/logistics/client-view/:id/link',
+    need('editor'),
+    wrap(async (req, res) => {
+      const v = req.body?.client_id;
+      if (!(v === null || v === 'auto' || (Number.isInteger(v) && v > 0))) return res.status(400).json({ error: 'client_id must be one of our clients, null (none of ours) or "auto"' });
+      res.json({ link: await lgClients.setClientLink(req.params.id, v, req.user) });
+    })
+  );
+  app.get('/api/clients/:id/logistics', need('viewer'), wrap(async (req, res) => res.json(await lgClients.forOurClient(req.params.id))));
   app.patch(
     '/api/logistics/items/:id',
     need('editor'),

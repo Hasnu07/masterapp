@@ -146,7 +146,7 @@ function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
   const [, page, id] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics' }[page] || page || 'inventory';
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics', 'lg-client': 'logistics' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   menu(false);
   window.scrollTo(0, 0);
@@ -159,6 +159,7 @@ function route() {
   if (page === 'logistics') return showLogistics(id);
   if (page === 'lg' && id) return showLogisticsItem(Number(id));
   if (page === 'lg-new' && id) return showNewLogisticsItem(id);
+  if (page === 'lg-client' && id) return showLogisticsClient(Number(id));
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -1010,7 +1011,7 @@ function renderClient(c, editing) {
           ${w.photo_id ? `<img src="/api/photos/${w.photo_id}?thumb=1" alt="" loading="lazy">` : '<span class="cw-none"></span>'}
           <span class="cw-main"><b>${esc(w.stock_no || '')}</b> ${esc(w.title)}<span class="count" style="display:block;margin:0">${chip(w.status)} ${esc(
             fmtDate(side === 'bought' ? w.purchase_date : w.sale_date)
-          )}</span></span>
+          )} <span class="cw-now" data-stock="${esc(w.stock_no || '')}"></span></span></span>
           <span class="cw-price">${dealPrice(w, side) || '<span class="blank">—</span>'}</span>
         </a>`
       )
@@ -1039,6 +1040,7 @@ function renderClient(c, editing) {
         <div class="panel"><h3>Sold to them · ${c.sold.length}</h3><div class="cw" id="cw-sold">${watchRows(c.sold, 'sold')}</div></div>
       </div>
       <div class="stack">
+        <div class="panel" id="c-logistics"><h3>Logistics</h3><p class="count">Reading the logistics app…</p></div>
         ${
           editing
             ? `<form class="panel" id="cform"><h3>Client</h3><div class="form-grid">${F.map((f) =>
@@ -1066,6 +1068,7 @@ function renderClient(c, editing) {
   });
   $('#cedit')?.addEventListener('click', () => renderClient(c, true));
   $('#ccancel')?.addEventListener('click', () => renderClient(c, false));
+  loadClientLogistics(c);
   $('#cform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const patch = {};

@@ -23,7 +23,7 @@ export const GROUPS = [
   { key: 'accessories', label: 'Accessories' },
   { key: 'services', label: 'Polish & services' },
   { key: 'costs', label: 'Costs' },
-  { key: 'contacts', label: 'Contacts' },
+  { key: 'contacts', label: 'Clients' },
   { key: 'log', label: 'Activity' },
 ];
 
@@ -105,7 +105,21 @@ const spec = (d) => {
   let model = String(d.watchModel || d.model || d.description || '').trim();
   // "Rolex Rolex Daytona": the model often repeats the brand (as Chrono Key's does — watches/fields.js displayTitle).
   if (brand && model.toLowerCase().startsWith(`${brand.toLowerCase()} `)) model = model.slice(brand.length + 1);
-  return [brand, model, d.watchReference || d.reference].filter(Boolean).join(' ');
+  let ref = String(d.watchReference || d.reference || '').trim();
+  if (brand && ref.toLowerCase().startsWith(`${brand.toLowerCase()} `)) ref = ref.slice(brand.length + 1);
+  // …and the reference, already in the model ("Patek Philippe 5740/1G-001 5740/1G-001").
+  return [brand, model, ref && !model.toLowerCase().includes(ref.toLowerCase()) && ref].filter(Boolean).join(' ');
+};
+
+/* A day as people read it ("20 Jun 2026") when it is one; anything else as it was typed. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const dayWords = (v) => {
+  const s = String(v ?? '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1] || m[2]} ${m[1]}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${Number(m[1])} ${MONTHS[Number(m[2]) - 1] || m[2]} ${m[3]}`;
+  return s;
 };
 
 /* A place's own corners: London's Mayfair and NCL, Dubai's office and safe. */
@@ -263,8 +277,9 @@ export const KINDS = [
       f('notes', 'Notes', 'longtext'),
     ],
     summary: (d) => ({
-      title: [d.brand, d.reference].filter(Boolean).join(' ') || 'Incoming watch',
-      sub: join(d.supplier && `from ${d.supplier}`, (d.inventoryDest || d.location) && `to ${d.inventoryDest || d.location}`, d.eta && `expected ${d.eta}`),
+      title: spec({ brand: d.brand, reference: d.reference }) || 'Incoming watch',
+      // "Where it is" is where the watch IS — only "Going to" is where it goes.
+      sub: join(d.supplier && `from ${d.supplier}`, d.inventoryDest ? `to ${d.inventoryDest}` : d.location && `now in ${d.location}`, d.eta && `expected ${dayWords(d.eta)}`),
       status: d.status || 'pending',
       date: d.arrivedAt || d.createdAt,
     }),

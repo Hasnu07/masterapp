@@ -24,7 +24,8 @@ const LG_TONE = [
 const lgChip = (s) => {
   if (!s) return '';
   const tone = LG_TONE.find(([re]) => re.test(s))?.[1] || 'lg-muted';
-  return `<span class="chip ${tone}">${esc(String(s).replace(/_/g, ' '))}</span>`;
+  const words = String(s).replace(/_/g, ' ');
+  return `<span class="chip ${tone}">${esc(words.charAt(0).toUpperCase() + words.slice(1))}</span>`;
 };
 
 const lgKinds = () => state.meta?.logistics?.kinds || [];
@@ -147,6 +148,9 @@ let lgSeq = 0;
 let lgShown = [];
 async function showLogistics(group) {
   if (!group || group === 'overview') return showLogisticsOverview();
+  // The Clients tab shows each client's situation; its records, as lists, are one link away.
+  if (group === 'contacts') return showLogisticsClients();
+  if (group === 'contacts-all') group = 'contacts';
   lgPage += 1;
   if (!lgGroups().some((g) => g.key === group)) {
     location.hash = '#/logistics';
@@ -249,10 +253,10 @@ async function loadLogistics(more = false) {
  * 24 Oct 2026: "easy to understand even for a dumb person"; .ux-profile.md):
  * five tiles in plain words, then search, then each list with one line per
  * thing and a short sentence saying what it is. Every watch it names is OUR
- * watch, linked to its page. Refreshed every minute while open; the search
- * and an open polish form are left alone by the refresh.
+ * watch, linked to its page. Refreshed every minute while open; the search, an
+ * open polish form and a list opened in full are left alone by the refresh.
  */
-const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, polishAll: false, timer: null, typing: null, data: null };
+const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, open: new Set(), timer: null, typing: null, data: null };
 
 /* A record's stock numbers: to our watch's page where we hold it, else to the record. */
 const stockLinksOf = (i) =>
@@ -263,7 +267,7 @@ const stockLinksOf = (i) =>
     })
     .join(' ');
 
-/* A panel's heading: what it is, how many, and where to see them all. */
+/* A panel's heading: what it is, how many, and a link to its whole tab. */
 const ovHead = (title, n, href, linkText) =>
   `<div class="ov-head"><h2 class="ov-h">${esc(title)}${n === null || n === undefined ? '' : `<span class="ov-n">${esc(n)}</span>`}</h2>${
     href ? `<a class="ov-more" href="${esc(href)}">${esc(linkText)}</a>` : ''
@@ -275,17 +279,33 @@ const ovSkeleton = '<div class="ov-skel"></div><div class="ov-skel"></div><div c
 /* One line per thing: what it is (to its page), then where it stands and its watches. */
 const ovRow = (i, side = '') => `<div class="ov-row">
     <div class="ov-row-main">
-      <a class="ov-title" href="#/lg/${i.id}" title="${esc(i.summary.title)}">${esc(i.summary.title)}</a>
+      <a class="ov-title" href="#/lg/${i.id}">${esc(i.summary.title)}</a>
       <div class="ov-meta"><span>${stockLinksOf(i)}</span><span>${esc(i.summary.sub)}</span></div>
     </div>${side ? `<div class="ov-row-side">${side}</div>` : ''}
   </div>`;
 
-/* The first few of a list, and a way to all of them. */
+/* The first few of a list, and all of them in place on "Show all" — the same list, not a tab with others in it. */
 const OV_ROWS = 6;
-const ovList = (items, render, href, noun, empty) =>
-  items.length
-    ? items.slice(0, OV_ROWS).map(render).join('') + (items.length > OV_ROWS ? `<a class="ov-all" href="${esc(href)}">Show all ${items.length} ${esc(noun)}</a>` : '')
-    : ovEmpty(empty);
+function ovList(id, items, render, empty, rows = OV_ROWS) {
+  if (!items.length) return ovEmpty(empty);
+  const all = ov.open.has(id);
+  return (
+    (all ? items : items.slice(0, rows)).map(render).join('') +
+    (items.length > rows ? `<button type="button" class="ov-all ov-all-btn" data-ovall="${id}">${all ? 'Show fewer' : `Show all ${items.length}`}</button>` : '')
+  );
+}
+/* "Show all" / "Show fewer": redraw that panel only, and keep the keyboard on the button. */
+function ovListToggles(root, redraw) {
+  $$('[data-ovall]', root).forEach((b) =>
+    b.addEventListener('click', () => {
+      const id = b.dataset.ovall;
+      if (ov.open.has(id)) ov.open.delete(id);
+      else ov.open.add(id);
+      redraw();
+      $(`[data-ovall="${id}"]`)?.focus();
+    })
+  );
+}
 
 async function showLogisticsOverview() {
   const seq = ++lgPage;
@@ -294,14 +314,17 @@ async function showLogisticsOverview() {
   clearTimeout(ov.typing);
   ov.form = null;
   ov.data = null;
-  // The panels flow down two balanced columns (CSS columns), so a short panel leaves no hole beside a long one
-  // (24 Oct 2026: "too much empty whitespace"). In order of what matters; on a phone, one column in that order.
-  const panel = (id) => `<section class="panel ov-panel" id="${id}">${ovSkeleton}</section>`;
+  // Two columns, each stacking its own panels — no hole beside a short one ("too much empty whitespace"), and no
+  // panel jumping sides when a list grows. On a phone, one column, in order of what matters (order: n).
+  const panel = (id, order) => `<section class="panel ov-panel" id="${id}" style="order:${order}">${ovSkeleton}</section>`;
   $('#app').innerHTML = `${lgHeader('overview', '<span class="ov-asof" id="ov-asof">Reading the latest…</span>')}
     <div class="ov-banner" id="ov-error" role="alert"></div>
     <div class="ov-tiles" id="ov-cards">${'<div class="ov-tile ov-skel-tile"></div>'.repeat(5)}</div>
     <section class="panel ov-panel" id="ov-search"></section>
-    <div class="ov-cols">${['ov-moving', 'ov-ready', 'ov-polish', 'ov-donut', 'ov-coming', 'ov-places', 'ov-cost', 'ov-acc', 'ov-recent'].map(panel).join('')}</div>`;
+    <div class="ov-cols">
+      <div class="ov-stack">${panel('ov-moving', 1)}${panel('ov-ready', 2)}${panel('ov-polish', 3)}${panel('ov-coming', 5)}</div>
+      <div class="ov-stack">${panel('ov-donut', 4)}${panel('ov-places', 6)}${panel('ov-cost', 7)}${panel('ov-acc', 8)}${panel('ov-recent', 9)}</div>
+    </div>`;
   renderOverviewSearch();
   await loadOverview(still);
 }
@@ -321,10 +344,17 @@ async function loadOverview(still) {
     ov.data = o;
     $('#ov-error').textContent = '';
     renderOverview(o);
-  } catch {
+  } catch (err) {
     if (!shown()) return;
-    if (ov.data) $('#ov-asof').textContent = 'Could not refresh — showing the last figures. Trying again in a minute.';
-    else $('#ov-error').textContent = 'The overview could not be loaded. Check the connection — it tries again every minute.';
+    // fetch itself failing is the connection; anything else is the server (errors: say which, and what to do).
+    const what = err instanceof TypeError ? 'The connection dropped.' : `The server had a problem (${err.message}).`;
+    if (ov.data) $('#ov-asof').textContent = `Could not refresh — ${what} Showing the last figures; trying again in a minute.`;
+    else {
+      $('#ov-asof').textContent = 'Not loaded';
+      $('#ov-error').textContent = `The overview could not be loaded. ${what} It tries again every minute.`;
+      $('#ov-cards').innerHTML = '';
+      $$('.ov-panel .ov-skel').forEach((s) => s.remove());
+    }
   } finally {
     clearTimeout(ov.timer);
     if (shown()) {
@@ -335,53 +365,77 @@ async function loadOverview(still) {
   }
 }
 
-/* "5 min ago", or the day and time when it is older than today. */
+/* "5 minutes ago", or the day and time when it is older than today. */
 function ovAgo(at) {
   const t = new Date(at).getTime();
   const min = Math.round((Date.now() - t) / 60_000);
   if (min < 1) return 'just now';
-  if (min < 60) return `${min} min ago`;
-  if (new Date(t).toDateString() === new Date().toDateString()) return `${Math.floor(min / 60)} h ago`;
+  if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+  const h = Math.floor(min / 60);
+  if (new Date(t).toDateString() === new Date().toDateString()) return `${h} hour${h === 1 ? '' : 's'} ago`;
   return new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 function renderOverview(o) {
+  // "Live" only while the copy really is fresh (read in the last five minutes); older, it says so.
   if (o.as_of) {
     const at = new Date(o.as_of);
-    const when = at.toDateString() === new Date().toDateString() ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : fmtWhen(o.as_of);
-    $('#ov-asof').innerHTML = `<span class="ov-live" title="Checks the logistics app for changes every minute">Live</span> Updated ${esc(when)}`;
+    const time = at.toDateString() === new Date().toDateString() ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : fmtWhen(o.as_of);
+    $('#ov-asof').innerHTML =
+      Date.now() - at.getTime() < 5 * 60_000
+        ? `<span class="ov-live" title="Checks the logistics app for changes every minute">Live</span> Updated ${esc(time)}`
+        : `<span class="ov-stale">Not updated since ${esc(time)}</span> The logistics app has not been read since then.`;
   } else $('#ov-asof').textContent = 'Not read from the logistics app yet';
 
   const D = o.deliveries;
-  const tile = (tone, label, n, help, href) =>
-    `<a class="ov-tile ${tone}" href="${href}"><span class="ov-tile-label">${esc(label)}</span><b>${esc(n)}</b><small>${esc(help)}</small></a>`;
+  // A tile shows its list on this page (scrolls to it); the tab with everything is the link in the list's heading.
+  const tile = (tone, label, n, help, panelId) =>
+    `<a class="ov-tile ${tone}" href="#/logistics" data-scroll="${panelId}"><span class="ov-tile-label">${esc(label)}</span><b>${esc(n)}</b><small>${esc(help)}</small></a>`;
   $('#ov-cards').innerHTML = [
-    tile('blue', 'On the way', D.in_motion, D.in_motion === 1 ? 'shipment moving now' : 'shipments moving now', '#/logistics/shipments'),
+    tile('blue', 'On the way', D.in_motion, `not delivered yet${D.delayed ? ` · ${D.delayed} of them late` : ''}`, 'ov-moving'),
     D.delayed
-      ? tile('bad', 'Late', D.delayed, D.delayed === 1 ? 'shipment past its due day' : 'shipments past their due day', '#/logistics/shipments')
-      : tile('good', 'Late', 0, 'none — all on time', '#/logistics/shipments'),
-    tile('gold', 'Waiting to hand over', D.ready, 'sold, not delivered yet', '#/logistics/sales'),
-    tile('blue', 'Coming in', o.incoming.length, 'watches on their way to us', '#/logistics/incoming'),
-    tile('', 'Delivered', D.delivered, 'shipments since the start', '#/logistics/shipments'),
+      ? tile('bad', 'Late', D.delayed, D.delayed === 1 ? 'shipment past its due day' : 'shipments past their due day', 'ov-moving')
+      : tile('good', 'Late', 0, 'none — all on time', 'ov-moving'),
+    tile('warn', 'Waiting to hand over', D.ready, 'sold, not delivered yet', 'ov-ready'),
+    tile('blue', 'Coming in', o.incoming.length, 'watches on their way to us', 'ov-coming'),
+    tile('', 'Delivered', D.delivered, 'shipments since the start', 'ov-donut'),
   ].join('');
+  $$('#ov-cards [data-scroll]').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      $(`#${a.dataset.scroll}`)?.scrollIntoView({ block: 'start' });
+    })
+  );
 
-  $('#ov-moving').innerHTML =
-    ovHead('On the way', o.shipments.length, '#/logistics/shipments', 'All shipments') +
-    ovExplain('Sent and not delivered yet. The label says where the carrier has it.') +
-    ovList(o.shipments, (i) => ovRow(i, lgChip(i.summary.status)), '#/logistics/shipments', 'shipments', 'Nothing is on the way right now.');
+  const drawMoving = () => {
+    $('#ov-moving').innerHTML =
+      ovHead('On the way', o.shipments.length, '#/logistics/shipments', 'See all shipments') +
+      ovExplain(D.delayed ? 'Not delivered yet — the late ones first. The tag on the right says where the parcel is.' : 'Not delivered yet. The tag on the right says where the parcel is.') +
+      ovList('moving', o.shipments, (i) => ovRow(i, i.late ? `<span class="chip lg-bad">Late — due ${esc(lgWhen(i.late))}</span>` : lgChip(i.summary.status)), 'Nothing is on the way right now.');
+    ovListToggles($('#ov-moving'), drawMoving);
+  };
+  drawMoving();
 
-  $('#ov-ready').innerHTML =
-    ovHead('Waiting to hand over', o.ready.length, '#/logistics/sales', 'Sales & delivery') +
-    ovExplain('Sold watches the buyer does not have yet.') +
-    ovList(o.ready, (i) => ovRow(i, i.summary.status === 'shipped' ? lgChip('shipped') : ''), '#/logistics/sales', 'watches', 'Every sold watch has been handed over.');
+  const drawReady = () => {
+    $('#ov-ready').innerHTML =
+      ovHead('Waiting to hand over', o.ready.length, '#/logistics/sales', 'See sales & delivery') +
+      ovExplain('Sold watches the buyer does not have yet.') +
+      ovList('ready', o.ready, (i) => ovRow(i, i.summary.status === 'shipped' ? lgChip('shipped') : ''), 'Every sold watch has been handed over.');
+    ovListToggles($('#ov-ready'), drawReady);
+  };
+  drawReady();
 
-  $('#ov-coming').innerHTML =
-    ovHead('Coming in', o.incoming.length, '#/logistics/incoming', 'All incoming') +
-    ovExplain('Watches bought and on their way to us.') +
-    ovList(o.incoming, (i) => ovRow(i, /pending/i.test(i.summary.status) ? '' : lgChip(i.summary.status)), '#/logistics/incoming', 'watches', 'Nothing is coming in right now.');
+  const drawComing = () => {
+    $('#ov-coming').innerHTML =
+      ovHead('Coming in', o.incoming.length, '#/logistics/incoming', 'See all incoming') +
+      ovExplain('Watches we bought that are on their way to us.') +
+      ovList('coming', o.incoming, (i) => ovRow(i, /pending/i.test(i.summary.status) ? '' : lgChip(i.summary.status)), 'Nothing is coming in right now.');
+    ovListToggles($('#ov-coming'), drawComing);
+  };
+  drawComing();
 
   $('#ov-places').innerHTML =
-    ovHead('Where the watches are', null, '#/logistics/stock', 'Stock by place') +
+    ovHead('Where the watches are', null, '#/logistics/stock', 'See stock by place') +
     ovExplain('How many watches are in each place right now.') +
     (o.places.length
       ? `<div class="ov-places">${o.places
@@ -395,25 +449,28 @@ function renderOverview(o) {
   renderOverviewDonut(D);
 
   $('#ov-acc').innerHTML =
-    ovHead('Accessories', null, '#/logistics/accessories', 'Open accessories') +
-    ovExplain('Boxes, papers and other items still to pass on.') +
-    `<div class="ov-acc-nums"><div><b class="give">${esc(o.accessories.give)}</b><span>to give to clients</span></div><div><b class="owed">${esc(o.accessories.owed)}</b><span>clients still owe us</span></div></div>`;
+    ovHead('Accessories', null, '#/logistics/accessories', 'See accessories') +
+    ovExplain('Boxes, papers and other items: what we must give to clients, and what clients must give us.') +
+    `<div class="ov-acc-nums"><div><b class="give">${esc(o.accessories.give)}</b><span>item${o.accessories.give === 1 ? '' : 's'} we must give to clients</span></div><div><b class="owed">${esc(
+      o.accessories.owed
+    )}</b><span>item${o.accessories.owed === 1 ? '' : 's'} clients must give us</span></div></div>`;
 
   renderOverviewCost(o.costs);
   if (!ov.form) renderOverviewPolish(o.need_polish);
+  else renderOverviewPolishRows(o.need_polish);
 
   $('#ov-recent').innerHTML =
-    ovHead('Latest changes', null, '#/logistics/log', 'Full activity log') +
-    ovExplain('The newest change to each record — made here or in the logistics app.') +
-    (o.recent.length ? `<ul class="ov-feed">${o.recent.map(ovChange).join('')}</ul>` : ovEmpty('No changes yet.'));
+    ovHead('Latest changes', null, '#/logistics/log', 'See the activity log') +
+    ovExplain('The newest change to each watch, shipment or record — made here or in the logistics app.') +
+    (o.recent.length ? `<ul class="ov-feed">${o.recent.map(ovChange).join('')}</ul>` : ovEmpty('No changes in the latest copies from the logistics app.'));
 }
 
-/* Every shipment so far, by where it stands — the logistics app's donut, in plain words. */
+/* Every shipment so far, by where it stands — the logistics app's donut, in plain words: on time and late add up to on the way. */
 function renderOverviewDonut(D) {
   const segs = [
     ['Delivered', D.delivered, 'var(--good)'],
-    ['On the way', D.in_progress, 'var(--warn)'],
-    ['Late', D.delayed, 'var(--bad)'],
+    ['On the way, on time', D.in_progress, 'var(--blue)'],
+    ['On the way, late', D.delayed, 'var(--bad)'],
   ];
   const sum = segs.reduce((a, s) => a + s[1], 0);
   const r = 62;
@@ -431,46 +488,54 @@ function renderOverviewDonut(D) {
         .join('')
     : `<circle cx="80" cy="80" r="${r}" fill="none" style="stroke:var(--line)" stroke-width="20"/>`;
   $('#ov-donut').innerHTML =
-    ovHead('All shipments', sum, '#/logistics/shipments', 'All shipments') +
+    ovHead('All shipments', sum, '#/logistics/shipments', 'See all shipments') +
     ovExplain('Every shipment so far, by where it stands.') +
     `<div class="ov-donut"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="${esc(`${sum} shipments: ${segs.map(([n, v]) => `${v} ${n.toLowerCase()}`).join(', ')}`)}">${arcs}
       <text x="80" y="82" text-anchor="middle" font-size="28" font-weight="600" style="fill:var(--ink)">${sum}</text>
-      <text x="80" y="102" text-anchor="middle" font-size="13" style="fill:var(--muted)">shipments</text></svg>
+      <text x="80" y="102" text-anchor="middle" font-size="14" style="fill:var(--muted)">shipments</text></svg>
       <div class="ov-legend">${segs
         .map(([name, n, color]) => `<div><i style="background:${color}"></i><span>${esc(name)}</span><b>${esc(n)}</b><small>${sum ? Math.round((n / sum) * 100) : 0}%</small></div>`)
         .join('')}</div></div>`;
 }
 
-/* A value in a change, as a person reads it. */
-const ovValue = (v) => {
+/* A field's name and value as a person reads them: the list's own label, days as days, yes / no, words not codes. */
+const ovSentence = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
+function ovValue(v, f, k) {
   if (v === null || v === undefined || v === '') return 'blank';
   if (v === true) return 'yes';
   if (v === false) return 'no';
-  const s = String(v);
+  if (f?.type === 'when' || f?.type === 'date' || TIME_KEY.test(k)) return lgWhen(v);
+  let s = String(v);
+  if (f?.type === 'enum' || /^[a-z]+(_[a-z]+)+$/.test(s)) s = s.replace(/_/g, ' ');
+  if (f?.type === 'money' && Number.isFinite(Number(v))) s = Number(v).toLocaleString('en-GB', { maximumFractionDigits: 2 });
   return s.length > 40 ? `${s.slice(0, 40)}…` : s;
-};
+}
 
-/* One change in words. A list or a block of details inside the record is "(details)" in the history: named, not shown. */
-function ovWords(k, [a, b]) {
+/* One change in words. A block of details inside the record is "(details)" in the history: named, not shown. */
+function ovWords(kind, k, [a, b]) {
+  const f = lgKind(kind).fields.find((x) => x.key === k);
+  const name = f?.label || ovSentence(humanKey(k));
   const blank = (v) => v === null || v === undefined || v === '';
   if (k === 'polish' && (a === '(details)' || b === '(details)')) return blank(b) ? 'Back from polish' : blank(a) ? 'Sent to polish' : 'Polish details changed';
-  if (a === '(details)' || b === '(details)') return `${humanKey(k)} changed`;
-  return `${humanKey(k)}: ${ovValue(a)} → ${ovValue(b)}`;
+  if (a === '(details)' || b === '(details)') return `${name} changed`;
+  return `${name}: ${ovValue(a, f, k)} → ${ovValue(b, f, k)}`;
 }
 
 function ovChange(e) {
-  const keys = Object.keys(e.changes || {});
+  const changes = e.changes || {};
+  // "Sent to polish" already says the watch no longer needs polish.
+  const keys = Object.keys(changes).filter((k) => !(k === 'needPolish' && 'polish' in changes));
   const what =
     { create: 'Added', delete: 'Removed', restore: 'Back again' }[e.action] ||
     keys
       .slice(0, 2)
-      .map((k) => ovWords(k, e.changes[k]))
+      .map((k) => ovWords(e.item.kind, k, changes[k]))
       .join(', ') + (keys.length > 2 ? `, and ${keys.length - 2} more` : '') ||
     'Updated';
-  const who = e.source === 'user' ? e.user_name || 'someone here' : 'the logistics app';
+  const who = e.source === 'user' ? e.user_name || 'a masterapp user' : 'the logistics app';
   return `<li><time datetime="${esc(e.at)}" title="${esc(fmtWhen(e.at))}">${esc(ovAgo(e.at))}</time>
     <div class="ov-row-main">
-      <a class="ov-title" href="#/lg/${e.item.id}" title="${esc(e.item.summary.title)}">${esc(e.item.summary.title)}</a>
+      <a class="ov-title" href="#/lg/${e.item.id}">${esc(e.item.summary.title)}</a>
       <div class="ov-meta"><span>${stockLinksOf(e.item)}</span><span>${esc(what)}</span><span>by ${esc(who)}${
         e.earlier ? `, ${e.earlier} earlier change${e.earlier === 1 ? '' : 's'}` : ''
       }</span></div>
@@ -481,6 +546,7 @@ function ovChange(e) {
 function renderOverviewCost(c) {
   const parts = Object.entries(c.by_currency).sort(([a], [b]) => a.localeCompare(b));
   const R = c.rates?.table || {};
+  const targets = c.targets.filter((t) => R[t]);
   const target = R[ov.costIn] ? ov.costIn : 'USD';
   let total = 0;
   const left = [];
@@ -492,19 +558,21 @@ function renderOverviewCost(c) {
       if (cur !== target) conv = `≈ ${money(Math.round(n), target)}`;
     } else left.push(cur);
     const amount = cur === 'OTHER' ? `${money(v.amount, null)} (no currency)` : money(v.amount, cur);
-    return `<tr><th>${amount}</th><td>${conv || (left.includes(cur) ? 'no rate' : '')}</td><td>${esc(v.count)} cost${v.count === 1 ? '' : 's'}</td></tr>`;
+    return `<tr><th>${amount}</th><td>${conv || (left.includes(cur) ? 'no rate' : '')}</td><td>${esc(v.count)} payment${v.count === 1 ? '' : 's'}</td></tr>`;
   });
   const note = c.rates
     ? `All currencies added up at today’s ${c.rates.kind === 'daily' ? 'daily' : 'live'} rates${c.rates.stale ? ' (not the newest)' : ''}${left.length ? `. Not counted, no rate: ${left.join(', ')}` : ''}.`
     : 'No exchange rates yet — the total shows at the next refresh.';
+  const hadFocus = document.activeElement?.id === 'ov-costin';
   $('#ov-cost').innerHTML =
-    ovHead('Logistics costs', null, '#/logistics/costs', 'All costs') +
+    ovHead('Logistics costs since the start', null, '#/logistics/costs', 'See all costs') +
     (parts.length
       ? `<div class="ov-cost-top"><div class="ov-cost-total" data-nofx>${c.rates ? money(Math.round(total * 100) / 100, target) : '—'}</div>
-           <label class="ov-cost-in">Show in <select id="ov-costin">${c.targets
-             .filter((t) => R[t])
-             .map((t) => `<option${t === target ? ' selected' : ''}>${esc(t)}</option>`)
-             .join('')}</select></label></div>
+           ${
+             targets.length
+               ? `<label class="ov-cost-in">Show in <select id="ov-costin">${targets.map((t) => `<option${t === target ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`
+               : ''
+           }</div>
          ${ovExplain(note)}
          <table class="ov-curtable" data-nofx><tbody>${rows.join('')}</tbody></table>`
       : ovEmpty('No logistics costs yet.'));
@@ -512,49 +580,51 @@ function renderOverviewCost(c) {
     ov.costIn = e.target.value;
     renderOverviewCost(c);
   });
+  if (hadFocus) $('#ov-costin')?.focus();
 }
 
-/* Need polish: the flagged watches — Send to polish for one still here, Mark as returned for one at the polisher. */
+/* Need polish: the flagged watches — Send to polish for one still here, Back from polish for one at the polisher. */
 function renderOverviewPolish(rows) {
   const box = $('#ov-polish');
   if (!box) return;
   const editor = can('editor');
   box.innerHTML =
-    ovHead('Need polish', rows.length, '#/logistics/services', 'Polish & services') +
-    (rows.length ? ovExplain(editor ? 'Press Send to polish when a watch goes to the polisher, and Mark as returned when it is back.' : 'Watches marked for polish.') : '') +
-    '<div id="ov-polish-form"></div>' +
-    (rows.length
-      ? (ov.polishAll ? rows : rows.slice(0, OV_ROWS))
-          .map(
-            (r) => `<div class="ov-row">
-              <div class="ov-row-main">
-                <a class="ov-title" href="#/lg/${r.id}">${esc([r.model || r.summary.title, r.reference].filter(Boolean).join(' '))}</a>
-                <div class="ov-meta"><span>${stockLinksOf(r)}</span><span>${esc(r.place)}</span>${
-                  r.polish
-                    ? `<span class="ov-warn-text">at the polisher${r.polish.sentTo ? `: ${esc(r.polish.sentTo)}` : ''}${r.polish.sentDate ? `, since ${esc(lgWhen(r.polish.sentDate))}` : ''}</span>`
-                    : ''
-                }${r.from ? `<span>from ${esc(r.from)}</span>` : ''}</div>
-              </div>
-              <div class="ov-row-side">${
-                editor && r.can_polish
-                  ? r.polish
-                    ? `<button class="btn" type="button" data-pdone="${r.id}">Mark as returned</button>`
-                    : `<button class="btn" type="button" data-psend="${r.id}">Send to polish</button>`
-                  : ''
-              }</div>
-            </div>`
-          )
-          .join('') +
-        (rows.length > OV_ROWS
-          ? `<button type="button" class="ov-all ov-all-btn" id="ov-polish-all">${ov.polishAll ? 'Show fewer' : `Show all ${rows.length} watches`}</button>`
-          : '')
-      : ovEmpty('Nothing needs polish.'));
-  $('#ov-polish-all')?.addEventListener('click', () => {
-    ov.polishAll = !ov.polishAll;
-    renderOverviewPolish(rows);
-  });
-  $$('[data-psend]', box).forEach((b) => b.addEventListener('click', () => polishForm('send', rows.find((r) => String(r.id) === b.dataset.psend))));
-  $$('[data-pdone]', box).forEach((b) => b.addEventListener('click', () => polishForm('done', rows.find((r) => String(r.id) === b.dataset.pdone))));
+    ovHead('Need polish', rows.length, '#/logistics/services', 'See the polish list') +
+    (rows.length ? ovExplain(editor ? 'Press Send to polish when a watch goes to the polisher, and Back from polish when it returns.' : 'Watches marked for polish.') : '') +
+    '<div id="ov-polish-form"></div><div id="ov-polish-rows"></div>';
+  renderOverviewPolishRows(rows);
+}
+
+/* The rows alone — "Show all" and the minute refresh redraw these, never an open form above them. */
+function renderOverviewPolishRows(rows) {
+  const host = $('#ov-polish-rows');
+  if (!host) return;
+  const editor = can('editor');
+  host.innerHTML = ovList(
+    'polish',
+    rows,
+    (r) => `<div class="ov-row">
+      <div class="ov-row-main">
+        <a class="ov-title" href="#/lg/${r.id}">${esc(r.model ? [r.model, r.reference].filter(Boolean).join(' ') : r.summary.title)}</a>
+        <div class="ov-meta"><span>${stockLinksOf(r)}</span><span>${esc(r.place)}</span>${
+          r.polish
+            ? `<span class="ov-warn-text">at the polisher${r.polish.sentTo ? `: ${esc(r.polish.sentTo)}` : ''}${r.polish.sentDate ? `, since ${esc(lgWhen(r.polish.sentDate))}` : ''}</span>`
+            : ''
+        }${r.from ? `<span>bought from ${esc(r.from)}</span>` : ''}</div>
+      </div>
+      <div class="ov-row-side">${
+        editor && r.can_polish
+          ? r.polish
+            ? `<button class="btn" type="button" data-pdone="${r.id}">Back from polish</button>`
+            : `<button class="btn" type="button" data-psend="${r.id}">Send to polish</button>`
+          : ''
+      }</div>
+    </div>`,
+    'Nothing needs polish.'
+  );
+  ovListToggles(host, () => renderOverviewPolishRows(rows));
+  $$('[data-psend]', host).forEach((b) => b.addEventListener('click', () => polishForm('send', rows.find((r) => String(r.id) === b.dataset.psend))));
+  $$('[data-pdone]', host).forEach((b) => b.addEventListener('click', () => polishForm('done', rows.find((r) => String(r.id) === b.dataset.pdone))));
 }
 
 function polishForm(action, r) {
@@ -564,11 +634,11 @@ function polishForm(action, r) {
   const title = `${r.stock_nos.length ? `#${r.stock_nos.join(', #')} · ` : ''}${r.model || r.summary.title}`;
   host.innerHTML =
     action === 'send'
-      ? `<form class="ov-form" id="ov-pform"><b>Send to polish: ${esc(title)}</b>
+      ? `<form class="ov-form" id="ov-pform"><span class="ov-form-title">Send to polish: ${esc(title)}</span>
           <div class="form-grid" style="margin-top:8px">
             <label>Polisher *<input type="text" name="sentTo" required></label>
             <label>Taken by<input type="text" name="takenBy"></label>
-            <label>What goes<select name="itemDescription"><option>Full Watch</option><option>Bracelet</option><option>Case</option><option>Clasp</option><option>Other</option></select></label>
+            <label>What goes<select name="itemDescription"><option value="Full Watch">Full watch</option><option value="Bracelet">Bracelet</option><option value="Case">Case</option><option value="Clasp">Clasp</option><option value="Other">Other</option></select></label>
             <label>Sent on<input type="date" name="sentDate" value="${today}"></label>
             <label>Expected back<input type="date" name="expectedBack"></label>
             <label>Cost<span class="row" style="flex-wrap:nowrap"><input type="text" inputmode="decimal" name="costAmount" placeholder="350"><input type="text" name="costCurrency" value="AED" maxlength="4" style="width:80px" aria-label="Currency"></span></label>
@@ -576,13 +646,13 @@ function polishForm(action, r) {
           </div>
           <div class="err" id="ov-perr"></div>
           <div class="row"><button class="btn primary">Send to polish</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`
-      : `<form class="ov-form" id="ov-pform"><b>Mark as returned: ${esc(title)}</b> <span class="count">with ${esc(r.polish?.sentTo || 'the polisher')}${r.polish?.sentDate ? ` since ${esc(lgWhen(r.polish.sentDate))}` : ''}</span>
+      : `<form class="ov-form" id="ov-pform"><span class="ov-form-title">Back from polish: ${esc(title)}</span> <span class="count">with ${esc(r.polish?.sentTo || 'the polisher')}${r.polish?.sentDate ? ` since ${esc(lgWhen(r.polish.sentDate))}` : ''}</span>
           <div class="form-grid" style="margin-top:8px">
             <label>Back on<input type="date" name="returnedDate" value="${today}"></label>
             <label class="wide">Notes<textarea name="returnNotes" rows="2"></textarea></label>
           </div>
           <div class="err" id="ov-perr"></div>
-          <div class="row"><button class="btn primary">Mark as returned</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`;
+          <div class="row"><button class="btn primary">Save — back from polish</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`;
   host.scrollIntoView({ block: 'nearest' });
   $('#ov-pcancel').addEventListener('click', () => {
     ov.form = null;
@@ -596,7 +666,7 @@ function polishForm(action, r) {
     const body = Object.fromEntries(new FormData(e.target).entries());
     try {
       const res = await api(`/api/logistics/items/${r.id}/polish`, { method: 'POST', body: { action, ...body } });
-      flash(action === 'send' ? `Sent to polish${res.cost ? ' — its cost is in Logistics costs' : ''}` : 'Marked as returned — back in stock');
+      flash(action === 'send' ? `Sent to polish${res.cost ? ' — its cost is in Logistics costs' : ''}` : 'Back from polish — back in stock');
       ov.form = null;
       loadOverview(() => location.hash === '#/logistics' || location.hash === '#/logistics/overview');
     } catch (err) {
@@ -611,16 +681,16 @@ const OV_SCOPES = [
   ['all', 'All'],
   ['stock', 'In stock'],
   ['sold', 'Sold'],
-  ['incoming', 'Incoming'],
+  ['incoming', 'Coming in'],
   ['shipments', 'Shipments'],
   ['clients', 'Clients'],
-  ['transactions', 'Transactions'],
+  ['transactions', 'Accessories'],
 ];
 let ovSearchSeq = 0;
 function renderOverviewSearch() {
   const S = ov.search;
   $('#ov-search').innerHTML = `${ovHead('Search everything', null)}
-    ${ovExplain('Our watches and clients, and every logistics record — each one shown once.')}
+    ${ovExplain('Find a watch, a client, a shipment or a tracking number.')}
     <input class="q" type="search" id="ov-q" aria-label="Search everything" placeholder="e.g. 1743, Daytona, 126500LN, a client, a tracking number" value="${esc(S.q)}" autocomplete="off">
     <div class="pills" id="ov-scopes" style="margin-top:10px">${OV_SCOPES.map(([k, l]) => `<button type="button" class="pill ${S.scope === k ? 'on' : ''}" data-scope="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div id="ov-results"></div>`;
@@ -655,41 +725,42 @@ async function runOverviewSearch() {
   let r;
   try {
     r = await api(`/api/logistics/search?${new URLSearchParams({ q: S.q, scope: S.scope })}`);
-  } catch {
-    if (seq === ovSearchSeq && $('#ov-results')) $('#ov-results').innerHTML = '<p class="err">The search did not go through. Check the connection and type again.</p>';
+  } catch (err) {
+    const what = err instanceof TypeError ? 'The connection dropped — type again in a moment.' : `The search did not work (${err.message}). Try again.`;
+    if (seq === ovSearchSeq && $('#ov-results')) $('#ov-results').innerHTML = `<p class="err">${esc(what)}</p>`;
     return;
   }
   const out = $('#ov-results');
   if (seq !== ovSearchSeq || !out) return;
   const watchRows = r.watches.map(
-    (w) => `<a class="lg-line" href="#/watch/${w.id}"><span class="lg-stock">#${esc(w.stock_no)}</span><span class="grow"><b>${esc(w.title)}</b>${
+    (w) => `<a class="lg-line" href="#/watch/${w.id}"><span class="lg-stock">#${esc(w.stock_no)}</span><span class="grow"><span class="ov-strong">${esc(w.title)}</span>${
       w.now ? ` <span class="count" style="margin:0">· ${esc(w.now.headline)}</span>` : w.location ? ` <span class="count" style="margin:0">· ${esc(w.location)}</span>` : ''
     }</span>${chip(w.status)}</a>`
   );
   const clientRows = r.clients.map(
-    (c) => `<a class="lg-line" href="#/client/${c.id}"><span class="lg-stock">Client</span><span class="grow"><b>${esc(c.name)}</b>${
+    (c) => `<a class="lg-line" href="#/client/${c.id}"><span class="lg-stock">Client</span><span class="grow"><span class="ov-strong">${esc(c.name)}</span>${
       c.country ? ` <span class="count" style="margin:0">· ${esc(c.country)}</span>` : ''
     }</span><span class="count" style="margin:0">${esc(c.bought)} bought · ${esc(c.sold)} sold</span></a>`
   );
   const recordRows = r.records.map(
-    (i) => `<div class="lg-line"><span>${stockLinksOf(i) || `<span class="lg-stock">${esc(i.kind_label)}</span>`}</span><a class="grow" href="#/lg/${i.id}" style="color:inherit;text-decoration:none"><b>${esc(i.summary.title)}</b>${
+    (i) => `<div class="lg-line"><span>${stockLinksOf(i) || `<span class="lg-stock">${esc(i.kind_label)}</span>`}</span><a class="grow" href="#/lg/${i.id}" style="color:inherit;text-decoration:none"><span class="ov-strong">${esc(i.summary.title)}</span>${
       i.summary.sub ? ` <span class="count" style="margin:0">· ${esc(i.summary.sub)}</span>` : ''
     } <span class="count" style="margin:0">· ${esc(i.kind_label)}</span></a>${lgChip(i.summary.status)}</div>`
   );
   const group = (label, rows) => (rows.length ? `<h3 class="ov-subh">${esc(label)}<span class="ov-n">${rows.length}</span></h3>${rows.join('')}` : '');
-  const found = group('Watches', watchRows) + group('Clients', clientRows) + group('Logistics records', recordRows);
+  const found = group('Watches', watchRows) + group('Clients', clientRows) + group('Other logistics entries', recordRows);
   if (found) {
     out.innerHTML = found;
     return;
   }
   // Nothing: say so, and offer the way out — the whole search when a chip narrowed it.
   const label = OV_SCOPES.find(([k]) => k === S.scope)?.[1] || 'All';
-  out.innerHTML = `<div class="ov-empty"><b>Nothing matches “${esc(S.q.trim())}”${S.scope === 'all' ? '' : ` in ${esc(label)}`}.</b>
+  out.innerHTML = `<div class="ov-empty"><span class="ov-strong">Nothing matches “${esc(S.q.trim())}”${S.scope === 'all' ? '' : ` in ${esc(label)}`}.</span>
     ${S.scope === 'all' ? 'Try a stock number, or one word of the name.' : '<button type="button" class="btn small" id="ov-search-all">Search all instead</button>'}</div>`;
   $('#ov-search-all')?.addEventListener('click', () => $('#ov-scopes [data-scope="all"]').click());
 }
 
-/* ── one record ─────────────────────────────────────────────────── */
+/* ── one record─────────────────────────────────────────────────── */
 
 async function showLogisticsItem(id, { editing = false } = {}) {
   const seq = ++lgPage;
@@ -948,6 +1019,367 @@ function showNewLogisticsItem(kind) {
       $('#lg-err').textContent = err.message;
     }
   });
+}
+
+/* ── clients: their logistics situation ─────────────────────────── */
+
+/*
+ * Logistics → Clients (asked 24 Oct 2026): every client of the logistics app
+ * and its logistics situation alone — what is with them, what is owed either
+ * way, their watches and shipments — and which of OUR clients it is (worked
+ * out from the watches: src/logistics/clients.js). Our client's own page shows
+ * the same situation beside everything else (loadClientLogistics).
+ */
+const lc = { q: '', filter: 'all' };
+
+/* Why a logistics client is that client of ours, in words. */
+function lcReason(link) {
+  if (link.how === 'person') return 'chosen by a person';
+  if (link.how === 'name') return 'matched by the full name';
+  if (link.how === 'watches') {
+    const n = link.stocks.length;
+    const shown = link.stocks.slice(0, 4).map((s) => `#${s}`).join(', ');
+    return `the same watch${n === 1 ? '' : 'es'} in both: ${shown}${n > 4 ? ` and ${n - 4} more` : ''}`;
+  }
+  return '';
+}
+
+/* One line: a title to its page, and plain details under it (each already escaped). */
+const lcLine = (title, href, meta = [], side = '') => `<div class="ov-row">
+    <div class="ov-row-main">
+      <a class="ov-title" href="${href}">${esc(title)}</a>
+      <div class="ov-meta">${meta.filter(Boolean).map((m) => `<span>${m}</span>`).join('')}</div>
+    </div>${side ? `<div class="ov-row-side">${side}</div>` : ''}
+  </div>`;
+
+const lcOpenWords = (c) =>
+  [c.we_give && `${c.we_give} to give`, c.they_give && `${c.they_give} owed to us`, c.shipments_open && `${c.shipments_open} on the way`].filter(Boolean).join(' · ');
+
+async function showLogisticsClients() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('contacts')}
+    <section class="panel ov-panel">
+      ${ovHead('Clients', null, '#/logistics/contacts-all', 'See the client records')}
+      ${ovExplain('Every client in the logistics app, and which of our clients it is. Open one to see what is happening with them.')}
+      <input class="q" type="search" id="lcq" aria-label="Search the clients" placeholder="A name, a country, or our client's name" value="${esc(lc.q)}" autocomplete="off">
+      <div class="pills" id="lc-filters" style="margin-top:10px">${[
+        ['all', 'All'],
+        ['open', 'Something open'],
+        ['unlinked', 'Not linked yet'],
+      ]
+        .map(([k, l]) => `<button type="button" class="pill ${lc.filter === k ? 'on' : ''}" data-f="${k}" aria-pressed="${lc.filter === k}">${esc(l)}</button>`)
+        .join('')}</div>
+      <div id="lc-rows">${ovSkeleton}</div>
+    </section>`;
+  let r;
+  const draw = () => {
+    const rows = r.clients.filter((c) => (lc.filter === 'open' ? lcOpenWords(c) : lc.filter === 'unlinked' ? !c.us && !c.link.client_id : true));
+    $('#lc-rows').innerHTML =
+      `<p class="ov-explain" style="margin-top:12px">${esc(`${r.linked} linked to our clients, ${r.unlinked} not yet.`)}</p>` +
+      ovList(
+        'lc-list',
+        rows,
+        (c) =>
+          lcLine(
+            c.name,
+            `#/lg-client/${c.id}`,
+            [
+              esc(c.country),
+              c.us
+                ? 'one of our own locations'
+                : c.link.client_id
+                  ? `our client <a href="#/client/${c.link.client_id}">${esc(c.link.client_name)}</a>`
+                  : '<span class="ov-warn-text">not linked to our clients yet</span>',
+              c.watches ? esc(`${c.watches} watch${c.watches === 1 ? '' : 'es'}`) : '',
+            ],
+            lcOpenWords(c) ? `<span class="chip lg-warn">${esc(lcOpenWords(c))}</span>` : ''
+          ),
+        lc.q ? `No client matches “${lc.q}”.` : 'No clients here.',
+        40
+      );
+    ovListToggles($('#lc-rows'), draw);
+  };
+  const load = async () => {
+    try {
+      r = await api(`/api/logistics/client-list?${new URLSearchParams({ q: lc.q })}`);
+    } catch (err) {
+      if (seq === lgPage) $('#lc-rows').innerHTML = `<p class="err">${esc(err.message)}</p>`;
+      return;
+    }
+    if (seq === lgPage && $('#lc-rows')) draw();
+  };
+  let timer;
+  $('#lcq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      lc.q = e.target.value.trim();
+      load();
+    }, 220);
+  });
+  $$('#lc-filters .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      lc.filter = b.dataset.f;
+      $$('#lc-filters .pill').forEach((x) => {
+        x.classList.toggle('on', x === b);
+        x.setAttribute('aria-pressed', String(x === b));
+      });
+      if (r) draw();
+    })
+  );
+  await load();
+}
+
+/* The situation's figures, as tiles. */
+function lcTiles(n) {
+  const tile = (tone, label, value, help) => `<div class="ov-tile ${tone}"><span class="ov-tile-label">${esc(label)}</span><b>${esc(value)}</b><small>${esc(help)}</small></div>`;
+  return `<div class="ov-tiles lc-tiles">${[
+    tile('', 'Watches', n.stocks, 'bought from them or sold to them'),
+    tile('blue', 'With them now', n.with_them, 'on consignment, sold and not delivered, in our safe'),
+    tile(n.we_give ? 'bad' : 'good', 'We must give', n.we_give, n.we_give ? `item${n.we_give === 1 ? '' : 's'} still to give them` : 'nothing — all given'),
+    tile(n.they_give ? 'warn' : 'good', 'They must give', n.they_give, n.they_give ? `item${n.they_give === 1 ? '' : 's'} still to come from them` : 'nothing — all received'),
+    tile('blue', 'On the way', n.shipments_open, `shipment${n.shipments_open === 1 ? '' : 's'} not delivered · ${n.shipments} in all`),
+  ].join('')}</div>`;
+}
+
+const LC_DIR = { bought: 'Bought from them', sold: 'Sold to them', incoming: 'Coming in from them' };
+const lcItems = (items) => items.map((it) => (typeof it === 'string' ? esc(it) : `${esc(it.accessory)}${it.qty > 1 ? ` × ${esc(it.qty)}` : ''}`)).join(', ');
+
+/* The panels of a situation: what is with them, the accessories, their watches, the shipments, the history. */
+function lcPanels(s, prefix) {
+  const acc = s.accessories;
+  const accLine = (l) => lcLine(`#${l.stock || '—'}${l.title ? ` ${l.title}` : ''}`, `#/lg/${l.tx}`, [lcItems(l.items)]);
+  const accessories =
+    acc.we_give.length || acc.they_give.length || acc.missing.length
+      ? `${acc.we_give.length ? `<h3 class="ov-subh">We must give them</h3>${acc.we_give.map(accLine).join('')}` : ''}
+         ${
+           acc.they_give.length || acc.missing.length
+             ? `<h3 class="ov-subh">They must give us</h3>${acc.they_give.map(accLine).join('')}${acc.missing
+                 .map((m) => lcLine(`#${m.stock}`, '#/logistics/stock', [`arrived without: ${lcItems(m.items)}`]))
+                 .join('')}`
+             : ''
+         }`
+      : ovEmpty('Nothing is owed either way.');
+  return {
+    withThem:
+      ovHead('With them now', s.with_them.length) +
+      ovExplain('Watches with them, or theirs with us, right now.') +
+      ovList(`${prefix}-with`, s.with_them, (w) => lcLine(w.item.summary.title, `#/lg/${w.item.id}`, [esc(w.label), stockLinksOf(w.item), esc(w.item.summary.sub)]), 'Nothing is with them right now.'),
+    accessories: ovHead('Accessories still to settle', null) + ovExplain('Boxes, papers and other items, by watch.') + accessories,
+    stocks:
+      ovHead('Their watches', s.stocks.length) +
+      ovExplain('Every watch bought from them or sold to them, newest first, and where it is now.') +
+      ovList(
+        `${prefix}-stocks`,
+        s.stocks,
+        (w) =>
+          lcLine(w.title, w.watch ? `#/watch/${w.watch.id}` : `#/lg/${w.item}`, [
+            esc(LC_DIR[w.dir] || w.dir),
+            w.watch ? `<a class="lg-stock" href="#/watch/${w.watch.id}">#${esc(w.stock)}</a>` : `<span class="lg-stock">#${esc(w.stock)}</span>`,
+            w.now ? `now: ${esc(w.now.headline)}` : '',
+            w.date ? esc(fmtDate(w.date)) : '',
+          ]),
+        'No watches with them in the logistics app.'
+      ),
+    shipments:
+      ovHead('Shipments', s.shipments.length) +
+      ovExplain('To them and from them — the ones not delivered first.') +
+      ovList(
+        `${prefix}-ships`,
+        s.shipments,
+        (x) => lcLine(x.item.summary.title, `#/lg/${x.item.id}`, [x.dir === 'to_them' ? 'to them' : 'from them', stockLinksOf(x.item), esc(x.item.summary.sub)], lgChip(x.item.summary.status)),
+        'No shipments to or from them.'
+      ),
+    history:
+      ovHead('Already given and collected', null) +
+      ovList(
+        `${prefix}-hist`,
+        s.history,
+        (h) => lcLine(`${h.dir === 'given' ? 'Given' : 'Collected'}: ${h.accessory}${h.qty > 1 ? ` × ${h.qty}` : ''}`, `#/lg/${h.tx}`, [h.stock ? `#${esc(h.stock)}` : '', h.at ? esc(lgWhen(h.at)) : '']),
+        'Nothing given or collected yet.'
+      ),
+  };
+}
+
+async function showLogisticsClient(id) {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('contacts')}<a href="#/logistics/contacts" class="count" style="text-decoration:none">← Clients</a><div id="lc-page">${ovSkeleton}</div>`;
+  let v;
+  try {
+    v = await api(`/api/logistics/client-view/${id}`);
+  } catch (err) {
+    if (seq === lgPage) $('#lc-page').innerHTML = `<p class="err">${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== lgPage || !$('#lc-page')) return;
+  const draw = () => {
+    const p = lcPanels(v.situation, 'lc');
+    $('#lc-page').innerHTML = `
+      <h1 class="lg-title">${esc(v.name)}</h1>
+      <p class="sub">${[v.country, v.phone, v.notes].filter(Boolean).map(esc).join(' · ') || 'Logistics client'}</p>
+      <section class="panel ov-panel lc-link" id="lc-link"></section>
+      ${lcTiles(v.situation.counts)}
+      <div class="ov-cols">
+        <div class="ov-stack"><section class="panel ov-panel" style="order:1">${p.withThem}</section><section class="panel ov-panel" style="order:2">${p.accessories}</section><section class="panel ov-panel" style="order:4">${p.shipments}</section></div>
+        <div class="ov-stack"><section class="panel ov-panel" style="order:3">${p.stocks}</section><section class="panel ov-panel" style="order:5">${p.history}</section></div>
+      </div>`;
+    $$('#lc-page .ov-panel').forEach((panel) => ovListToggles(panel, draw));
+    drawLink();
+  };
+  const drawLink = () => {
+    const L = v.link;
+    const editor = can('editor');
+    const same = v.same_name.length
+      ? `<p class="ov-explain">Also in the logistics app with the same name: ${v.same_name.map((x) => `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>${x.country ? ` (${esc(x.country)})` : ''}`).join(', ')}.</p>`
+      : '';
+    $('#lc-link').innerHTML = v.us
+      ? '<p class="ov-explain" style="margin:0">This is one of our own locations in the logistics app, not a client.</p>'
+      : `${
+          L.client_id
+            ? `<p class="lc-who">Our client: <a href="#/client/${L.client_id}">${esc(L.client_name)}</a> <span class="count" style="margin:0">— ${esc(lcReason(L))}</span></p>`
+            : `<p class="lc-who">${L.how === 'person' ? 'A person said this is none of our clients.' : 'Not linked to one of our clients yet.'}</p>${
+                v.candidates.length
+                  ? `<p class="ov-explain">Maybe: ${v.candidates
+                      .map((x) =>
+                        editor
+                          ? `<button type="button" class="btn small" data-link="${x.client_id}">${esc(x.name)}${x.stocks.length ? ` — ${x.stocks.length} watch${x.stocks.length === 1 ? '' : 'es'}` : ' — same name'}</button>`
+                          : `<a href="#/client/${x.client_id}">${esc(x.name)}</a>`
+                      )
+                      .join(' ')}</p>`
+                  : ''
+              }`
+        }${same}${editor ? '<div class="row"><button type="button" class="btn small" id="lc-change">Choose another client</button></div><div id="lc-chooser"></div>' : ''}`;
+    $$('#lc-link [data-link]').forEach((b) => b.addEventListener('click', () => setLink(Number(b.dataset.link))));
+    $('#lc-change')?.addEventListener('click', openChooser);
+  };
+  const setLink = async (clientId) => {
+    try {
+      await api(`/api/logistics/client-view/${v.id}/link`, { method: 'PUT', body: { client_id: clientId } });
+      flash(clientId === null ? 'Marked as none of our clients' : clientId === 'auto' ? 'Worked out again from the watches' : 'Linked to our client');
+      showLogisticsClient(v.id);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  const openChooser = () => {
+    $('#lc-chooser').innerHTML = `<div class="ov-form">
+        <label>Our client<input type="search" id="lc-find" placeholder="A name, a company or a phone number" autocomplete="off"></label>
+        <div id="lc-found"></div>
+        <div class="row" style="margin-top:8px">
+          <button type="button" class="btn small" id="lc-none">None of our clients</button>
+          ${v.link.how === 'person' ? '<button type="button" class="btn small" id="lc-auto">Work it out from the watches again</button>' : ''}
+          <button type="button" class="btn small" id="lc-cancel">Cancel</button>
+        </div></div>`;
+    $('#lc-find').focus();
+    let timer;
+    $('#lc-find').addEventListener('input', (e) => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const q = e.target.value.trim();
+        if (!q) return ($('#lc-found').innerHTML = '');
+        const res = await api(`/api/clients?${new URLSearchParams({ q, limit: 8 })}`).catch(() => ({ clients: [] }));
+        if (!$('#lc-found')) return;
+        $('#lc-found').innerHTML = res.clients.length
+          ? res.clients.map((c) => `<button type="button" class="btn small" data-pick="${c.id}">${esc(c.name)}${c.company ? ` · ${esc(c.company)}` : ''}</button>`).join(' ')
+          : '<p class="ov-explain">No client of ours matches.</p>';
+        $$('#lc-found [data-pick]').forEach((b) => b.addEventListener('click', () => setLink(Number(b.dataset.pick))));
+      }, 220);
+    });
+    $('#lc-none').addEventListener('click', () => setLink(null));
+    $('#lc-auto')?.addEventListener('click', () => setLink('auto'));
+    $('#lc-cancel').addEventListener('click', () => ($('#lc-chooser').innerHTML = ''));
+  };
+  draw();
+}
+
+/*
+ * Our client's page: the logistics situation beside everything else — the
+ * logistics client(s) that are them, what is with them and owed either way,
+ * shipments on the way — and where each of their watches is now. When none is
+ * linked yet: the logistics clients that may be them, to link in one tap.
+ */
+async function loadClientLogistics(c) {
+  const box = $('#c-logistics');
+  if (!box) return;
+  const here = () => location.hash === `#/client/${c.id}` && $('#c-logistics');
+  let r;
+  try {
+    r = await api(`/api/clients/${c.id}/logistics`);
+  } catch (err) {
+    if (here()) box.innerHTML = `<h3>Logistics</h3><p class="err">${esc(err.message)}</p>`;
+    return;
+  }
+  if (!here()) return;
+  $$('.cw-now').forEach((el) => {
+    const n = r.watch_now[el.dataset.stock];
+    if (n) el.textContent = `now: ${n.headline}`;
+  });
+  const editor = can('editor');
+  const link = async (lcId) => {
+    try {
+      await api(`/api/logistics/client-view/${lcId}/link`, { method: 'PUT', body: { client_id: c.id } });
+      flash('Linked to the logistics client');
+      loadClientLogistics(c);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  if (!r.situation) {
+    box.innerHTML = `<h3>Logistics</h3>
+      <p class="ov-explain" style="margin-top:0">Not linked to a client in the logistics app yet.</p>
+      ${
+        r.suggestions.length
+          ? `<p class="ov-explain">Maybe: ${r.suggestions
+              .map((x) =>
+                editor
+                  ? `<button type="button" class="btn small" data-lc="${x.id}">${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ''}${x.stocks.length ? ` — ${x.stocks.length} watch${x.stocks.length === 1 ? '' : 'es'}` : ''}</button>`
+                  : `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>`
+              )
+              .join(' ')}</p>`
+          : ''
+      }
+      ${editor ? '<label class="count" style="display:block;margin:8px 0 0">Find them in the logistics app<input type="search" id="clg-find" placeholder="Their name there" autocomplete="off"></label><div id="clg-found"></div>' : ''}`;
+    $$('#c-logistics [data-lc]').forEach((b) => b.addEventListener('click', () => link(Number(b.dataset.lc))));
+    let timer;
+    $('#clg-find')?.addEventListener('input', (e) => {
+      clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const q = e.target.value.trim();
+        if (!q) return ($('#clg-found').innerHTML = '');
+        const res = await api(`/api/logistics/client-list?${new URLSearchParams({ q })}`).catch(() => ({ clients: [] }));
+        if (!$('#clg-found')) return;
+        const list = res.clients.filter((x) => !x.us).slice(0, 8);
+        $('#clg-found').innerHTML = list.length
+          ? list
+              .map(
+                (x) =>
+                  `<button type="button" class="btn small" data-lc="${x.id}">${esc(x.name)}${x.country ? ` (${esc(x.country)})` : ''}${x.link.client_id ? ` — now: ${esc(x.link.client_name)}` : ''}</button>`
+              )
+              .join(' ')
+          : '<p class="ov-explain">Nobody in the logistics app matches.</p>';
+        $$('#clg-found [data-lc]').forEach((b) => b.addEventListener('click', () => link(Number(b.dataset.lc))));
+      }, 220);
+    });
+    return;
+  }
+  const s = r.situation;
+  const n = s.counts;
+  const fig = (value, label, tone = '') => `<div class="${tone}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`;
+  const p = lcPanels(s, 'clg');
+  box.innerHTML = `<h3>Logistics</h3>
+    <p class="lc-who" style="margin-top:0">In the logistics app: ${r.linked
+      .map((x) => `<a href="#/lg-client/${x.id}">${esc(x.name)}</a>${x.country ? ` (${esc(x.country)})` : ''} <span class="count" style="margin:0">— ${esc(lcReason(x.link))}</span>`)
+      .join('<br>')}</p>
+    <div class="lc-figs">
+      ${fig(n.with_them, 'with them now')}
+      ${fig(n.we_give, n.we_give === 1 ? 'item we must give' : 'items we must give', n.we_give ? 'give' : '')}
+      ${fig(n.they_give, n.they_give === 1 ? 'item they must give' : 'items they must give', n.they_give ? 'owed' : '')}
+      ${fig(n.shipments_open, 'on the way')}
+    </div>
+    <div class="lc-part">${p.withThem}</div>
+    <div class="lc-part">${p.accessories}</div>
+    <div class="lc-part">${p.shipments}</div>
+    <p style="margin:12px 0 0">${r.linked.map((x) => `<a class="ov-more" href="#/lg-client/${x.id}">See everything for ${esc(x.name)} in Logistics</a>`).join('<br>')}</p>`;
+  $$('#c-logistics .lc-part').forEach((part) => ovListToggles(part, () => loadClientLogistics(c)));
 }
 
 /* ── on a watch's page ──────────────────────────────────────────── */
