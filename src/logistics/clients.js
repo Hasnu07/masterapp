@@ -43,6 +43,37 @@ export const normName = (s) =>
 /* The logistics app's own locations ("Company · Dubai"): that is us, never a client of ours. */
 const isUs = (d) => d?.isCompany === true || normName(d?.name) === 'company';
 
+/*
+ * A "client" that is only a place or a placeholder — the logistics app makes one
+ * from a stock row's "bought from" ("HK"), or someone types "Need to confirm":
+ * never linked on its own, only by a person (seen live, 24 Oct 2026).
+ */
+const NOT_A_PERSON = new Set(['hk', 'hong kong', 'dubai', 'london', 'uk', 'united kingdom', 'spain', 'switzerland', 'italy', 'mayfair', 'ncl', 'safe', 'office', 'need to confirm', 'unknown', 'tbc', 'tbd', 'client']);
+
+/* Edit distance, for names typed two ways ("Victor" / "viktor", "Shouaib" / "suhaib"). */
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+/* Two names that could be one person typed two ways: one inside the other, or a word (or the whole) at most about half different. */
+export function namesAlike(a, b) {
+  const A = normName(a);
+  const B = normName(b);
+  if (!A || !B) return false;
+  const ca = A.replace(/ /g, '');
+  const cb = B.replace(/ /g, '');
+  const near = (x, y) => 1 - editDistance(x, y) / Math.max(x.length, y.length) >= 0.5;
+  if (Math.min(ca.length, cb.length) >= 3 && (ca.includes(cb) || cb.includes(ca))) return true;
+  const ta = A.split(' ').filter((w) => w.length >= 3);
+  const tb = B.split(' ').filter((w) => w.length >= 3);
+  return ta.some((x) => tb.some((y) => near(x, y))) || near(ca, cb);
+}
+
 const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
 
 /*
@@ -193,9 +224,13 @@ function matchOf(c, snap) {
   const candidates = ranked.slice(0, 3).map((v) => ({ client_id: v.client_id, name: snap.ourName.get(v.client_id) || '', stocks: v.stocks }));
   if (nameOne && !candidates.some((x) => x.client_id === nameOne)) candidates.push({ client_id: nameOne, name: snap.ourName.get(nameOne) || '', stocks: [], by_name: true });
   const [best, second] = ranked;
+  // A place or a placeholder is not a person: suggested, never linked on its own.
+  if (NOT_A_PERSON.has(normName(c.name))) return { client_id: null, how: null, stocks: [], candidates };
   if (best && (!second || best.score >= 2 * second.score)) {
     // A name that is another client of ours outweighs one or two watches.
     if (nameOne && nameOne !== best.client_id && best.score < 3) return { client_id: null, how: null, stocks: [], candidates };
+    // One watch alone links only names that look alike (a polisher or a forwarder entered as a client shares one watch too).
+    if (best.stocks.length === 1 && !namesAlike(c.name, snap.ourName.get(best.client_id) || '')) return { client_id: null, how: null, stocks: [], candidates };
     return { client_id: best.client_id, how: 'watches', stocks: best.stocks, candidates };
   }
   if (!best && nameOne && words.length >= 2) return { client_id: nameOne, how: 'name', stocks: [], candidates };
