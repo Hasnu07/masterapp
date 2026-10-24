@@ -525,6 +525,20 @@ inside a transaction at start-up, so `CREATE INDEX CONCURRENTLY` is out.
 | `test-master` | adding tests in `test/` (node:test, real Postgres, stand-ins) |
 | `debugging-wizard` | a sync or import that misbehaves: logs, `import_runs`, hypotheses |
 | `devops-engineer` | DigitalOcean App Platform, R2, deploys (see `HOSTING.md`) |
+| `frontend-design` | reshaping a console page's look and wording (Anthropic's, Apache-2.0, from `anthropics/claude-plugins-official` @ `44490cc`). Within the console's own look — EB Garamond / Hanken Grotesk, the warm palette in `index.html` — not a new one per page |
+
+| VectorLab UI/UX (21) | any console page: `page-patterns`, `viewports`, `typography`, `spacing`, `colour-palette`, `anti-slop`, `verbs` / `labels` / `errors`, `empty-states`, `loaders`, `motion`, `surfaces`, `forms`, `keyboard`, … and `ux-audit` before finishing (MIT, `VectorLabAU/skills` @ `0756cc9`; `.claude/skills/LICENSE-vectorlab`) |
+
+More are added when a task would gain from one (asked 24 Oct 2026: "always add skills you think are good for the project"): read whole first, open licence, reputable source, copied unchanged.
+
+## UI/UX skills
+
+Taste, a11y, bans, voice, and icon library for this project live in `.ux-profile.md`.
+Run `setup-ui-ux-skills` again only to change those defaults.
+Before UI or microcopy work, read `.ux-profile.md`, then the matching domain skill (page-patterns, viewports, forms, surfaces, loaders, empty-states, copy, motion).
+Before creating a new page, read `page-patterns` and name the pattern. Do not write page markup until the pattern is named.
+Layouts must pass `viewports` at 375px and 1280px.
+Before finishing UI, run `ux-audit`.
 
 ## Running
 
