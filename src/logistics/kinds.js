@@ -100,7 +100,13 @@ const first = (d, keys) => {
   return '';
 };
 const join = (...parts) => parts.filter((p) => p && String(p).trim()).join(' · ');
-const spec = (d) => [d.brand, d.watchModel || d.model || d.description, d.watchReference || d.reference].filter(Boolean).join(' ');
+const spec = (d) => {
+  const brand = String(d.brand || '').trim();
+  let model = String(d.watchModel || d.model || d.description || '').trim();
+  // "Rolex Rolex Daytona": the model often repeats the brand (as Chrono Key's does — watches/fields.js displayTitle).
+  if (brand && model.toLowerCase().startsWith(`${brand.toLowerCase()} `)) model = model.slice(brand.length + 1);
+  return [brand, model, d.watchReference || d.reference].filter(Boolean).join(' ');
+};
 
 /* A place's own corners: London's Mayfair and NCL, Dubai's office and safe. */
 const corner = (d) => [d.inMayfair && 'Mayfair', d.inNcl && 'NCL', d.inOffice && 'office', d.inSafe && 'safe'].filter(Boolean).join(', ');

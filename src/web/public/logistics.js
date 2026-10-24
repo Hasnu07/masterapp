@@ -245,14 +245,14 @@ async function loadLogistics(more = false) {
 /* ── the overview ───────────────────────────────────────────────── */
 
 /*
- * The logistics app's dashboard, in masterapp: its four counters, the
- * deliveries donut, Search everything, accessories, what logistics has cost
- * (one currency, and each), Need Polish with Send and Done — and what is
- * moving now. Every watch it names is OUR watch, linked to its page.
- * Refreshed every minute while open; the search and an open polish form are
- * left alone by the refresh.
+ * The logistics app's dashboard, in masterapp — laid out for a glance (asked
+ * 24 Oct 2026: "easy to understand even for a dumb person"; .ux-profile.md):
+ * five tiles in plain words, then search, then each list with one line per
+ * thing and a short sentence saying what it is. Every watch it names is OUR
+ * watch, linked to its page. Refreshed every minute while open; the search
+ * and an open polish form are left alone by the refresh.
  */
-const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, timer: null, typing: null, data: null };
+const ov = { search: { q: '', scope: 'all' }, costIn: 'USD', form: null, polishAll: false, timer: null, typing: null, data: null };
 
 /* A record's stock numbers: to our watch's page where we hold it, else to the record. */
 const stockLinksOf = (i) =>
@@ -263,6 +263,30 @@ const stockLinksOf = (i) =>
     })
     .join(' ');
 
+/* A panel's heading: what it is, how many, and where to see them all. */
+const ovHead = (title, n, href, linkText) =>
+  `<div class="ov-head"><h2 class="ov-h">${esc(title)}${n === null || n === undefined ? '' : `<span class="ov-n">${esc(n)}</span>`}</h2>${
+    href ? `<a class="ov-more" href="${esc(href)}">${esc(linkText)}</a>` : ''
+  }</div>`;
+const ovExplain = (text) => `<p class="ov-explain">${esc(text)}</p>`;
+const ovEmpty = (text) => `<p class="ov-empty">${esc(text)}</p>`;
+const ovSkeleton = '<div class="ov-skel"></div><div class="ov-skel"></div><div class="ov-skel"></div>';
+
+/* One line per thing: what it is (to its page), then where it stands and its watches. */
+const ovRow = (i, side = '') => `<div class="ov-row">
+    <div class="ov-row-main">
+      <a class="ov-title" href="#/lg/${i.id}" title="${esc(i.summary.title)}">${esc(i.summary.title)}</a>
+      <div class="ov-meta"><span>${stockLinksOf(i)}</span><span>${esc(i.summary.sub)}</span></div>
+    </div>${side ? `<div class="ov-row-side">${side}</div>` : ''}
+  </div>`;
+
+/* The first few of a list, and a way to all of them. */
+const OV_ROWS = 6;
+const ovList = (items, render, href, noun, empty) =>
+  items.length
+    ? items.slice(0, OV_ROWS).map(render).join('') + (items.length > OV_ROWS ? `<a class="ov-all" href="${esc(href)}">Show all ${items.length} ${esc(noun)}</a>` : '')
+    : ovEmpty(empty);
+
 async function showLogisticsOverview() {
   const seq = ++lgPage;
   const still = () => seq === lgPage && (location.hash === '#/logistics' || location.hash === '#/logistics/overview');
@@ -270,19 +294,14 @@ async function showLogisticsOverview() {
   clearTimeout(ov.typing);
   ov.form = null;
   ov.data = null;
-  $('#app').innerHTML = `${lgHeader('overview', '<span id="ov-asof"></span>')}
-    <div class="ov-cards" id="ov-cards"></div>
-    <div class="ov-grid">
-      <div class="panel" id="ov-donut"></div>
-      <div class="panel" id="ov-search"></div>
-    </div>
-    <div class="ov-grid">
-      <div class="panel ov-acc" id="ov-acc"></div>
-      <div class="panel ov-cost" id="ov-cost"></div>
-    </div>
-    <div class="panel" id="ov-costcards" style="margin-top:14px"></div>
-    <div class="panel" id="ov-polish" style="margin-top:14px"></div>
-    <div id="ov-lists" style="margin-top:14px"><p class="sub">Reading…</p></div>`;
+  // The panels flow down two balanced columns (CSS columns), so a short panel leaves no hole beside a long one
+  // (24 Oct 2026: "too much empty whitespace"). In order of what matters; on a phone, one column in that order.
+  const panel = (id) => `<section class="panel ov-panel" id="${id}">${ovSkeleton}</section>`;
+  $('#app').innerHTML = `${lgHeader('overview', '<span class="ov-asof" id="ov-asof">Reading the latest…</span>')}
+    <div class="ov-banner" id="ov-error" role="alert"></div>
+    <div class="ov-tiles" id="ov-cards">${'<div class="ov-tile ov-skel-tile"></div>'.repeat(5)}</div>
+    <section class="panel ov-panel" id="ov-search"></section>
+    <div class="ov-cols">${['ov-moving', 'ov-ready', 'ov-polish', 'ov-donut', 'ov-coming', 'ov-places', 'ov-cost', 'ov-acc', 'ov-recent'].map(panel).join('')}</div>`;
   renderOverviewSearch();
   await loadOverview(still);
 }
@@ -300,11 +319,12 @@ async function loadOverview(still) {
     const o = await api('/api/logistics/overview');
     if (!shown()) return;
     ov.data = o;
+    $('#ov-error').textContent = '';
     renderOverview(o);
-  } catch (err) {
+  } catch {
     if (!shown()) return;
-    if (ov.data) $('#ov-asof').textContent = `could not refresh (${err.message}) — trying again in a minute`;
-    else $('#ov-lists').innerHTML = `<p class="err">${esc(err.message)} — trying again in a minute</p>`;
+    if (ov.data) $('#ov-asof').textContent = 'Could not refresh — showing the last figures. Trying again in a minute.';
+    else $('#ov-error').textContent = 'The overview could not be loaded. Check the connection — it tries again every minute.';
   } finally {
     clearTimeout(ov.timer);
     if (shown()) {
@@ -315,23 +335,85 @@ async function loadOverview(still) {
   }
 }
 
-function renderOverview(o) {
-  $('#ov-asof').textContent = o.as_of ? `the logistics app as of ${fmtWhen(o.as_of)}` : 'the logistics app has not been read yet';
-  const D = o.deliveries;
-  $('#ov-cards').innerHTML = [
-    ['moving', 'Shipments in motion', D.in_motion, 'pending + in transit', '#/logistics/shipments'],
-    ['good', 'Delivered', D.delivered, 'all time', '#/logistics/shipments'],
-    ['late', 'Delayed', D.delayed, 'past their delivery date', '#/logistics/shipments'],
-    ['ready', 'Ready for delivery', D.ready, 'sold, awaiting handover', '#/logistics/sales'],
-  ]
-    .map(([tone, label, n, sub, href]) => `<a class="ov-card ${tone}" href="${href}"><span>${esc(label)}</span><b>${esc(n)}</b><small>${esc(sub)}</small></a>`)
-    .join('');
+/* "5 min ago", or the day and time when it is older than today. */
+function ovAgo(at) {
+  const t = new Date(at).getTime();
+  const min = Math.round((Date.now() - t) / 60_000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  if (new Date(t).toDateString() === new Date().toDateString()) return `${Math.floor(min / 60)} h ago`;
+  return new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
 
-  /* The deliveries donut: delivered, in progress, delayed — the app's three. */
+function renderOverview(o) {
+  if (o.as_of) {
+    const at = new Date(o.as_of);
+    const when = at.toDateString() === new Date().toDateString() ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : fmtWhen(o.as_of);
+    $('#ov-asof').innerHTML = `<span class="ov-live" title="Checks the logistics app for changes every minute">Live</span> Updated ${esc(when)}`;
+  } else $('#ov-asof').textContent = 'Not read from the logistics app yet';
+
+  const D = o.deliveries;
+  const tile = (tone, label, n, help, href) =>
+    `<a class="ov-tile ${tone}" href="${href}"><span class="ov-tile-label">${esc(label)}</span><b>${esc(n)}</b><small>${esc(help)}</small></a>`;
+  $('#ov-cards').innerHTML = [
+    tile('blue', 'On the way', D.in_motion, D.in_motion === 1 ? 'shipment moving now' : 'shipments moving now', '#/logistics/shipments'),
+    D.delayed
+      ? tile('bad', 'Late', D.delayed, D.delayed === 1 ? 'shipment past its due day' : 'shipments past their due day', '#/logistics/shipments')
+      : tile('good', 'Late', 0, 'none — all on time', '#/logistics/shipments'),
+    tile('gold', 'Waiting to hand over', D.ready, 'sold, not delivered yet', '#/logistics/sales'),
+    tile('blue', 'Coming in', o.incoming.length, 'watches on their way to us', '#/logistics/incoming'),
+    tile('', 'Delivered', D.delivered, 'shipments since the start', '#/logistics/shipments'),
+  ].join('');
+
+  $('#ov-moving').innerHTML =
+    ovHead('On the way', o.shipments.length, '#/logistics/shipments', 'All shipments') +
+    ovExplain('Sent and not delivered yet. The label says where the carrier has it.') +
+    ovList(o.shipments, (i) => ovRow(i, lgChip(i.summary.status)), '#/logistics/shipments', 'shipments', 'Nothing is on the way right now.');
+
+  $('#ov-ready').innerHTML =
+    ovHead('Waiting to hand over', o.ready.length, '#/logistics/sales', 'Sales & delivery') +
+    ovExplain('Sold watches the buyer does not have yet.') +
+    ovList(o.ready, (i) => ovRow(i, i.summary.status === 'shipped' ? lgChip('shipped') : ''), '#/logistics/sales', 'watches', 'Every sold watch has been handed over.');
+
+  $('#ov-coming').innerHTML =
+    ovHead('Coming in', o.incoming.length, '#/logistics/incoming', 'All incoming') +
+    ovExplain('Watches bought and on their way to us.') +
+    ovList(o.incoming, (i) => ovRow(i, /pending/i.test(i.summary.status) ? '' : lgChip(i.summary.status)), '#/logistics/incoming', 'watches', 'Nothing is coming in right now.');
+
+  $('#ov-places').innerHTML =
+    ovHead('Where the watches are', null, '#/logistics/stock', 'Stock by place') +
+    ovExplain('How many watches are in each place right now.') +
+    (o.places.length
+      ? `<div class="ov-places">${o.places
+          .map((p) => {
+            const notes = [p.consignment && `${p.consignment} on consignment`, p.polish && `${p.polish} at polish`].filter(Boolean).join(', ');
+            return `<a class="ov-place" href="#/logistics/stock"><b>${esc(p.n)}</b><span>${esc(p.label)}</span>${notes ? `<small>${esc(notes)}</small>` : ''}</a>`;
+          })
+          .join('')}</div>`
+      : ovEmpty('No watches in any place yet.'));
+
+  renderOverviewDonut(D);
+
+  $('#ov-acc').innerHTML =
+    ovHead('Accessories', null, '#/logistics/accessories', 'Open accessories') +
+    ovExplain('Boxes, papers and other items still to pass on.') +
+    `<div class="ov-acc-nums"><div><b class="give">${esc(o.accessories.give)}</b><span>to give to clients</span></div><div><b class="owed">${esc(o.accessories.owed)}</b><span>clients still owe us</span></div></div>`;
+
+  renderOverviewCost(o.costs);
+  if (!ov.form) renderOverviewPolish(o.need_polish);
+
+  $('#ov-recent').innerHTML =
+    ovHead('Latest changes', null, '#/logistics/log', 'Full activity log') +
+    ovExplain('The newest change to each record — made here or in the logistics app.') +
+    (o.recent.length ? `<ul class="ov-feed">${o.recent.map(ovChange).join('')}</ul>` : ovEmpty('No changes yet.'));
+}
+
+/* Every shipment so far, by where it stands — the logistics app's donut, in plain words. */
+function renderOverviewDonut(D) {
   const segs = [
     ['Delivered', D.delivered, 'var(--good)'],
-    ['In progress', D.in_progress, 'var(--warn)'],
-    ['Delayed', D.delayed, 'var(--bad)'],
+    ['On the way', D.in_progress, 'var(--warn)'],
+    ['Late', D.delayed, 'var(--bad)'],
   ];
   const sum = segs.reduce((a, s) => a + s[1], 0);
   const r = 62;
@@ -348,21 +430,51 @@ function renderOverview(o) {
         })
         .join('')
     : `<circle cx="80" cy="80" r="${r}" fill="none" style="stroke:var(--line)" stroke-width="20"/>`;
-  $('#ov-donut').innerHTML = `<div class="row" style="justify-content:space-between"><h3 style="margin:0">Deliveries</h3><span class="ov-live" title="Refreshed every minute">LIVE</span></div>
-    <div class="ov-donut"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="${esc(`${sum} shipments`)}">${arcs}
-      <text x="80" y="80" text-anchor="middle" font-size="28" font-weight="700" style="fill:var(--ink)">${sum}</text>
-      <text x="80" y="100" text-anchor="middle" font-size="12" style="fill:var(--muted)">shipments</text></svg>
+  $('#ov-donut').innerHTML =
+    ovHead('All shipments', sum, '#/logistics/shipments', 'All shipments') +
+    ovExplain('Every shipment so far, by where it stands.') +
+    `<div class="ov-donut"><svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label="${esc(`${sum} shipments: ${segs.map(([n, v]) => `${v} ${n.toLowerCase()}`).join(', ')}`)}">${arcs}
+      <text x="80" y="82" text-anchor="middle" font-size="28" font-weight="600" style="fill:var(--ink)">${sum}</text>
+      <text x="80" y="102" text-anchor="middle" font-size="13" style="fill:var(--muted)">shipments</text></svg>
       <div class="ov-legend">${segs
-        .map(([name, n, color]) => `<div><i style="background:${color}"></i><span>${esc(name)}</span><b style="color:${color}">${sum ? Math.round((n / sum) * 100) : 0}%</b><small>${esc(n)}</small></div>`)
+        .map(([name, n, color]) => `<div><i style="background:${color}"></i><span>${esc(name)}</span><b>${esc(n)}</b><small>${sum ? Math.round((n / sum) * 100) : 0}%</small></div>`)
         .join('')}</div></div>`;
+}
 
-  $('#ov-acc').innerHTML = `<div><h3 style="margin:0 0 4px">Accessories</h3><p class="count" style="margin:0">Pending accessory transfers — what to give and what clients owe us.</p></div>
-    <div class="ov-acc-nums"><div><span>To give to clients</span><b class="give">${esc(o.accessories.give)}</b></div><div><span>Clients owe us</span><b class="owed">${esc(o.accessories.owed)}</b></div></div>
-    <a class="btn" href="#/logistics/accessories">Open accessories →</a>`;
+/* A value in a change, as a person reads it. */
+const ovValue = (v) => {
+  if (v === null || v === undefined || v === '') return 'blank';
+  if (v === true) return 'yes';
+  if (v === false) return 'no';
+  const s = String(v);
+  return s.length > 40 ? `${s.slice(0, 40)}…` : s;
+};
 
-  renderOverviewCost(o.costs);
-  if (!ov.form) renderOverviewPolish(o.need_polish);
-  renderOverviewLists(o);
+/* One change in words. A list or a block of details inside the record is "(details)" in the history: named, not shown. */
+function ovWords(k, [a, b]) {
+  const blank = (v) => v === null || v === undefined || v === '';
+  if (k === 'polish' && (a === '(details)' || b === '(details)')) return blank(b) ? 'Back from polish' : blank(a) ? 'Sent to polish' : 'Polish details changed';
+  if (a === '(details)' || b === '(details)') return `${humanKey(k)} changed`;
+  return `${humanKey(k)}: ${ovValue(a)} → ${ovValue(b)}`;
+}
+
+function ovChange(e) {
+  const keys = Object.keys(e.changes || {});
+  const what =
+    { create: 'Added', delete: 'Removed', restore: 'Back again' }[e.action] ||
+    keys
+      .slice(0, 2)
+      .map((k) => ovWords(k, e.changes[k]))
+      .join(', ') + (keys.length > 2 ? `, and ${keys.length - 2} more` : '') ||
+    'Updated';
+  const who = e.source === 'user' ? e.user_name || 'someone here' : 'the logistics app';
+  return `<li><time datetime="${esc(e.at)}" title="${esc(fmtWhen(e.at))}">${esc(ovAgo(e.at))}</time>
+    <div class="ov-row-main">
+      <a class="ov-title" href="#/lg/${e.item.id}" title="${esc(e.item.summary.title)}">${esc(e.item.summary.title)}</a>
+      <div class="ov-meta"><span>${stockLinksOf(e.item)}</span><span>${esc(what)}</span><span>by ${esc(who)}${
+        e.earlier ? `, ${e.earlier} earlier change${e.earlier === 1 ? '' : 's'}` : ''
+      }</span></div>
+    </div></li>`;
 }
 
 /* What logistics has cost: one figure in a currency of your choosing, at the converter's rates, and each currency's own. */
@@ -372,72 +484,75 @@ function renderOverviewCost(c) {
   const target = R[ov.costIn] ? ov.costIn : 'USD';
   let total = 0;
   const left = [];
-  const lines = parts.map(([cur, v]) => {
-    if (!R[cur] || !R[target]) {
-      left.push(cur);
-      return `<b>${esc(cur)}</b> ${esc(v.amount.toLocaleString('en-GB'))} — no rate`;
-    }
-    const conv = (v.amount / R[cur]) * R[target];
-    total += conv;
-    return `<b>${esc(cur)}</b> ${esc(v.amount.toLocaleString('en-GB', { maximumFractionDigits: 2 }))} ≈ ${money(Math.round(conv), target)}`;
+  const rows = parts.map(([cur, v]) => {
+    let conv = '';
+    if (R[cur] && R[target]) {
+      const n = (v.amount / R[cur]) * R[target];
+      total += n;
+      if (cur !== target) conv = `≈ ${money(Math.round(n), target)}`;
+    } else left.push(cur);
+    const amount = cur === 'OTHER' ? `${money(v.amount, null)} (no currency)` : money(v.amount, cur);
+    return `<tr><th>${amount}</th><td>${conv || (left.includes(cur) ? 'no rate' : '')}</td><td>${esc(v.count)} cost${v.count === 1 ? '' : 's'}</td></tr>`;
   });
-  $('#ov-cost').innerHTML = parts.length
-    ? `<div class="row" style="justify-content:space-between;align-items:flex-start">
-         <div><h3 style="margin:0 0 4px">Total logistic cost</h3><p class="count" style="margin:0">${
-           c.rates
-             ? `Every currency in one, at today’s ${esc(c.rates.kind || '')} rates${c.rates.stale ? ' (not fresh)' : ''}${left.length ? ` — ${esc(left.join(', '))} left out, no rate` : ''}.`
-             : 'No exchange rates yet — the total shows at the next refresh.'
-         }</p></div>
-         <label class="count" style="margin:0">in <select id="ov-costin" style="width:auto;min-height:30px;padding:2px 6px">${c.targets
-           .filter((t) => R[t])
-           .map((t) => `<option${t === target ? ' selected' : ''}>${esc(t)}</option>`)
-           .join('')}</select></label></div>
-       <div class="ov-cost-total" data-nofx>${c.rates ? money(Math.round(total * 100) / 100, target) : '—'}</div>
-       <p class="count" style="margin:0" data-nofx>${lines.join(' · ')}</p>`
-    : '<h3>Total logistic cost</h3><p class="count" style="margin:0">No logistic costs yet.</p>';
+  const note = c.rates
+    ? `All currencies added up at today’s ${c.rates.kind === 'daily' ? 'daily' : 'live'} rates${c.rates.stale ? ' (not the newest)' : ''}${left.length ? `. Not counted, no rate: ${left.join(', ')}` : ''}.`
+    : 'No exchange rates yet — the total shows at the next refresh.';
+  $('#ov-cost').innerHTML =
+    ovHead('Logistics costs', null, '#/logistics/costs', 'All costs') +
+    (parts.length
+      ? `<div class="ov-cost-top"><div class="ov-cost-total" data-nofx>${c.rates ? money(Math.round(total * 100) / 100, target) : '—'}</div>
+           <label class="ov-cost-in">Show in <select id="ov-costin">${c.targets
+             .filter((t) => R[t])
+             .map((t) => `<option${t === target ? ' selected' : ''}>${esc(t)}</option>`)
+             .join('')}</select></label></div>
+         ${ovExplain(note)}
+         <table class="ov-curtable" data-nofx><tbody>${rows.join('')}</tbody></table>`
+      : ovEmpty('No logistics costs yet.'));
   $('#ov-costin')?.addEventListener('change', (e) => {
     ov.costIn = e.target.value;
     renderOverviewCost(c);
   });
-  $('#ov-costcards').innerHTML = parts.length
-    ? `<div class="row" style="justify-content:space-between"><h3 style="margin:0">Logistic cost — all time, per currency</h3><a class="btn small" href="#/logistics/costs">Open costs →</a></div>
-       <div class="ov-curs">${parts
-         .map(([cur, v]) => `<div><span>${esc(cur)}</span><b>${money(v.amount, cur === 'OTHER' ? null : cur)}</b><small>${esc(v.count)} cost line${v.count === 1 ? '' : 's'}</small></div>`)
-         .join('')}</div>`
-    : '';
 }
 
-/* Need Polish: the flagged watches, Send for one that is not at polish yet, Done for one that is. */
+/* Need polish: the flagged watches — Send to polish for one still here, Mark as returned for one at the polisher. */
 function renderOverviewPolish(rows) {
   const box = $('#ov-polish');
   if (!box) return;
   const editor = can('editor');
-  box.innerHTML = `<div class="row" style="justify-content:space-between"><h3 style="margin:0">Need polish</h3><span class="count" style="margin:0">${
-    rows.length ? `${rows.length} watch${rows.length === 1 ? '' : 'es'} need polish` : 'none — all clean'
-  }</span></div>
-    <div id="ov-polish-form"></div>
-    ${
-      rows.length
-        ? `<div class="tscroll"><table class="list"><thead><tr><th>Where</th><th>Stock</th><th>Reference</th><th>Watch</th><th>From</th><th>Place</th><th></th></tr></thead><tbody>${rows
-            .map(
-              (r) => `<tr>
-                <td><span class="chip lg-muted">${esc(r.source)}</span></td>
-                <td>${stockLinksOf(r) || '<span class="blank">—</span>'}</td>
-                <td>${esc(r.reference || '—')}</td>
-                <td><a href="#/lg/${r.id}">${esc(r.model || r.summary.title)}</a></td>
-                <td>${esc(r.from || '—')}</td>
-                <td>${esc(r.place)}${r.polish ? `<div><span class="chip lg-warn" title="${esc(r.polish.sentDate ? `Since ${r.polish.sentDate}` : '')}">at polish · ${esc(r.polish.sentTo)}</span></div>` : ''}</td>
-                <td style="white-space:nowrap">${
-                  editor && r.can_polish
-                    ? r.polish
-                      ? `<button class="btn small" data-pdone="${r.id}">Done</button>`
-                      : `<button class="btn small" data-psend="${r.id}">Send</button>`
+  box.innerHTML =
+    ovHead('Need polish', rows.length, '#/logistics/services', 'Polish & services') +
+    (rows.length ? ovExplain(editor ? 'Press Send to polish when a watch goes to the polisher, and Mark as returned when it is back.' : 'Watches marked for polish.') : '') +
+    '<div id="ov-polish-form"></div>' +
+    (rows.length
+      ? (ov.polishAll ? rows : rows.slice(0, OV_ROWS))
+          .map(
+            (r) => `<div class="ov-row">
+              <div class="ov-row-main">
+                <a class="ov-title" href="#/lg/${r.id}">${esc([r.model || r.summary.title, r.reference].filter(Boolean).join(' '))}</a>
+                <div class="ov-meta"><span>${stockLinksOf(r)}</span><span>${esc(r.place)}</span>${
+                  r.polish
+                    ? `<span class="ov-warn-text">at the polisher${r.polish.sentTo ? `: ${esc(r.polish.sentTo)}` : ''}${r.polish.sentDate ? `, since ${esc(lgWhen(r.polish.sentDate))}` : ''}</span>`
                     : ''
-                }</td></tr>`
-            )
-            .join('')}</tbody></table></div>`
-        : ''
-    }`;
+                }${r.from ? `<span>from ${esc(r.from)}</span>` : ''}</div>
+              </div>
+              <div class="ov-row-side">${
+                editor && r.can_polish
+                  ? r.polish
+                    ? `<button class="btn" type="button" data-pdone="${r.id}">Mark as returned</button>`
+                    : `<button class="btn" type="button" data-psend="${r.id}">Send to polish</button>`
+                  : ''
+              }</div>
+            </div>`
+          )
+          .join('') +
+        (rows.length > OV_ROWS
+          ? `<button type="button" class="ov-all ov-all-btn" id="ov-polish-all">${ov.polishAll ? 'Show fewer' : `Show all ${rows.length} watches`}</button>`
+          : '')
+      : ovEmpty('Nothing needs polish.'));
+  $('#ov-polish-all')?.addEventListener('click', () => {
+    ov.polishAll = !ov.polishAll;
+    renderOverviewPolish(rows);
+  });
   $$('[data-psend]', box).forEach((b) => b.addEventListener('click', () => polishForm('send', rows.find((r) => String(r.id) === b.dataset.psend))));
   $$('[data-pdone]', box).forEach((b) => b.addEventListener('click', () => polishForm('done', rows.find((r) => String(r.id) === b.dataset.pdone))));
 }
@@ -449,25 +564,25 @@ function polishForm(action, r) {
   const title = `${r.stock_nos.length ? `#${r.stock_nos.join(', #')} · ` : ''}${r.model || r.summary.title}`;
   host.innerHTML =
     action === 'send'
-      ? `<form class="ov-form" id="ov-pform"><b>Send to polish — ${esc(title)}</b>
+      ? `<form class="ov-form" id="ov-pform"><b>Send to polish: ${esc(title)}</b>
           <div class="form-grid" style="margin-top:8px">
-            <label>Sent to (polisher) *<input type="text" name="sentTo" required></label>
+            <label>Polisher *<input type="text" name="sentTo" required></label>
             <label>Taken by<input type="text" name="takenBy"></label>
-            <label>What<select name="itemDescription"><option>Full Watch</option><option>Bracelet</option><option>Case</option><option>Clasp</option><option>Other</option></select></label>
-            <label>Sent<input type="date" name="sentDate" value="${today}"></label>
+            <label>What goes<select name="itemDescription"><option>Full Watch</option><option>Bracelet</option><option>Case</option><option>Clasp</option><option>Other</option></select></label>
+            <label>Sent on<input type="date" name="sentDate" value="${today}"></label>
             <label>Expected back<input type="date" name="expectedBack"></label>
-            <label>Cost<span class="row" style="flex-wrap:nowrap"><input type="text" inputmode="decimal" name="costAmount" placeholder="0"><input type="text" name="costCurrency" value="AED" maxlength="4" style="width:80px"></span></label>
+            <label>Cost<span class="row" style="flex-wrap:nowrap"><input type="text" inputmode="decimal" name="costAmount" placeholder="350"><input type="text" name="costCurrency" value="AED" maxlength="4" style="width:80px" aria-label="Currency"></span></label>
             <label class="wide">Notes<textarea name="notes" rows="2"></textarea></label>
           </div>
           <div class="err" id="ov-perr"></div>
           <div class="row"><button class="btn primary">Send to polish</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`
-      : `<form class="ov-form" id="ov-pform"><b>Back from polish — ${esc(title)}</b> <span class="count">with ${esc(r.polish?.sentTo || '')}${r.polish?.sentDate ? ` since ${esc(r.polish.sentDate)}` : ''}</span>
+      : `<form class="ov-form" id="ov-pform"><b>Mark as returned: ${esc(title)}</b> <span class="count">with ${esc(r.polish?.sentTo || 'the polisher')}${r.polish?.sentDate ? ` since ${esc(lgWhen(r.polish.sentDate))}` : ''}</span>
           <div class="form-grid" style="margin-top:8px">
             <label>Back on<input type="date" name="returnedDate" value="${today}"></label>
             <label class="wide">Notes<textarea name="returnNotes" rows="2"></textarea></label>
           </div>
           <div class="err" id="ov-perr"></div>
-          <div class="row"><button class="btn primary">Mark polish done</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`;
+          <div class="row"><button class="btn primary">Mark as returned</button><button type="button" class="btn" id="ov-pcancel">Cancel</button></div></form>`;
   host.scrollIntoView({ block: 'nearest' });
   $('#ov-pcancel').addEventListener('click', () => {
     ov.form = null;
@@ -481,7 +596,7 @@ function polishForm(action, r) {
     const body = Object.fromEntries(new FormData(e.target).entries());
     try {
       const res = await api(`/api/logistics/items/${r.id}/polish`, { method: 'POST', body: { action, ...body } });
-      flash(action === 'send' ? `Sent to polish${res.cost ? ' — its cost is on the logistic costs' : ''}` : 'Polish done — back in stock');
+      flash(action === 'send' ? `Sent to polish${res.cost ? ' — its cost is in Logistics costs' : ''}` : 'Marked as returned — back in stock');
       ov.form = null;
       loadOverview(() => location.hash === '#/logistics' || location.hash === '#/logistics/overview');
     } catch (err) {
@@ -504,9 +619,10 @@ const OV_SCOPES = [
 let ovSearchSeq = 0;
 function renderOverviewSearch() {
   const S = ov.search;
-  $('#ov-search').innerHTML = `<h3 style="margin:0 0 8px">Search everything <span class="fold-note count">our watches and clients · London · Dubai · HK · sold · incoming · shipments</span></h3>
-    <input class="q" type="search" id="ov-q" placeholder="Brand, reference, model, stock number, serial, client, tracking…" value="${esc(S.q)}" autocomplete="off">
-    <div class="pills" id="ov-scopes" style="margin-top:8px">${OV_SCOPES.map(([k, l]) => `<button class="pill ${S.scope === k ? 'on' : ''}" data-scope="${k}">${esc(l)}</button>`).join('')}</div>
+  $('#ov-search').innerHTML = `${ovHead('Search everything', null)}
+    ${ovExplain('Our watches and clients, and every logistics record — each one shown once.')}
+    <input class="q" type="search" id="ov-q" aria-label="Search everything" placeholder="e.g. 1743, Daytona, 126500LN, a client, a tracking number" value="${esc(S.q)}" autocomplete="off">
+    <div class="pills" id="ov-scopes" style="margin-top:10px">${OV_SCOPES.map(([k, l]) => `<button type="button" class="pill ${S.scope === k ? 'on' : ''}" data-scope="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div id="ov-results"></div>`;
   $('#ov-q').addEventListener('input', (e) => {
     clearTimeout(ov.typing);
@@ -518,7 +634,10 @@ function renderOverviewSearch() {
   $$('#ov-scopes .pill').forEach((b) =>
     b.addEventListener('click', () => {
       S.scope = b.dataset.scope;
-      $$('#ov-scopes .pill').forEach((x) => x.classList.toggle('on', x === b));
+      $$('#ov-scopes .pill').forEach((x) => {
+        x.classList.toggle('on', x === b);
+        x.setAttribute('aria-pressed', String(x === b));
+      });
       runOverviewSearch();
     })
   );
@@ -530,14 +649,14 @@ async function runOverviewSearch() {
   const seq = ++ovSearchSeq;
   if (!$('#ov-results')) return;
   if (!S.q.trim()) {
-    $('#ov-results').innerHTML = '<p class="count" style="margin:8px 0 0">Results show as you type.</p>';
+    $('#ov-results').innerHTML = '';
     return;
   }
   let r;
   try {
     r = await api(`/api/logistics/search?${new URLSearchParams({ q: S.q, scope: S.scope })}`);
-  } catch (err) {
-    if (seq === ovSearchSeq && $('#ov-results')) $('#ov-results').innerHTML = `<p class="err">${esc(err.message)}</p>`;
+  } catch {
+    if (seq === ovSearchSeq && $('#ov-results')) $('#ov-results').innerHTML = '<p class="err">The search did not go through. Check the connection and type again.</p>';
     return;
   }
   const out = $('#ov-results');
@@ -557,45 +676,17 @@ async function runOverviewSearch() {
       i.summary.sub ? ` <span class="count" style="margin:0">· ${esc(i.summary.sub)}</span>` : ''
     } <span class="count" style="margin:0">· ${esc(i.kind_label)}</span></a>${lgChip(i.summary.status)}</div>`
   );
-  const group = (label, rows) => (rows.length ? `<h3 style="margin:12px 0 2px">${esc(label)} <span class="fold-note count">${rows.length}</span></h3>${rows.join('')}` : '');
-  out.innerHTML =
-    group('Watches', watchRows) + group('Clients', clientRows) + group('Logistics records', recordRows) ||
-    '<p class="count" style="margin:8px 0 0">Nothing matches.</p>';
-}
-
-/* What is moving now, and the latest changes. */
-function renderOverviewLists(o) {
-  const row = (i, extra = '') => `<div class="lg-line">
-      <span>${stockLinksOf(i)}</span>
-      <a class="grow" href="#/lg/${i.id}" style="color:inherit;text-decoration:none"><b>${esc(i.summary.title)}</b>${i.summary.sub ? ` <span class="count" style="margin:0">${esc(i.summary.sub)}</span>` : ''}</a>
-      ${extra || lgChip(i.summary.status)}</div>`;
-  const places = o.places.map((p) => `<div><b>${p.n}</b><span>${esc(p.label)}${p.consignment ? ` · ${p.consignment} on consignment` : ''}${p.polish ? ` · ${p.polish} at polish` : ''}</span></div>`).join('');
-  const change = (e) => {
-    const keys = Object.keys(e.changes || {}).filter((k) => !['back', 'gone'].includes(k));
-    const words =
-      e.action === 'delete' ? 'removed' : e.action === 'restore' ? 'back' : e.action === 'create' ? 'added' : keys.slice(0, 3).map((k) => {
-        const [a, b] = e.changes[k] || [];
-        const short = (v) => (v === null || v === undefined ? '—' : typeof v === 'object' ? '…' : String(v).slice(0, 40));
-        return `${humanKey(k)}: ${short(a)} → ${short(b)}`;
-      }).join('; ');
-    return `<li><time>${esc(fmtWhen(e.at))}</time><div><a href="#/lg/${e.item.id}">${esc(e.item.summary.title)}</a> ${stockTags(e.item.stock_nos)}
-      <div class="d">${esc(words)} · ${esc(e.source === 'user' ? e.user_name || 'someone here' : 'the logistics app')}</div></div></li>`;
-  };
-  $('#ov-lists').innerHTML = `
-    <div class="stat" style="margin-bottom:14px">
-      <div><b>${o.incoming.length}</b><span>watches coming in</span></div>
-      ${places}
-    </div>
-    <div class="watch-layout">
-      <div class="stack">
-        <div class="panel"><h3>Shipments on their way</h3>${o.shipments.map((i) => row(i)).join('') || '<p class="count" style="margin:0">None.</p>'}</div>
-        <div class="panel"><h3>Sold, waiting for delivery</h3>${o.ready.map((i) => row(i)).join('') || '<p class="count" style="margin:0">None.</p>'}</div>
-        <div class="panel"><h3>Coming in</h3>${o.incoming.map((i) => row(i)).join('') || '<p class="count" style="margin:0">None.</p>'}</div>
-      </div>
-      <div class="stack">
-        <div class="panel"><h3>Latest changes</h3><ul class="lg-tl">${o.recent.map(change).join('') || '<li class="count">Nothing yet.</li>'}</ul></div>
-      </div>
-    </div>`;
+  const group = (label, rows) => (rows.length ? `<h3 class="ov-subh">${esc(label)}<span class="ov-n">${rows.length}</span></h3>${rows.join('')}` : '');
+  const found = group('Watches', watchRows) + group('Clients', clientRows) + group('Logistics records', recordRows);
+  if (found) {
+    out.innerHTML = found;
+    return;
+  }
+  // Nothing: say so, and offer the way out — the whole search when a chip narrowed it.
+  const label = OV_SCOPES.find(([k]) => k === S.scope)?.[1] || 'All';
+  out.innerHTML = `<div class="ov-empty"><b>Nothing matches “${esc(S.q.trim())}”${S.scope === 'all' ? '' : ` in ${esc(label)}`}.</b>
+    ${S.scope === 'all' ? 'Try a stock number, or one word of the name.' : '<button type="button" class="btn small" id="ov-search-all">Search all instead</button>'}</div>`;
+  $('#ov-search-all')?.addEventListener('click', () => $('#ov-scopes [data-scope="all"]').click());
 }
 
 /* ── one record ─────────────────────────────────────────────────── */
