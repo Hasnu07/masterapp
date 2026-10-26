@@ -364,7 +364,23 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   the Inventory tiles a watch in the safe says "In safe · for <name>"
   (`listWatches` → `in_safe`), and the watch page's "right now" names them.
   The app's Give / Move / Sold buttons are not here: Give and the rest write
-  into the logistics records, so open the record and edit it.
+  into the logistics records, so open the record and edit it. The owner (a
+  typed name) links to the logistics client of that name, and to OUR client
+  only as that one is linked — by its watches, the Clients tab's rule
+  (`linksByName`); a name no logistics client carries links nowhere.
+- **Checked out** (asked 26 Oct 2026, "same rule that each client and stock
+  should be linked"): a Logistics tab, the app's Checkout page — watches held
+  somewhere for a while, not sold (`checkoutStock`; a row with status
+  returned / moved / sold / done is history). Each linked to our watch of that
+  number and through it to OUR clients — bought from, sold to, Chrono Key's
+  ids — never from the typed reason ("Given back to Khawar"). The app lists a
+  watch again each time it is checked out without a return (1439 three
+  times): one entry here, the earlier rows under it; "-" and "xxxxxx" are no
+  number and never merged. The HK rows' description repeats the number and
+  brand ("1508 · Patek Philippe · 5396R-016"): stripped for the model. From
+  (Hong Kong / Dubai / London) as chips, days out, list or cards
+  (`checkedOut()`, `/api/logistics/checked-out`). The tab shows how many.
+  Return / delete are the record's edit and delete, not buttons here.
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds

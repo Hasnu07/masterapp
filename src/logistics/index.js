@@ -3,11 +3,12 @@ import { parseMoney, realDate, displayTitle } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
 import { getRates } from '../rates/index.js';
 import { listWatches } from '../watches/index.js';
-import { listClients } from '../clients/index.js';
+import { listClients, clientName } from '../clients/index.js';
 import { config } from '../config.js';
 import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics/sync.js';
 import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
 import * as situation from './situation.js';
+import { linksByName } from './clients.js';
 
 /*
  * Logistics, as masterapp holds it: every record of the logistics app — and
@@ -705,47 +706,72 @@ export async function forWatch(watchId) {
   };
 }
 
-/* ── in the safe ─────────────────────────────────────────────────── */
+/* ── held for a while: in the safe, checked out ──────────────────── */
+
+const text = (v) => (v === null || v === undefined || v === false ? '' : String(v).trim());
+const TICK = /^(true|✓|✔|yes|y|x|1)$/i;
+const UNTICKED = /^(false|no|n|0)$/i;
+/* A tick field that may instead say where or why: '' when unticked, 'yes' for a bare tick, else its words. */
+const ticked = (v) => (UNTICKED.test(text(v)) ? '' : TICK.test(text(v)) ? 'yes' : text(v));
+const iso = (v) => {
+  const t = situation.when(v);
+  return t ? new Date(t).toISOString() : null;
+};
+/* A day as the app wrote it (YYYY-MM-DD stays itself — no time zone moves it); milliseconds become a moment. */
+const dayOf = (v) => (/^\d{4}-\d{2}-\d{2}/.test(text(v)) ? text(v).slice(0, 10) : iso(v));
+function picturesOf(d) {
+  const prefix = photoPrefix();
+  const all = (Array.isArray(d.photos) ? d.photos : []).filter((v) => typeof v === 'string' && (/^lgfile:\d+$/.test(v) || (prefix && v.startsWith(prefix))));
+  return { picture: all[0] || null, photo_count: all.length };
+}
+
+/*
+ * Our watch of a record's stock number, and the clients Chrono Key ties it to
+ * — bought from, sold to — by id, never by a typed name: so a row on these
+ * pages links to our stock and to our client in one go.
+ */
+async function oursByStock(rows) {
+  const nos = [...new Set(rows.flatMap((r) => r.stock_nos || []))];
+  if (!nos.length) return () => null;
+  const person = (col) =>
+    `(SELECT jsonb_build_object('id', c.id, 'forename', c.forename, 'surname', c.surname, 'nickname', c.nickname, 'company', c.company)
+        FROM clients c WHERE c.id = w.${col} AND c.deleted_at IS NULL)`;
+  const { rows: ours } = await query(
+    `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.status,
+            (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id,
+            ${person('purchased_from_client_id')} AS bought_from, ${person('sold_to_client_id')} AS sold_to
+       FROM watches w WHERE w.stock_no = ANY($1) AND w.deleted_at IS NULL`,
+    [nos]
+  );
+  const who = (c) => (c ? { id: c.id, name: clientName(c) } : null);
+  const byNo = new Map(
+    ours.map((w) => [
+      w.stock_no,
+      { id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, photo_id: w.photo_id, bought_from: who(w.bought_from), sold_to: who(w.sold_to) },
+    ])
+  );
+  return (r) => (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean) || null;
+}
 
 /*
  * The logistics app's In Safe page (asked 26 Oct 2026): clients' watches we
  * hold — never our stock, so never priced — each with who it is for (the
  * row's "from", the app's Owner), and the accessories we owe a client that
  * sit in the safe ("To give" ticked "in our safe"). A row a move left behind
- * is history, not the safe now.
+ * is history, not the safe now. The owner is a typed name: linked to the
+ * logistics client of that name, and to ours only as that client is
+ * (linksByName — by its watches, as on the Clients tab).
  */
 const NOW_IN_PLACE = "COALESCE(data->>'status','') IN ('', 'current', 'consignment')";
-const text = (v) => (v === null || v === undefined || v === false ? '' : String(v).trim());
-const TICK = /^(true|✓|✔|yes|y|x|1)$/i;
-const UNTICKED = /^(false|no|n|0)$/i;
-/* A tick field that may instead say where or why: '' when unticked, 'yes' for a bare tick, else its words. */
-const ticked = (v) => (UNTICKED.test(text(v)) ? '' : TICK.test(text(v)) ? 'yes' : text(v));
 
 export async function inSafe() {
   const [watchRows, accRows] = await Promise.all([
     query(`SELECT * FROM logistics_items WHERE kind = 'safeStock' AND deleted_at IS NULL AND ${NOW_IN_PLACE}`),
     query("SELECT * FROM logistics_items WHERE kind = 'accGive' AND deleted_at IS NULL AND lower(COALESCE(data->>'inSafe','')) NOT IN ('', 'false', 'no', 'n', '0')"),
   ]);
-  const nos = [...new Set([...watchRows.rows, ...accRows.rows].flatMap((r) => r.stock_nos || []))];
-  const { rows: ours } = nos.length
-    ? await query(
-        `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.status,
-                (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id
-           FROM watches w WHERE w.stock_no = ANY($1) AND w.deleted_at IS NULL`,
-        [nos]
-      )
-    : { rows: [] };
-  const byNo = new Map(ours.map((w) => [w.stock_no, w]));
-  const prefix = photoPrefix();
-  const isPicture = (v) => typeof v === 'string' && (/^lgfile:\d+$/.test(v) || (prefix && v.startsWith(prefix)));
-  const iso = (v) => {
-    const t = situation.when(v);
-    return t ? new Date(t).toISOString() : null;
-  };
-  const ourWatch = (r) => {
-    const w = (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean);
-    return w ? { id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, photo_id: w.photo_id } : null;
-  };
+  const ourWatch = await oursByStock([...watchRows.rows, ...accRows.rows]);
+  const people = await linksByName([...watchRows.rows.map((r) => r.data?.from), ...accRows.rows.map((r) => r.data?.toClient)]);
+  const linkOf = (name) => people.get(text(name)) || null;
 
   const watches = watchRows.rows
     .map((r) => {
@@ -759,6 +785,7 @@ export async function inSafe() {
         watch_date: text(d.watchDate),
         serial: text(d.watchSerial || d.serial),
         owner: text(d.from),
+        owner_link: linkOf(d.from),
         received_at: iso(d.receivedAt) || iso(d.createdAt) || new Date(r.created_at).toISOString(),
         // Which safe or box, when it says more than a tick; whether it is out with its owner for now.
         where: ticked(d.inSafe) === 'yes' ? '' : ticked(d.inSafe),
@@ -770,8 +797,7 @@ export async function inSafe() {
         consignment: text(d.consignment?.with),
         notes: text(d.notes),
         held_for_buyer: Boolean(d.heldForBuyer || d.soldId),
-        picture: (Array.isArray(d.photos) ? d.photos : []).find(isPicture) || null,
-        photo_count: (Array.isArray(d.photos) ? d.photos : []).filter(isPicture).length,
+        ...picturesOf(d),
         origin: r.origin,
         locked: (r.locked_fields || []).length > 0,
         watch: ourWatch(r),
@@ -791,6 +817,7 @@ export async function inSafe() {
         about: w ? w.title : [safeRow?.brand, safeRow?.reference].filter(Boolean).join(' · '),
         items: text(d.items),
         for_client: text(d.toClient),
+        for_link: linkOf(d.toClient),
         notes: text(d.notes),
         in_safe_at: iso(d.inSafeAt),
         watch: w,
@@ -799,6 +826,75 @@ export async function inSafe() {
     .sort((a, b) => String(b.in_safe_at || '').localeCompare(String(a.in_safe_at || '')) || b.id - a.id);
 
   return { as_of: await asOf(), watches, accessories };
+}
+
+/*
+ * The logistics app's Checkout page (asked 26 Oct 2026): watches held
+ * somewhere for a while, not sold — a trade show, a client trying one, a
+ * driver, one given back. Each linked to our watch of that number and so to
+ * our client (who it was bought from, who it was sold to — Chrono Key's ids).
+ * The app lists a watch again each time it is checked out without a return
+ * (1439 three times): shown once here, the earlier rows under it. A number
+ * that is no number ("-", "xxxxxx") is never put together with another.
+ */
+const OUT_NOW = "COALESCE(data->>'status','') NOT IN ('returned', 'moved', 'sold', 'done')";
+const ORIGIN = { hk: 'Hong Kong', 'hong kong': 'Hong Kong', dubai: 'Dubai', london: 'London', uk: 'London', safe: 'Safe' };
+const originOf = (v) => ORIGIN[text(v).toLowerCase()] || text(v);
+/* The HK list's description repeats the number and the brand ("1508 · Patek Philippe · 5396R-016"): the model is what is left. */
+function modelOf(d, stock, brand) {
+  const parts = text(d.watchModel || d.model || d.description).split(' · ').map((s) => s.trim());
+  while (parts.length > 1 && (!parts[0] || parts[0] === '-' || parts[0] === stock || parts[0].toLowerCase() === brand.toLowerCase())) parts.shift();
+  return parts.join(' · ');
+}
+
+export async function checkedOut() {
+  const { rows } = await query(`SELECT * FROM logistics_items WHERE kind = 'checkoutStock' AND deleted_at IS NULL AND ${OUT_NOW}`);
+  const ourWatch = await oursByStock(rows);
+  const all = rows
+    .map((r) => {
+      const d = r.data || {};
+      const stock = text(d.stockNumber);
+      const brand = text(d.brand);
+      return {
+        id: r.id,
+        stock_no: stock,
+        brand,
+        model: modelOf(d, stock, brand),
+        reference: text(d.watchReference || d.reference),
+        serial: text(d.watchSerial || d.serial),
+        watch_date: text(d.watchDate),
+        origin: originOf(d.originLocation),
+        checked_out: dayOf(d.checkedOutDate) || new Date(r.created_at).toISOString(),
+        reason: text(d.checkedOutBy),
+        notes: text(d.notes),
+        ...picturesOf(d),
+        locked: (r.locked_fields || []).length > 0,
+        watch: ourWatch(r),
+      };
+    })
+    .sort((a, b) => String(b.checked_out).localeCompare(String(a.checked_out)) || b.id - a.id);
+
+  const watches = [];
+  const byStock = new Map();
+  for (const w of all) {
+    const key = /\d/.test(w.stock_no) ? w.stock_no : null;
+    const first = key && byStock.get(key);
+    if (first) {
+      first.earlier.push({ id: w.id, checked_out: w.checked_out, reason: w.reason, origin: w.origin });
+      continue;
+    }
+    const g = { ...w, earlier: [] };
+    if (key) byStock.set(key, g);
+    watches.push(g);
+  }
+  const origins = new Map();
+  for (const w of watches) origins.set(w.origin, (origins.get(w.origin) || 0) + 1);
+  return {
+    as_of: await asOf(),
+    watches,
+    rows: all.length,
+    by_origin: [...origins].map(([origin, n]) => ({ origin, n })).sort((a, b) => b.n - a.n || a.origin.localeCompare(b.origin)),
+  };
 }
 
 /* ── the overview ────────────────────────────────────────────────── */

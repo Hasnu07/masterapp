@@ -20,6 +20,8 @@ export const GROUPS = [
   { key: 'stock', label: 'Stock by place' },
   // Clients' watches we hold, as the logistics app's own In Safe page (asked 26 Oct 2026). No lists of its own: inSafe() reads it.
   { key: 'safe', label: 'In Safe' },
+  // Watches held somewhere for a while, not sold, as the app's Checkout page (asked 26 Oct 2026). checkedOut() reads it.
+  { key: 'checkout', label: 'Checked out' },
   { key: 'sales', label: 'Sales & delivery' },
   { key: 'trips', label: 'Trips' },
   { key: 'accessories', label: 'Accessories' },

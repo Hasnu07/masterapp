@@ -146,7 +146,7 @@ const lgTabIntoView = () => $('.lg-tabs a.on')?.scrollIntoView({ block: 'nearest
 
 function lgHeader(active, note = '') {
   setTimeout(lgTabIntoView);
-  if (active !== 'safe') setTimeout(lgSafeBadge);
+  setTimeout(() => lgCountBadges(active));
   return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}</div>
     <div class="lg-tabs" role="navigation" aria-label="Logistics">${lgGroups()
       .map(
@@ -157,23 +157,34 @@ function lgHeader(active, note = '') {
 }
 
 /*
- * The In Safe tab carries how many clients' watches we hold, on every
- * logistics page — read again at most once a minute.
+ * The In Safe and Checked out tabs carry how many watches each holds, on
+ * every logistics page — read again at most once a minute.
  */
-const lgSafe = { n: null, at: 0 };
-const lgTabLabel = (g) =>
-  `${esc(g.label)}${g.key === 'safe' && lgSafe.n ? ` <b class="lg-n" title="${lgSafe.n} client watch${lgSafe.n === 1 ? '' : 'es'} in the safe">${lgSafe.n}</b>` : ''}`;
-function lgSafeCount(n) {
-  lgSafe.n = n;
-  const a = $('.lg-tabs a[data-g="safe"]');
-  if (a) a.innerHTML = lgTabLabel(lgGroups().find((g) => g.key === 'safe'));
+const LG_COUNTED = {
+  safe: { url: '/api/logistics/in-safe', what: (n) => `${n} client watch${n === 1 ? '' : 'es'} in the safe` },
+  checkout: { url: '/api/logistics/checked-out', what: (n) => `${n} watch${n === 1 ? '' : 'es'} checked out` },
+};
+const lgCount = { safe: null, checkout: null, at: 0 };
+const lgTabLabel = (g) => {
+  const n = lgCount[g.key];
+  return `${esc(g.label)}${LG_COUNTED[g.key] && n ? ` <b class="lg-n" title="${esc(LG_COUNTED[g.key].what(n))}">${n}</b>` : ''}`;
+};
+function lgSetCount(key, n) {
+  lgCount[key] = n;
+  const a = $(`.lg-tabs a[data-g="${key}"]`);
+  const g = lgGroups().find((x) => x.key === key);
+  if (a && g) a.innerHTML = lgTabLabel(g);
 }
-function lgSafeBadge() {
-  if (Date.now() - lgSafe.at < 60_000) return;
-  lgSafe.at = Date.now();
-  api('/api/logistics/in-safe')
-    .then((r) => lgSafeCount(r.watches.length))
-    .catch(() => (lgSafe.at = 0));
+/* The tab open now counts its own list as it reads it: only the others are asked for. */
+function lgCountBadges(active) {
+  if (Date.now() - lgCount.at < 60_000) return;
+  lgCount.at = Date.now();
+  for (const [key, c] of Object.entries(LG_COUNTED)) {
+    if (key === active) continue;
+    api(c.url)
+      .then((r) => lgSetCount(key, r.watches.length))
+      .catch(() => (lgCount.at = 0));
+  }
 }
 
 /* ── a tab: one group's records ─────────────────────────────────── */
@@ -183,6 +194,7 @@ let lgShown = [];
 async function showLogistics(group) {
   if (!group || group === 'overview') return showLogisticsOverview();
   if (group === 'safe') return showLogisticsSafe();
+  if (group === 'checkout') return showLogisticsCheckout();
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
   if (group === 'contacts-all') group = 'contacts';
@@ -339,20 +351,7 @@ async function showLogisticsSafe() {
       drawSafe();
     })
   );
-  // A card or a row opens its record; a link inside it (our watch) goes where it says.
-  const open = (e) => {
-    const at = e.target.closest('#sf-out [data-id], #sf-acc [data-id]');
-    if (!at || e.target.closest('a')) return;
-    if (e.type === 'keydown') {
-      if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
-      e.preventDefault();
-    }
-    location.hash = `#/lg/${at.dataset.id}`;
-  };
-  $('#sf-out').addEventListener('click', open);
-  $('#sf-out').addEventListener('keydown', open);
-  $('#sf-acc').addEventListener('click', open);
-  $('#sf-acc').addEventListener('keydown', open);
+  lgOpenOnClick($('#sf-out'), $('#sf-acc'));
   let r;
   try {
     r = await api('/api/logistics/in-safe');
@@ -362,8 +361,7 @@ async function showLogisticsSafe() {
   }
   if (seq !== lgPage || !$('#sf-out')) return;
   sf.data = r;
-  lgSafe.at = Date.now();
-  lgSafeCount(r.watches.length);
+  lgSetCount('safe', r.watches.length);
   drawSafe();
 }
 
@@ -391,6 +389,36 @@ const sfTags = (w) =>
     .filter(Boolean)
     .join('');
 const sfOurs = (w) => (w.watch ? `<a href="#/watch/${w.watch.id}">Our watch #${esc(w.watch.stock_no)}</a>` : '');
+/*
+ * A typed name, linked as far as it goes: to our client when the logistics
+ * client of that name is one of ours (by its watches), else to that logistics
+ * client's page; our client's own name beside it when it reads differently.
+ */
+function lgPerson(name, link, blank = 'not written') {
+  if (!name) return esc(blank);
+  if (link?.client_id) {
+    const other = link.client_name && link.client_name.trim().toLowerCase() !== name.trim().toLowerCase();
+    return `<a href="#/client/${link.client_id}">${esc(name)}</a>${other ? ` <span class="count" style="margin:0;font-weight:400">· our client ${esc(link.client_name)}</span>` : ''}`;
+  }
+  if (link?.lg_client_id) return `<a href="#/lg-client/${link.lg_client_id}" title="Their logistics page — not linked to one of our clients yet">${esc(name)}</a>`;
+  return esc(name);
+}
+/* A card or a row opens its record; a link inside it goes where it says. */
+function lgOpenOnClick(...boxes) {
+  const open = (e) => {
+    const at = e.target.closest('[data-id]');
+    if (!at || e.target.closest('a')) return;
+    if (e.type === 'keydown') {
+      if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+    }
+    location.hash = `#/lg/${at.dataset.id}`;
+  };
+  for (const box of boxes) {
+    box.addEventListener('click', open);
+    box.addEventListener('keydown', open);
+  }
+}
 
 function drawSafe() {
   const r = sf.data;
@@ -398,7 +426,7 @@ function drawSafe() {
   $$('.sf-view .pill').forEach((b) => b.classList.toggle('on', b.dataset.v === sf.view));
   const words = sf.q.toLowerCase().split(/\s+/).filter(Boolean);
   const watches = r.watches
-    .filter((w) => sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.owner, w.where, w.accessories_present, w.accessories_missing, w.notes, w.watch_date))
+    .filter((w) => sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.owner, w.owner_link?.client_name, w.where, w.accessories_present, w.accessories_missing, w.notes, w.watch_date))
     .sort((a, b) =>
       sf.sort === 'stockAsc'
         ? sfNo(a.stock_no) - sfNo(b.stock_no)
@@ -418,7 +446,7 @@ function drawSafe() {
            (a) => `<div class="ov-row sf-row" data-id="${a.id}" tabindex="0" role="link">
              <div class="ov-row-main">
                <div>${a.stock_no ? `<span class="lg-stock">#${esc(a.stock_no)}</span> ` : ''}<b>${esc(a.items || 'Accessories')}</b></div>
-               <div class="count" style="margin:2px 0 0">${[a.for_client && `For <b>${esc(a.for_client)}</b>`, a.about && esc(a.about), a.notes && esc(a.notes), a.in_safe_at && `in the safe since ${esc(sfDay(a.in_safe_at))}`].filter(Boolean).join(' · ')}</div>
+               <div class="count" style="margin:2px 0 0">${[a.for_client && `For <b>${lgPerson(a.for_client, a.for_link)}</b>`, a.about && esc(a.about), a.notes && esc(a.notes), a.in_safe_at && `in the safe since ${esc(sfDay(a.in_safe_at))}`].filter(Boolean).join(' · ')}</div>
              </div>
              <div class="ov-row-side">${a.watch ? `<a href="#/watch/${a.watch.id}">Our watch</a>` : ''}</div>
            </div>`
@@ -442,7 +470,7 @@ function drawSafe() {
             <td><a href="#/lg/${w.id}"><b>${esc([w.brand, w.model].filter(Boolean).join(' ') || 'Watch')}</b></a>
               <div class="count" style="margin:2px 0 0">${esc([w.reference && `Ref ${w.reference}`, w.serial && `Serial ${w.serial}`].filter(Boolean).join(' · '))}</div>
               ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}</td>
-            <td><b>${esc(w.owner || '—')}</b></td>
+            <td><b>${lgPerson(w.owner, w.owner_link, '—')}</b></td>
             <td style="white-space:nowrap">${esc(sfDay(w.received_at))}</td>
             <td>${esc(w.accessories_present || '')}</td>
             <td>${esc(w.notes || '')}${w.watch ? `<div>${sfOurs(w)}</div>` : ''}</td>
@@ -458,13 +486,197 @@ function drawSafe() {
         <div class="body">
           <div class="m"><span class="lg-stock">#${esc(w.stock_no || '—')}</span>${w.brand ? ` <span>${esc(w.brand)}</span>` : ''}</div>
           <div class="t">${esc(w.model || w.brand || 'Watch')}</div>
-          <div class="sf-for">For <b>${esc(w.owner || 'not written')}</b></div>
+          <div class="sf-for">For <b>${lgPerson(w.owner, w.owner_link)}</b></div>
           ${w.reference || w.watch_date ? `<div class="m">${esc([w.reference && `Ref ${w.reference}`, w.watch_date].filter(Boolean).join(' · '))}</div>` : ''}
           ${w.serial ? `<div class="m">Serial ${esc(w.serial)}</div>` : ''}
           <div class="m">${esc([w.received_at && `Received ${sfDay(w.received_at)}`, w.where && `in ${w.where}`].filter(Boolean).join(' · '))}</div>
           ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}
           ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
           ${w.watch ? `<div class="m">${sfOurs(w)}</div>` : ''}
+        </div>
+      </article>`
+    )
+    .join('')}</div>`;
+}
+
+/* ── checked out ────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Checkout page (asked 26 Oct 2026): watches held
+ * somewhere for a while, not sold. Each linked to our watch of that number and
+ * to our client through it — who it was bought from, who it was sold to — so
+ * "given back to Khawar" sits beside the client Chrono Key says it came from.
+ * A watch the app lists more than once (checked out again without a return)
+ * is one entry here, its earlier rows under it.
+ */
+const co = { q: '', sort: 'new', view: 'list', origin: '', data: null };
+try {
+  co.view = localStorage.getItem('masterapp.checkoutView') === 'cards' ? 'cards' : 'list';
+} catch {
+  /* no storage: the list, as the app shows it */
+}
+
+async function showLogisticsCheckout() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('checkout')}
+    <p class="sub" style="margin:0 0 12px">Watches held somewhere for a while — not sold. Each is linked to our stock and to the client it came from or went to.</p>
+    <div class="lg-toolbar">
+      <input class="q" type="search" id="coq" placeholder="Stock number, brand, model, reference, serial, client, reason…" value="${esc(co.q)}">
+      <select id="cosort" aria-label="Order">
+        <option value="new">Checked out most recently</option>
+        <option value="old">Out the longest</option>
+        <option value="stockAsc">Stock number, low to high</option>
+        <option value="stockDesc">Stock number, high to low</option>
+      </select>
+      <div class="sf-view" role="group" aria-label="View">
+        <button type="button" class="pill" data-v="list">List</button><button type="button" class="pill" data-v="cards">Cards</button>
+      </div>
+    </div>
+    <div class="lg-subtabs" id="co-origins" role="group" aria-label="Checked out from"></div>
+    <div class="count" id="co-count">Reading what is checked out…</div>
+    <div id="co-out"></div>`;
+  $('#cosort').value = co.sort;
+  let timer;
+  $('#coq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      co.q = e.target.value;
+      drawCheckout();
+    }, 150);
+  });
+  $('#cosort').addEventListener('change', (e) => {
+    co.sort = e.target.value;
+    drawCheckout();
+  });
+  $$('.sf-view .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      co.view = b.dataset.v;
+      try {
+        localStorage.setItem('masterapp.checkoutView', co.view);
+      } catch {
+        /* remembered for this visit only */
+      }
+      drawCheckout();
+    })
+  );
+  $('#co-origins').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-o]');
+    if (!b) return;
+    co.origin = b.dataset.o;
+    drawCheckout();
+  });
+  lgOpenOnClick($('#co-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/checked-out');
+  } catch (err) {
+    if (seq === lgPage && $('#co-count')) $('#co-count').textContent = `Could not read what is checked out: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#co-out')) return;
+  co.data = r;
+  if (co.origin && !r.by_origin.some((o) => o.origin === co.origin)) co.origin = '';
+  lgSetCount('checkout', r.watches.length);
+  drawCheckout();
+}
+
+/* How long it has been out, in days, by this computer's calendar. */
+const coDays = (day) => {
+  const n = Math.round((Date.parse(localDay()) - Date.parse(String(day || '').slice(0, 10))) / 86_400_000);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+const coWhen = (w) => {
+  const n = coDays(w.checked_out);
+  return [sfDay(w.checked_out), n !== null && (n === 0 ? 'today' : `${n} day${n === 1 ? '' : 's'}`)].filter(Boolean).join(' · ');
+};
+/* Our watch and our clients — by Chrono Key's ids, never the typed reason. */
+const coOurs = (w) => {
+  const o = w.watch;
+  if (!o) return '<span class="blank">Not one of our watches</span>';
+  return [
+    `<a href="#/watch/${o.id}">Our watch #${esc(o.stock_no)}</a> ${chip(o.status)}`,
+    o.bought_from && `Bought from <a href="#/client/${o.bought_from.id}"><b>${esc(o.bought_from.name)}</b></a>`,
+    o.sold_to && `Sold to <a href="#/client/${o.sold_to.id}"><b>${esc(o.sold_to.name)}</b></a>`,
+  ]
+    .filter(Boolean)
+    .map((x) => `<div>${x}</div>`)
+    .join('');
+};
+const coEarlier = (w) =>
+  w.earlier.length
+    ? `<div class="count" style="margin:4px 0 0">Also checked out ${w.earlier
+        .map((e) => `<a href="#/lg/${e.id}">${esc(sfDay(e.checked_out) || 'earlier')}</a>${e.reason ? ` (${esc(e.reason)})` : ''}`)
+        .join(', ')} — not returned in between</div>`
+    : '';
+
+function drawCheckout() {
+  const r = co.data;
+  if (!r || !$('#co-out')) return;
+  $$('.sf-view .pill').forEach((b) => b.classList.toggle('on', b.dataset.v === co.view));
+  $('#co-origins').innerHTML = [{ origin: '', n: r.watches.length }, ...r.by_origin]
+    .map((o) => `<button type="button" class="pill${o.origin === co.origin ? ' on' : ''}" data-o="${esc(o.origin)}" aria-pressed="${o.origin === co.origin}">${esc(o.origin ? `From ${o.origin}` : 'All')}<b>${o.n}</b></button>`)
+    .join('');
+  const words = co.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const watches = r.watches
+    .filter((w) => !co.origin || w.origin === co.origin)
+    .filter((w) =>
+      sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.origin, w.reason, w.notes, w.watch?.bought_from?.name, w.watch?.sold_to?.name, ...w.earlier.map((e) => e.reason))
+    )
+    .sort((a, b) =>
+      co.sort === 'old'
+        ? String(a.checked_out).localeCompare(String(b.checked_out)) || a.id - b.id
+        : co.sort === 'stockAsc'
+          ? sfNo(a.stock_no) - sfNo(b.stock_no)
+          : co.sort === 'stockDesc'
+            ? sfNo(b.stock_no) - sfNo(a.stock_no)
+            : String(b.checked_out).localeCompare(String(a.checked_out)) || b.id - a.id
+    );
+
+  const n = watches.length;
+  const all = co.origin ? r.by_origin.find((o) => o.origin === co.origin)?.n || 0 : r.watches.length;
+  $('#co-count').textContent = `${n} watch${n === 1 ? '' : 'es'}${words.length ? ` of ${all}` : ''} checked out${
+    r.rows > r.watches.length ? ` · the logistics app lists ${r.rows} rows: a watch checked out again without a return is shown once` : ''
+  }`;
+  if (!n) {
+    $('#co-out').innerHTML = `<p class="sub">${words.length || co.origin ? 'Nothing checked out matches.' : 'Nothing is checked out right now.'}</p>`;
+    return;
+  }
+  // A number with no digits ("-", "xxxxxx") is no stock number: shown as typed, without the #.
+  const stockOf = (w) => `<span class="lg-stock">${/\d/.test(w.stock_no) ? `#${esc(w.stock_no)}` : esc(w.stock_no && w.stock_no !== '-' ? w.stock_no : '—')}</span>`;
+  // "Other" is the app's brand for one it does not list; the model then names it ("Richard Mille Automatic RM 72-01").
+  const title = (w) => esc([/^other$/i.test(w.brand) && w.model ? '' : w.brand, w.model].filter(Boolean).join(' ') || 'Watch');
+  const specs = (w) => esc([w.reference && `Ref ${w.reference}`, w.serial && `Serial ${w.serial}`, w.watch_date].filter(Boolean).join(' · '));
+  if (co.view === 'list') {
+    $('#co-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
+        <th>Stock</th><th>Watch</th><th>From</th><th>Checked out</th><th>Reason / who</th><th>Ours · client</th><th>Notes</th>
+      </tr></thead><tbody>${watches
+        .map(
+          (w) => `<tr data-id="${w.id}" tabindex="0">
+            <td style="white-space:nowrap">${stockOf(w)}</td>
+            <td><a href="#/lg/${w.id}"><b>${title(w)}</b></a>${specs(w) ? `<div class="count" style="margin:2px 0 0">${specs(w)}</div>` : ''}${coEarlier(w)}</td>
+            <td>${esc(w.origin || '—')}</td>
+            <td style="white-space:nowrap">${esc(coWhen(w))}</td>
+            <td>${esc(w.reason || '—')}</td>
+            <td>${coOurs(w)}</td>
+            <td>${esc(w.notes || '')}${w.photo_count ? `<div class="count" style="margin:2px 0 0">${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}</div>` : ''}</td>
+          </tr>`
+        )
+        .join('')}</tbody></table></div>`;
+    return;
+  }
+  $('#co-out').innerHTML = `<div class="grid sf-grid">${watches
+    .map(
+      (w) => `<article class="tile sf-card" data-id="${w.id}" tabindex="0" role="link" aria-label="${esc(`#${w.stock_no} ${w.brand} ${w.model}, checked out ${sfDay(w.checked_out)}`)}">
+        <div class="pic">${sfPic(w)}</div>
+        <div class="body">
+          <div class="m">${stockOf(w)}${w.brand && !/^other$/i.test(w.brand) ? ` <span>${esc(w.brand)}</span>` : ''}</div>
+          <div class="t">${esc(w.model || w.brand || 'Watch')}</div>
+          ${specs(w) ? `<div class="m">${specs(w)}</div>` : ''}
+          <div class="m">${esc([`Out ${coWhen(w)}`, w.origin && `from ${w.origin}`].filter(Boolean).join(' · '))}</div>
+          ${w.reason ? `<div class="sf-for"><b>${esc(w.reason)}</b></div>` : ''}
+          ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
+          <div class="m">${coOurs(w)}</div>
+          ${coEarlier(w)}
         </div>
       </article>`
     )

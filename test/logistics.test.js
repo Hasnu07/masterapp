@@ -605,6 +605,48 @@ test('in the safe: clients’ watches with who each is for, accessories owed the
   assert.match(page.now.detail, /for Mark/);
 });
 
+test('checked out: linked to our watch and its clients, one entry per watch, a junk number never merged; the safe’s owner linked by name as far as it goes', async () => {
+  const add = (kind, data, stock) =>
+    db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ($1, $2, $3, 'manual') RETURNING id", [kind, data, stock]);
+  const seller = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Khawar', 'Saeed', 'manual') RETURNING id")).rows[0].id;
+  const buyer = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Parsa', 'Nouri', 'manual') RETURNING id")).rows[0].id;
+  await db(
+    "INSERT INTO watches(stock_no, brand, model, origin, status, purchased_from_client_id, sold_to_client_id) VALUES ('3201', 'Rolex', 'Day-Date 40', 'manual', 'sold', $1, $2)",
+    [seller, buyer]
+  );
+  await add('checkoutStock', { stockNumber: '3201', brand: 'Rolex', watchModel: 'Day-Date 40', checkedOutBy: 'Given back to Khawar', checkedOutDate: '2026-09-18', originLocation: 'dubai' }, ['3201']);
+  await add('checkoutStock', { stockNumber: '3202', brand: 'Patek Philippe', description: '3202 · Patek Philippe · 4910/1200A-010 · TR: 8749', checkedOutDate: '2026-07-30', originLocation: 'hk', checkedOutBy: 'no need' }, ['3202']);
+  await add('checkoutStock', { stockNumber: '3202', brand: 'Patek Philippe', description: '3202 · Patek Philippe · 4910/1200A-010', checkedOutDate: '2026-08-18', originLocation: 'hk' }, ['3202']);
+  await add('checkoutStock', { stockNumber: 'xxxxxx', brand: 'Rolex', watchModel: 'Datejust 36', checkedOutDate: '2026-09-29', originLocation: 'dubai' }, []);
+  await add('checkoutStock', { stockNumber: 'xxxxxx', brand: 'Richard Mille', watchModel: 'Automatic', checkedOutDate: '2026-09-17', originLocation: 'dubai' }, []);
+  await add('checkoutStock', { stockNumber: '3203', brand: 'Tudor', checkedOutDate: '2026-06-01', status: 'returned' }, ['3203']);
+
+  const r = await m.lg.checkedOut();
+  const mine = r.watches.filter((w) => w.stock_no.startsWith('32') || w.stock_no === 'xxxxxx');
+  assert.deepEqual(mine.map((w) => [w.stock_no, w.checked_out]), [['xxxxxx', '2026-09-29'], ['3201', '2026-09-18'], ['xxxxxx', '2026-09-17'], ['3202', '2026-08-18']], 'newest first; a returned row is gone; "xxxxxx" twice is two watches');
+  const patek = mine.find((w) => w.stock_no === '3202');
+  assert.equal(patek.model, '4910/1200A-010', 'the number and the brand are not repeated as the model');
+  assert.equal(patek.origin, 'Hong Kong');
+  assert.deepEqual(patek.earlier.map((e) => [e.checked_out, e.reason]), [['2026-07-30', 'no need']], 'checked out again without a return: one entry, the earlier row under it');
+  const dd = mine.find((w) => w.stock_no === '3201');
+  assert.deepEqual([dd.watch.bought_from, dd.watch.sold_to], [{ id: seller, name: 'Khawar Saeed' }, { id: buyer, name: 'Parsa Nouri' }], 'our clients, by Chrono Key’s ids');
+  assert.ok(r.rows > r.watches.length);
+  assert.ok(r.by_origin.some((o) => o.origin === 'Dubai' && o.n >= 3));
+
+  // In the safe: the owner is linked to the logistics client of that name, and to ours only as that one is.
+  const ours = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Kashif', 'Rana', 'manual') RETURNING id")).rows[0].id;
+  const lgKashif = (await add('clients', { name: 'Kashif Rana' }, [])).rows[0].id;
+  const lgNobody = (await add('clients', { name: 'Zed Unknownson' }, [])).rows[0].id;
+  await add('safeStock', { stockNumber: '3301', brand: 'Rolex', from: 'Kashif Rana', status: 'current' }, ['3301']);
+  await add('safeStock', { stockNumber: '3302', brand: 'Omega', from: 'Zed Unknownson', status: 'current' }, ['3302']);
+  await add('safeStock', { stockNumber: '3303', brand: 'Tudor', from: 'Walk-in', status: 'current' }, ['3303']);
+  const safe = (await m.lg.inSafe()).watches;
+  const link = (no) => safe.find((w) => w.stock_no === no).owner_link;
+  assert.deepEqual(link('3301'), { lg_client_id: lgKashif, client_id: ours, client_name: 'Kashif Rana' });
+  assert.deepEqual(link('3302'), { lg_client_id: lgNobody, client_id: null, client_name: '' });
+  assert.equal(link('3303'), null, 'a name no logistics client carries links nowhere');
+});
+
 /* ── the API ── */
 
 function client() {
@@ -639,6 +681,10 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const safe = await viewer.call('GET', '/api/logistics/in-safe');
   assert.equal(safe.status, 200);
   assert.ok(Array.isArray(safe.body.watches) && Array.isArray(safe.body.accessories));
+  assert.ok(meta.logistics.groups.some((g) => g.key === 'checkout'), 'the Checked out tab');
+  const out = await viewer.call('GET', '/api/logistics/checked-out');
+  assert.equal(out.status, 200);
+  assert.ok(Array.isArray(out.body.watches) && Array.isArray(out.body.by_origin));
   assert.ok(meta.logistics.kinds.some((k) => k.key === 'shipments' && k.fields.length));
 
   assert.equal((await client().call('GET', '/api/logistics/items')).status, 401, 'signed out reads nothing');
