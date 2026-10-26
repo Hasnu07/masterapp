@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics/sync.js';
 import { GROUPS, KINDS, KIND, isSecret, stockList } from './kinds.js';
 import * as situation from './situation.js';
-import { linksByName } from './clients.js';
+import { linksByName, linksByClientId } from './clients.js';
 
 /*
  * Logistics, as masterapp holds it: every record of the logistics app — and
@@ -702,6 +702,8 @@ export async function forWatch(watchId) {
     now: situation.now(items, opts),
     timeline: situation.timeline(items, opts).slice(0, 200).map((e) => ({ ...e, at: e.at ? new Date(e.at).toISOString() : null, kind_label: kindOf(e.kind).label })),
     costs,
+    // Its accessory transactions, as the Transactions tab shows them: shown with the costs on the watch's page, not on its tile.
+    transactions: await txViews(rows.filter((r) => r.kind === 'transactions' && !r.deleted_at)),
     items: rows.filter((r) => !r.deleted_at).map((r) => view(r, ctx)),
   };
 }
@@ -897,6 +899,83 @@ export async function checkedOut() {
     watches,
     rows: all.length,
     by_origin: [...origins].map(([origin, n]) => ({ origin, n })).sort((a, b) => b.n - a.n || a.origin.localeCompare(b.origin)),
+  };
+}
+
+/*
+ * The logistics app's accessory transactions (asked 26 Oct 2026, its All
+ * Transactions page): a watch bought or sold, and the accessories that go
+ * with it — each to give (we owe the client) or to collect (they owe us),
+ * pending or done — and the settlements that handed them over. Linked as
+ * everywhere: the watch to ours and its clients; the client (the app's own
+ * id) to the logistics client and, as that one is, to ours.
+ */
+async function txViews(rows) {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.source_id).filter(Boolean);
+  const [ourWatch, people, settled] = await Promise.all([
+    oursByStock(rows),
+    linksByClientId(rows.map((r) => r.data?.clientId)),
+    ids.length
+      ? query("SELECT * FROM logistics_items WHERE kind = 'settlements' AND deleted_at IS NULL AND data->>'txId' = ANY($1) ORDER BY id", [ids])
+      : { rows: [] },
+  ]);
+  return rows
+    .map((r) => {
+      const d = r.data || {};
+      const items = (Array.isArray(d.items) ? d.items : []).filter(Boolean).map((it) => ({
+        id: text(it.id),
+        accessory: text(it.accessory) || 'Item',
+        qty: Math.max(Number(it.qty) || 1, 1),
+        // Each item says which way it goes; one that does not goes its transaction's way (the app: sold = we owe the client).
+        dir: it.direction === 'give' || (!it.direction && d.type === 'sold') ? 'give' : 'get',
+        done: it.status === 'done',
+      }));
+      const settlements = settled.rows
+        .filter((s) => s.data?.txId === r.source_id)
+        .map((s) => {
+          const sd = s.data || {};
+          const which = new Set((Array.isArray(sd.itemIds) ? sd.itemIds : []).map(String));
+          return {
+            id: s.id,
+            at: iso(sd.ts) || iso(sd.date),
+            dir: sd.direction === 'give' ? 'give' : 'get',
+            items: items.filter((it) => which.has(it.id)).map((it) => (it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory)),
+            notes: text(sd.notes),
+            ...picturesOf(sd),
+          };
+        })
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+      return {
+        id: r.id,
+        date: dayOf(d.date) || iso(d.createdAt),
+        type: d.type === 'sold' || d.type === 'bought' ? d.type : text(d.type),
+        stock_no: text(d.stockNumber),
+        brand: text(d.brand),
+        reference: text(d.reference),
+        notes: text(d.notes),
+        client: people.get(text(d.clientId)) || null,
+        items,
+        pending: items.filter((it) => !it.done).length,
+        total: items.length,
+        settlements,
+        watch: ourWatch(r),
+      };
+    })
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.id - a.id);
+}
+
+/** The Transactions tab: every accessory transaction, and what its filters offer (the clients and countries in it). */
+export async function transactionsList() {
+  const { rows } = await query("SELECT * FROM logistics_items WHERE kind = 'transactions' AND deleted_at IS NULL");
+  const transactions = await txViews(rows);
+  const clients = new Map();
+  for (const t of transactions) if (t.client) clients.set(t.client.lg_client_id, { id: t.client.lg_client_id, name: t.client.name, country: t.client.country });
+  return {
+    as_of: await asOf(),
+    transactions,
+    clients: [...clients.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
+    countries: [...new Set(transactions.map((t) => t.client?.country).filter(Boolean))].sort(),
   };
 }
 

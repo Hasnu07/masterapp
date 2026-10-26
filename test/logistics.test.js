@@ -699,6 +699,36 @@ test('hand carry: plans with their stops, every watch linked to ours and its cli
   assert.ok(page.timeline.some((e) => e.text === 'Hand carry — deliver in UAE'));
 });
 
+test('transactions: each linked to our watch and its clients, the client by the app’s id, what is pending either way, and on the watch’s page', async () => {
+  const add = (kind, data, stock, sourceId = null) =>
+    db("INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [kind, sourceId, data, stock]);
+  const salva = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Salva', 'Ortiz', 'manual') RETURNING id")).rows[0].id;
+  const w = (await db("INSERT INTO watches(stock_no, brand, model, origin, status, purchased_from_client_id) VALUES ('3501', 'Patek Philippe', 'Aquanaut', 'manual', 'in_stock', $1) RETURNING id", [salva])).rows[0].id;
+  const lg = (await add('clients', { name: 'Salva Ortiz', country: 'Spain' }, [], 'TX-LC1')).rows[0].id;
+  await add('transactions', {
+    type: 'bought', date: '2026-10-21', clientId: 'TX-LC1', stockNumber: '3501', brand: 'Patek Philippe', reference: '3501',
+    items: [{ id: 'i1', accessory: 'Box', qty: 1, direction: 'get', status: 'pending' }, { id: 'i2', accessory: 'Papers', qty: 2, direction: 'get', status: 'done' }],
+  }, ['3501'], 'TX-1');
+  await add('transactions', { type: 'sold', date: '2026-10-22', clientId: 'TX-NOBODY', stockNumber: '3502', brand: 'Rolex', items: [{ id: 'j1', accessory: 'Booklet', status: 'pending' }] }, ['3502'], 'TX-2');
+  await add('settlements', { txId: 'TX-1', itemIds: ['i2'], direction: 'receive', notes: 'by hand in Valencia', ts: 1761100000000 }, [], 'TX-S1');
+
+  const r = await m.lg.transactionsList();
+  const t = r.transactions.find((x) => x.stock_no === '3501');
+  assert.deepEqual([t.type, t.date, t.pending, t.total], ['bought', '2026-10-21', 1, 2]);
+  assert.deepEqual(t.client, { lg_client_id: lg, name: 'Salva Ortiz', country: 'Spain', client_id: salva, client_name: 'Salva Ortiz' }, 'the app’s client id → the logistics client → ours, by its watch');
+  assert.deepEqual([t.watch.id, t.watch.bought_from], [w, { id: salva, name: 'Salva Ortiz' }]);
+  assert.deepEqual(t.settlements.map((s) => [s.dir, s.items, s.notes]), [['get', ['Papers × 2'], 'by hand in Valencia']]);
+  const sold = r.transactions.find((x) => x.stock_no === '3502');
+  assert.equal(sold.items[0].dir, 'give', 'an item with no direction goes its transaction’s way: sold = we give');
+  assert.equal(sold.client, null, 'a client id the app does not list links nowhere');
+  assert.ok(r.countries.includes('Spain') && r.clients.some((c) => c.id === lg));
+  assert.ok(r.transactions.indexOf(sold) < r.transactions.indexOf(t), 'newest first');
+
+  // On the watch's own page, with its costs.
+  const page = await m.lg.forWatch(w);
+  assert.deepEqual(page.transactions.map((x) => [x.type, x.pending]), [['bought', 1]]);
+});
+
 /* ── the API ── */
 
 function client() {
@@ -741,6 +771,10 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const hand = await viewer.call('GET', '/api/logistics/hand-carry');
   assert.equal(hand.status, 200);
   assert.ok(Array.isArray(hand.body.plans) && Array.isArray(hand.body.waiting.deliver));
+  assert.ok(meta.logistics.groups.some((g) => g.key === 'transactions'), 'the Transactions tab');
+  const txs = await viewer.call('GET', '/api/logistics/transactions');
+  assert.equal(txs.status, 200);
+  assert.ok(Array.isArray(txs.body.transactions) && Array.isArray(txs.body.countries));
   assert.ok(meta.logistics.kinds.some((k) => k.key === 'shipments' && k.fields.length));
 
   assert.equal((await client().call('GET', '/api/logistics/items')).status, 401, 'signed out reads nothing');

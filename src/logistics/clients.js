@@ -412,6 +412,24 @@ export async function linksByName(names) {
   return out;
 }
 
+/*
+ * Who a logistics client id is (a transaction's clientId, the app's own id):
+ * its name and country, and which of ours it is — the same link as on the
+ * Clients tab.
+ */
+export async function linksByClientId(cids) {
+  const snap = await snapshot();
+  const byCid = new Map(snap.clients.map((c) => [String(c.cid), c]));
+  const out = new Map();
+  for (const cid of new Set(cids.map((x) => String(x ?? '').trim()).filter(Boolean))) {
+    const c = byCid.get(cid);
+    if (!c) continue;
+    const link = c.us ? { client_id: null, client_name: '' } : linkOf(c, snap);
+    out.set(cid, { lg_client_id: c.id, name: c.name, country: String(c.data.country || '').trim(), client_id: link.client_id, client_name: link.client_name });
+  }
+  return out;
+}
+
 /* ── what the API serves ───────────────────────────────────────── */
 
 /** The Logistics → Clients tab: every logistics client, who of ours it is, and what is open with them. */

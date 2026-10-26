@@ -197,6 +197,7 @@ async function showLogistics(group) {
   if (group === 'safe') return showLogisticsSafe();
   if (group === 'checkout') return showLogisticsCheckout();
   if (group === 'handcarry') return showLogisticsHandCarry();
+  if (group === 'transactions') return showLogisticsTransactions();
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
   if (group === 'contacts-all') group = 'contacts';
@@ -367,7 +368,8 @@ async function showLogisticsSafe() {
   drawSafe();
 }
 
-const sfDay = (iso) => (iso ? dayWords(localDay(new Date(iso).getTime())) : '');
+/* A moment as this computer's day; a day the app wrote as a day (YYYY-MM-DD) stays that day, whatever the time zone. */
+const sfDay = (iso) => (!iso ? '' : /^\d{4}-\d{2}-\d{2}$/.test(iso) ? dayWords(iso) : dayWords(localDay(new Date(iso).getTime())));
 const sfNo = (s) => Number(String(s || '').replace(/\D/g, '')) || 0;
 const sfMatch = (words, ...values) => {
   const blob = values.join(' ').toLowerCase();
@@ -829,6 +831,139 @@ function drawHandCarry() {
   $('#hc-out').innerHTML = n
     ? plans.map(hcPlan).join('')
     : `<p class="sub">${words.length ? 'No plan matches.' : hc.show === 'history' ? 'No plan has been completed yet.' : 'No hand-carry plan is open right now.'}</p>`;
+}
+
+/* ── transactions ───────────────────────────────────────────────── */
+
+/*
+ * The logistics app's All Transactions page (asked 26 Oct 2026): each watch
+ * bought or sold with the accessories that go with it, and what is still
+ * pending either way. Linked as on the other tabs: the watch to ours and its
+ * clients, the client (the app's own id) to the logistics client and — as
+ * that one is — to ours. The same rows sit on the watch's own page, with its
+ * costs (txBlock), never on its tile.
+ */
+const tx = { q: '', type: '', country: '', client: '', data: null };
+
+/* "4/4 pending", "complete", "no items" — the app's own words. */
+const txStatus = (t) =>
+  !t.total ? '<span class="count" style="margin:0">no items</span>' : !t.pending ? '<span class="lg-tag">Complete</span>' : `<span class="lg-tag warn">${t.pending}/${t.total} pending</span>`;
+const txAcc = (it) => esc(it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory);
+/* What is still owed, by which way it goes, then what is already settled. */
+const txItems = (t) => {
+  const open = (dir) => t.items.filter((it) => !it.done && it.dir === dir);
+  return [
+    open('give').length && `<span class="lg-tag warn">We give: ${open('give').map(txAcc).join(', ')}</span>`,
+    open('get').length && `<span class="lg-tag warn">They give: ${open('get').map(txAcc).join(', ')}</span>`,
+    t.items.some((it) => it.done) && `<span class="lg-tag">Settled: ${t.items.filter((it) => it.done).map(txAcc).join(', ')}</span>`,
+  ]
+    .filter(Boolean)
+    .join('');
+};
+const txClient = (t) => (t.client ? lgPerson(t.client.name, t.client) : '<span class="blank">not written</span>');
+const txType = (t) => (t.type === 'sold' ? 'Sold' : t.type === 'bought' ? 'Bought' : t.type || '—');
+
+async function showLogisticsTransactions() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('transactions')}
+    <p class="sub" style="margin:0 0 12px">Accessory transactions — each watch bought or sold, and the accessories still to give or collect. Every row is linked to our stock and its client.</p>
+    <div class="lg-toolbar tx-toolbar">
+      <input class="q" type="search" id="txq" placeholder="Stock number, reference, client, accessory…" value="${esc(tx.q)}">
+      <select id="txtype" aria-label="Type"><option value="">All types</option><option value="bought">Bought</option><option value="sold">Sold</option></select>
+      <select id="txcountry" aria-label="Country"><option value="">All countries</option></select>
+      <select id="txclient" aria-label="Client"><option value="">All clients</option></select>
+    </div>
+    <div class="count" id="tx-count">Reading the transactions…</div>
+    <div id="tx-out"></div>`;
+  let timer;
+  $('#txq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      tx.q = e.target.value;
+      drawTransactions();
+    }, 150);
+  });
+  for (const [id, key] of [['#txtype', 'type'], ['#txcountry', 'country'], ['#txclient', 'client']]) {
+    $(id).addEventListener('change', (e) => {
+      tx[key] = e.target.value;
+      drawTransactions();
+    });
+  }
+  lgOpenOnClick($('#tx-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/transactions');
+  } catch (err) {
+    if (seq === lgPage && $('#tx-count')) $('#tx-count').textContent = `Could not read the transactions: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#tx-out')) return;
+  tx.data = r;
+  $('#txcountry').innerHTML = `<option value="">All countries</option>${r.countries.map((c) => `<option>${esc(c)}</option>`).join('')}`;
+  $('#txclient').innerHTML = `<option value="">All clients</option>${r.clients.map((c) => `<option value="${c.id}">${esc(c.name)}${c.country ? ` (${esc(c.country)})` : ''}</option>`).join('')}`;
+  if (!r.countries.includes(tx.country)) tx.country = '';
+  if (!r.clients.some((c) => String(c.id) === tx.client)) tx.client = '';
+  $('#txtype').value = tx.type;
+  $('#txcountry').value = tx.country;
+  $('#txclient').value = tx.client;
+  drawTransactions();
+}
+
+function drawTransactions() {
+  const r = tx.data;
+  if (!r || !$('#tx-out')) return;
+  const words = tx.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = r.transactions.filter(
+    (t) =>
+      (!tx.type || t.type === tx.type) &&
+      (!tx.country || t.client?.country === tx.country) &&
+      (!tx.client || String(t.client?.lg_client_id) === tx.client) &&
+      sfMatch(words, t.stock_no, t.reference, t.brand, t.notes, t.client?.name, t.client?.client_name, ...t.items.map((it) => it.accessory), t.watch?.bought_from?.name, t.watch?.sold_to?.name)
+  );
+  const n = rows.length;
+  const pending = rows.filter((t) => t.pending).length;
+  $('#tx-count').textContent = `${n} transaction${n === 1 ? '' : 's'}${n < r.transactions.length ? ` of ${r.transactions.length}` : ''} · ${pending} with accessories pending`;
+  if (!n) {
+    $('#tx-out').innerHTML = `<p class="sub">${r.transactions.length ? 'No transaction matches.' : 'The logistics app has no accessory transactions.'}</p>`;
+    return;
+  }
+  $('#tx-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
+      <th>Date</th><th>Stock</th><th>Type</th><th>Watch</th><th>Client</th><th>Country</th><th>Accessories</th><th>Status</th><th>Ours · client</th>
+    </tr></thead><tbody>${rows
+      .map(
+        (t) => `<tr data-id="${t.id}" tabindex="0">
+          <td style="white-space:nowrap">${esc(sfDay(t.date) || '—')}</td>
+          <td style="white-space:nowrap">${/\d/.test(t.stock_no) ? `<span class="lg-stock">#${esc(t.stock_no)}</span>` : esc(t.stock_no || '—')}</td>
+          <td>${esc(txType(t))}</td>
+          <td><a href="#/lg/${t.id}"><b>${esc(t.brand || 'Watch')}</b></a>${t.reference && t.reference !== t.stock_no ? `<div class="count" style="margin:2px 0 0">Ref ${esc(t.reference)}</div>` : ''}</td>
+          <td><b>${txClient(t)}</b></td>
+          <td>${esc(t.client?.country || '—')}</td>
+          <td>${txItems(t) ? `<div class="lg-ov" style="margin:0">${txItems(t)}</div>` : ''}</td>
+          <td style="white-space:nowrap">${txStatus(t)}</td>
+          <td>${coOurs(t)}</td>
+        </tr>`
+      )
+      .join('')}</tbody></table></div>`;
+}
+
+/* One transaction on a watch's page: who, when, what is still owed either way, and what was handed over. */
+function txBlock(t) {
+  const who = t.type === 'sold' ? 'Sold to' : t.type === 'bought' ? 'Bought from' : txType(t);
+  return `<div class="tx-block">
+    <div class="tx-head"><a href="#/lg/${t.id}"><b>${esc(who)}</b></a> <b>${txClient(t)}</b>${t.client?.country ? ` <span class="count" style="margin:0">· ${esc(t.client.country)}</span>` : ''}
+      <span class="tx-side">${txStatus(t)} <span class="count" style="margin:0">${esc(sfDay(t.date))}</span></span></div>
+    ${t.reference && t.reference !== t.stock_no ? `<div class="count" style="margin:2px 0 0">Ref ${esc(t.reference)}</div>` : ''}
+    ${txItems(t) ? `<div class="lg-ov">${txItems(t)}</div>` : ''}
+    ${t.settlements
+      .map(
+        (s) =>
+          `<div class="count" style="margin:4px 0 0">${esc(s.dir === 'give' ? 'Given' : 'Received')}${s.at ? ` ${esc(sfDay(s.at))}` : ''}${s.items.length ? `: ${esc(s.items.join(', '))}` : ''}${s.notes ? ` — ${esc(s.notes)}` : ''}${
+            s.photo_count ? ` · ${s.photo_count} photo${s.photo_count === 1 ? '' : 's'}` : ''
+          }</div>`
+      )
+      .join('')}
+    ${t.notes ? `<div class="sf-notes" style="margin-top:4px">${esc(t.notes)}</div>` : ''}
+  </div>`;
 }
 
 /* ── the overview ───────────────────────────────────────────────── */
@@ -2116,6 +2251,7 @@ function renderWatchLogistics() {
       : `<div class="figures" style="margin:0 0 6px">${totals.map(([cur, n]) => `<div><span>Moving it, ${esc(cur)}</span><b>${money(n, cur === '?' ? '' : cur)}</b></div>`).join('')}</div>`;
 
   /* What it cost, History and Records: a row of buttons, each opening its own section, all closed until opened. */
+  const txPending = (L.transactions || []).reduce((a, x) => a + x.pending, 0);
   const sections = [
     L.costs.lines.length && {
       key: 'lg-cost',
@@ -2124,6 +2260,12 @@ function renderWatchLogistics() {
       body: (t && totals.length > 1 ? `<p class="count" style="margin:0 0 6px">By currency: ${totals.map(([cur, n]) => money(n, cur === '?' ? '' : cur)).join(' · ')}</p>` : '') + L.costs.lines
         .map((c) => `<div class="sold-row"><span><a href="#/lg/${c.itemId}">${esc(c.source)}</a> · ${esc(c.title || '')}${c.detail ? ` <span class="count" style="margin:0">${esc(c.detail)}</span>` : ''}</span><span>${money(c.amount, c.currency || '')} <span class="count">${esc(fmtDate(c.date))}</span></span></div>`)
         .join(''),
+    },
+    // Its accessory transactions, beside what it cost (asked 26 Oct 2026: on the watch's page, not its tile).
+    L.transactions?.length && {
+      key: 'lg-tx',
+      label: `Transactions — ${L.transactions.length}${txPending ? ` · ${txPending} pending` : ''}`,
+      body: L.transactions.map(txBlock).join(''),
     },
     {
       key: 'lg-history',

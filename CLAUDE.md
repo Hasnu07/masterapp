@@ -399,6 +399,19 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   "right now" and the history (`situation.planStops`; `forWatch` passes the
   stock number). `handCarry()`, `/api/logistics/hand-carry`. Adding stops,
   assigning, AI flights, optimise, send to movements: the record's edit.
+- **Transactions** (asked 26 Oct 2026: "same rules, don't show this in card
+  but under the stock of a watch where logistic tab is"): a Logistics tab,
+  the app's All Transactions page (`transactions`: `type` bought / sold,
+  `date`, `clientId` — the APP's client id, `stockNumber`, `brand`,
+  `reference`, `items` [`accessory`, `qty`, `direction` give / get, `status`
+  pending / done]; `settlements` by `txId` + `itemIds`, `direction` give /
+  receive — read from the app's code). Filters as the app: type, country
+  (the logistics client's), client. "n/m pending", what we give and what
+  they give. Linked: the watch to ours and its clients; `clientId` → the
+  logistics client → ours as that one is (`linksByClientId`). On the WATCH
+  PAGE, a "Transactions" section beside What it cost / History / Records
+  (`forWatch` → `transactions`, `txViews`); not on the Inventory tile.
+  Give / settle / edit: the record's edit.
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds

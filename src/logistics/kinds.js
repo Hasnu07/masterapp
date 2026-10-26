@@ -26,6 +26,8 @@ export const GROUPS = [
   { key: 'handcarry', label: 'Hand carry' },
   { key: 'sales', label: 'Sales & delivery' },
   { key: 'trips', label: 'Trips' },
+  // Accessory transactions with their clients and what is pending, as the app's All Transactions page (asked 26 Oct 2026). transactionsList() reads it.
+  { key: 'transactions', label: 'Transactions' },
   { key: 'accessories', label: 'Accessories' },
   { key: 'services', label: 'Polish & services' },
   { key: 'costs', label: 'Costs' },
