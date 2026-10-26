@@ -198,6 +198,9 @@ async function showLogistics(group) {
   if (group === 'checkout') return showLogisticsCheckout();
   if (group === 'handcarry') return showLogisticsHandCarry();
   if (group === 'transactions') return showLogisticsTransactions();
+  // The Accessories tab is the app's Accessories Management page; its lists (to collect, to give, settlements, swaps) are one link away.
+  if (group === 'accessories') return showLogisticsAccessories();
+  if (group === 'accessories-all') group = 'accessories';
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
   if (group === 'contacts-all') group = 'contacts';
@@ -944,6 +947,113 @@ function drawTransactions() {
         </tr>`
       )
       .join('')}</tbody></table></div>`;
+}
+
+/* ── accessories ────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Accessories Management page (asked 26 Oct 2026): what
+ * we owe clients and what they owe us — by accessory, by brand, and by client
+ * (grouped by country, one row per transaction and direction) — counted as
+ * the app counts. Each row linked to our watch and the client as on the
+ * Transactions tab. Settling is the transaction's edit, not a button here.
+ */
+const acc = { q: '', data: null };
+
+async function showLogisticsAccessories() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('accessories')}
+    <p class="sub" style="margin:0 0 12px">Everything we owe and are owed, by accessory, brand and client — from the accessory transactions. <a href="#/logistics/accessories-all">See the lists</a> (to collect, to give, settlements, swaps).</p>
+    <div id="acc-top" class="acc-two"></div>
+    <div id="acc-brand"></div>
+    <div class="lg-toolbar" style="grid-template-columns:1fr;margin-top:14px">
+      <input class="q" type="search" id="accq" placeholder="Client, country, stock number, reference, accessory…" value="${esc(acc.q)}">
+    </div>
+    <div class="count" id="acc-count">Reading the accessories…</div>
+    <div id="acc-out"></div>`;
+  let timer;
+  $('#accq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      acc.q = e.target.value;
+      drawAccClients();
+    }, 150);
+  });
+  lgOpenOnClick($('#acc-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/accessories');
+  } catch (err) {
+    if (seq === lgPage && $('#acc-count')) $('#acc-count').textContent = `Could not read the accessories: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#acc-out')) return;
+  acc.data = r;
+  const side = (title, s, blank) => `<section class="panel">
+      <h2 class="sf-h">${title}</h2>
+      <div class="acc-n">${s.total}</div>
+      ${s.by_accessory.length ? `<div class="acc-break">${s.by_accessory.map((a) => `<div><span>${esc(a.accessory)}</span><b>${a.n}</b></div>`).join('')}</div>` : `<p class="sub" style="margin:4px 0 0">${blank}</p>`}
+    </section>`;
+  $('#acc-top').innerHTML = side('We need to give clients', r.give, 'Nothing to give — all clear.') + side('Clients need to give us', r.get, 'Nothing owed to us — all clear.');
+  $('#acc-brand').innerHTML = `<section class="panel" style="margin-top:14px">
+      <h2 class="sf-h">Pending by brand</h2>
+      ${
+        r.by_brand.length
+          ? `<div class="tscroll"><table class="list lg"><thead><tr><th>Brand</th><th class="num">We owe</th><th class="num">Owed to us</th><th class="num">Transactions</th></tr></thead><tbody>${r.by_brand
+              .map((b) => `<tr><td><b>${esc(b.brand || 'No brand')}</b></td><td class="num">${b.give || '—'}</td><td class="num">${b.get || '—'}</td><td class="num">${b.transactions}</td></tr>`)
+              .join('')}</tbody></table></div>`
+          : '<p class="sub" style="margin:4px 0 0">Nothing pending on any brand.</p>'
+      }
+    </section>`;
+  drawAccClients();
+}
+
+function drawAccClients() {
+  const r = acc.data;
+  if (!r || !$('#acc-out')) return;
+  const words = acc.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rowWords = (x) => [x.stock_no, x.reference, x.brand, ...x.items, x.watch?.bought_from?.name, x.watch?.sold_to?.name];
+  let shown = 0;
+  const html = r.by_country
+    .map((c) => {
+      const clients = c.clients
+        .map((p) => {
+          const head = [c.country, p.client?.name, p.client?.client_name];
+          const rows = p.rows.filter((x) => sfMatch(words, ...head, ...rowWords(x)));
+          return rows.length ? { p, rows } : null;
+        })
+        .filter(Boolean);
+      if (!clients.length) return '';
+      shown += clients.length;
+      const items = clients.reduce((a, x) => a + x.rows.reduce((b, y) => b + y.items.length, 0), 0);
+      return `<details class="panel acc-country" open>
+        <summary><h2 class="sf-h">${esc(c.country || 'No country')} <span class="count" style="margin:0">· ${clients.length} client${clients.length === 1 ? '' : 's'}</span></h2><span class="count" style="margin:0">${items} pending</span></summary>
+        ${clients
+          .map(
+            ({ p, rows }) => `<div class="acc-client">
+              <h3 class="hc-stop-h">${p.client ? lgPerson(p.client.name, p.client) : '<span class="blank">Client not listed in the logistics app</span>'} <span class="count" style="margin:0;font-weight:400">· we owe ${p.give} · owed to us ${p.get}</span></h3>
+              ${rows
+                .map(
+                  (x) => `<div class="ov-row" data-id="${x.id}" tabindex="0" role="link">
+                    <div class="ov-row-main">
+                      <div>${/\d/.test(x.stock_no) ? (x.watch ? `<a class="lg-stock" href="#/watch/${x.watch.id}">#${esc(x.stock_no)}</a>` : `<span class="lg-stock">#${esc(x.stock_no)}</span>`) : `<span class="lg-stock">${esc(x.stock_no || '—')}</span>`}${
+                        x.reference && x.reference !== x.stock_no ? ` <span class="count" style="margin:0">Ref ${esc(x.reference)}</span>` : ''
+                      }${x.brand ? ` <span class="count" style="margin:0">· ${esc(x.brand)}</span>` : ''}</div>
+                      <div class="lg-ov"><span class="lg-tag ${x.dir === 'give' ? 'problem' : 'warn'}">${x.dir === 'give' ? 'We give' : 'They give'}</span>${x.items.map((i) => `<span class="lg-tag">${esc(i)}</span>`).join('')}</div>
+                    </div>
+                    <div class="ov-row-side hc-ours">${coOurs(x)}</div>
+                  </div>`
+                )
+                .join('')}
+            </div>`
+          )
+          .join('')}
+      </details>`;
+    })
+    .join('');
+  const all = r.by_country.reduce((a, c) => a + c.clients.length, 0);
+  $('#acc-count').textContent = `${shown} client${shown === 1 ? '' : 's'}${words.length ? ` of ${all}` : ''} with accessories pending`;
+  $('#acc-out').innerHTML = html || `<p class="sub">${words.length ? 'Nothing pending matches.' : 'Nothing is pending with any client.'}</p>`;
 }
 
 /* One transaction on a watch's page: who, when, what is still owed either way, and what was handed over. */
@@ -2207,8 +2317,78 @@ function renderClientLogistics(c, box, r) {
 
 const TONE_CLASS = { here: 'here', moving: 'moving', away: 'away', sold: 'sold' };
 
+/*
+ * The watch's accessories (asked 26 Oct 2026: "what is missing against that
+ * watch and what we have"), in their own panel under Logistics: what it has
+ * (Chrono Key's box / papers / service papers / accessories, what the place's
+ * stock row says came with it, what a client has since handed over), what is
+ * missing (Chrono Key's "no", the stock row's missing, what a client still
+ * owes us, the To collect list), what we owe a buyer, and what we gave. Each
+ * line says where it comes from and opens that record.
+ */
+function renderWatchAccessories() {
+  const box = $('#acc-panel');
+  const A = current?.logistics?.accessories;
+  if (!box) return;
+  if (!A) {
+    box.hidden = true;
+    return;
+  }
+  const ck = A.chrono_key || {};
+  const CK = [['box', 'Box'], ['papers', 'Papers'], ['service_papers', 'Service papers']];
+  const tag = (t, tone = '') => `<span class="lg-tag ${tone}">${esc(t)}</span>`;
+  const line = (src, tags, href) =>
+    tags.length ? `<div class="acc-src"><span class="count">${href ? `<a href="${href}">${src}</a>` : src}</span><span class="lg-ov" style="margin:0">${tags.join('')}</span></div>` : '';
+  const who = (x, dir) => (x.client ? `${dir} ${esc(x.client.name)}` : x.type === 'sold' ? 'Sold' : 'Bought');
+  const groups = [
+    [
+      'Has',
+      [
+        line('Chrono Key', [...CK.filter(([k]) => ck[k] === true).map(([, l]) => tag(l)), ...(ck.accessories ? [tag(ck.accessories)] : [])]),
+        ...A.places.map((p) => line(`With it in ${esc(p.place)}`, p.present.map((x) => tag(x)), `#/lg/${p.id}`)),
+        ...A.received.map((t) => line(`${who(t, 'Received from')}`, t.items.map((x) => tag(x)), `#/lg/${t.id}`)),
+      ],
+    ],
+    [
+      'Missing',
+      [
+        line('Chrono Key', CK.filter(([k]) => ck[k] === false).map(([, l]) => tag(`No ${l.toLowerCase()}`, 'warn'))),
+        ...A.places.map((p) => line(`Missing in ${esc(p.place)}`, p.missing.map((x) => tag(x, 'warn')), `#/lg/${p.id}`)),
+        ...A.owed_to_us.map((t) => line(`${who(t, 'To collect from')}`, t.items.map((x) => tag(x, 'warn')), `#/lg/${t.id}`)),
+        ...A.to_collect.map((c) => line(`To collect${c.who ? ` from ${esc(c.who)}` : ''}`, c.items.map((x) => tag(x, 'warn')), `#/lg/${c.id}`)),
+      ],
+    ],
+    [
+      'We owe',
+      [
+        ...A.we_owe.map((t) => line(`${who(t, 'To give')}`, t.items.map((x) => tag(x, 'problem')), `#/lg/${t.id}`)),
+        ...A.to_give.map((g) => line(`To give${g.who ? ` ${esc(g.who)}` : ''}${g.in_safe ? ' · in our safe' : ''}`, g.items.map((x) => tag(x, 'problem')), `#/lg/${g.id}`)),
+      ],
+    ],
+    ['Given', A.given.map((t) => line(`${who(t, 'Given to')}`, t.items.map((x) => tag(x)), `#/lg/${t.id}`))],
+  ]
+    .map(([title, lines]) => [title, lines.filter(Boolean)])
+    .filter(([, lines]) => lines.length);
+  if (!groups.length) {
+    box.hidden = true;
+    return;
+  }
+  // How many accessories, not how many lines: a box missing in Dubai and still owed by the client is one box.
+  const distinct = (lists) => new Set(lists.flat().map((x) => String(x).replace(/ × \d+$/, '').trim().toLowerCase()).filter(Boolean)).size;
+  const missing = distinct([...A.places.map((p) => p.missing), ...A.owed_to_us.map((t) => t.items), ...A.to_collect.map((c) => c.items), CK.filter(([k]) => ck[k] === false).map(([, l]) => l)]);
+  const owe = distinct([...A.we_owe.map((t) => t.items), ...A.to_give.map((g) => g.items)]);
+  const note = [missing && `${missing} missing`, owe && `${owe} to give`].filter(Boolean).join(' · ');
+  box.hidden = false;
+  box.innerHTML = fold(
+    'accessories',
+    `Accessories${note ? ` <span class="fold-note">· ${note}</span>` : ''}`,
+    groups.map(([title, lines]) => `<div class="lg-section"><h3>${esc(title)}</h3>${lines.join('')}</div>`).join('')
+  );
+}
+
 /** The "right now" line under the watch's status, and its logistics panel. */
 function renderWatchLogistics() {
+  renderWatchAccessories();
   const L = current?.logistics;
   const strip = $('#lg-now');
   const panel = $('#lg-panel');

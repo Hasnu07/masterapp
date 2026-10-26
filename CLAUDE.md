@@ -411,7 +411,25 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   logistics client → ours as that one is (`linksByClientId`). On the WATCH
   PAGE, a "Transactions" section beside What it cost / History / Records
   (`forWatch` → `transactions`, `txViews`); not on the Inventory tile.
-  Give / settle / edit: the record's edit.
+  Give / settle / edit: the record's edit. An item's way is the app's own
+  rule (its Accessories page): `direction: 'give'` is ours to give,
+  anything else the client's to give us.
+- **Accessories** (asked 26 Oct 2026, "same rule show against each
+  watch"): the Logistics → Accessories tab is now the app's Accessories
+  Management page (`accessoriesSummary()`, `/api/logistics/accessories`),
+  counted as the app counts — pending items by quantity; by accessory
+  exactly as typed ("Links" / "links" two lines, as there); by brand (we
+  owe / owed to us / transactions); by client grouped by the client's
+  country, one row per transaction and direction, each row linked to our
+  watch and the client. A client the app does not list shows, not dropped.
+  Its old lists (To collect, To give, Settlements, Swaps) are at
+  `#/logistics/accessories-all`. **On the watch page**, an Accessories
+  panel under Logistics ("what is missing against that watch and what we
+  have"): Has (Chrono Key's box / papers / service papers / accessories, the
+  place row's `accessoriesPresent`, what a client handed over), Missing
+  (Chrono Key's "no", the row's `accessoriesMissing`, what a client still
+  owes us, `accCollect`), We owe (pending give, `accGive`, in our safe),
+  Given. `forWatch` → `accessories` (`accessoriesOf`).
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds

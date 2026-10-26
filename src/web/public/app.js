@@ -495,6 +495,7 @@ function renderWatch() {
         <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
         <div class="panel" id="lg-panel" hidden></div>
+        <div class="panel" id="acc-panel" hidden></div>
       </div>
       <div class="stack">
         <form class="panel" id="details"></form>

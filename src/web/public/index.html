@@ -350,6 +350,21 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .sf-for { font-size: 14px; }
 .sf-notes { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .sf-card:focus-visible, .sf-row:focus-visible, table.list.lg tr:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* Accessories: the two totals, by brand, by client; and a watch's own panel */
+.acc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 640px) { .acc-two { grid-template-columns: 1fr; } }
+.acc-n { font-family: 'EB Garamond', serif; font-size: 40px; line-height: 1.1; margin: 4px 0 8px; }
+.acc-break { max-height: 360px; overflow-y: auto; }
+.acc-break div { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 14px; border-bottom: 1px dashed var(--line); }
+table.list th.num, table.list td.num { text-align: right; }
+.acc-country { margin-bottom: 14px; }
+.acc-country > summary { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; }
+.acc-country > summary::-webkit-details-marker { display: none; }
+.acc-client { border-top: 1px solid var(--line); padding: 10px 0 2px; margin-top: 8px; }
+.acc-client .ov-row { border-top: 1px dashed var(--line); }
+.acc-client > h3 { text-transform: none; letter-spacing: 0; font-size: 16px; }
+.acc-src { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 5px 0; }
+.acc-src > .count { margin: 0; min-width: 9.5em; }
 /* Transactions: the tab's four filters, and one transaction on a watch's page */
 .lg-toolbar.tx-toolbar { grid-template-columns: 1fr auto auto auto; }
 @media (max-width: 640px) { .lg-toolbar.tx-toolbar { grid-template-columns: 1fr 1fr; } .lg-toolbar.tx-toolbar select { min-width: 0; } }

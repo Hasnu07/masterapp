@@ -696,6 +696,7 @@ export async function forWatch(watchId) {
   const opts = { clientName: ctx.client, stockNo };
   const costs = situation.costs(stockNo, items);
   costs.total = await costTotal(costs.totals, w[0].purchase_currency);
+  const transactions = await txViews(rows.filter((r) => r.kind === 'transactions' && !r.deleted_at));
   return {
     stock_no: stockNo,
     as_of: at,
@@ -703,7 +704,9 @@ export async function forWatch(watchId) {
     timeline: situation.timeline(items, opts).slice(0, 200).map((e) => ({ ...e, at: e.at ? new Date(e.at).toISOString() : null, kind_label: kindOf(e.kind).label })),
     costs,
     // Its accessory transactions, as the Transactions tab shows them: shown with the costs on the watch's page, not on its tile.
-    transactions: await txViews(rows.filter((r) => r.kind === 'transactions' && !r.deleted_at)),
+    transactions,
+    // What it has and what is missing, from every source that says (its own panel on the watch's page).
+    accessories: await accessoriesOf(w[0].id, rows, transactions),
     items: rows.filter((r) => !r.deleted_at).map((r) => view(r, ctx)),
   };
 }
@@ -927,8 +930,8 @@ async function txViews(rows) {
         id: text(it.id),
         accessory: text(it.accessory) || 'Item',
         qty: Math.max(Number(it.qty) || 1, 1),
-        // Each item says which way it goes; one that does not goes its transaction's way (the app: sold = we owe the client).
-        dir: it.direction === 'give' || (!it.direction && d.type === 'sold') ? 'give' : 'get',
+        // The app's own rule, as its Accessories page counts: 'give' is ours to give, anything else theirs to give us.
+        dir: it.direction === 'give' ? 'give' : 'get',
         done: it.status === 'done',
       }));
       const settlements = settled.rows
@@ -976,6 +979,104 @@ export async function transactionsList() {
     transactions,
     clients: [...clients.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
     countries: [...new Set(transactions.map((t) => t.client?.country).filter(Boolean))].sort(),
+  };
+}
+
+/*
+ * The logistics app's Accessories Management page (asked 26 Oct 2026),
+ * counted as it counts: every PENDING transaction item, by its quantity —
+ * ours to give when its direction is 'give', the client's to give us
+ * otherwise; by accessory exactly as typed ("Links" and "links" are two
+ * lines there too); by brand (with how many transactions); and by client,
+ * grouped by the client's country, one row per transaction and direction.
+ * Same links as the Transactions tab. A transaction whose client the app
+ * does not list is shown under "client not listed", not dropped.
+ */
+export async function accessoriesSummary() {
+  const { rows } = await query("SELECT * FROM logistics_items WHERE kind = 'transactions' AND deleted_at IS NULL");
+  const txs = await txViews(rows);
+  const total = { give: 0, get: 0 };
+  const byAcc = { give: new Map(), get: new Map() };
+  const brands = new Map();
+  const people = new Map();
+  for (const t of txs) {
+    const open = t.items.filter((it) => !it.done);
+    if (!open.length) continue;
+    const b = brands.get(t.brand) || brands.set(t.brand, { brand: t.brand, give: 0, get: 0, transactions: 0 }).get(t.brand);
+    b.transactions += 1;
+    const key = t.client ? `c${t.client.lg_client_id}` : 'none';
+    const p = people.get(key) || people.set(key, { client: t.client, country: t.client?.country || '', give: 0, get: 0, items: 0, rows: [] }).get(key);
+    for (const dir of ['give', 'get']) {
+      const mine = open.filter((it) => it.dir === dir);
+      if (!mine.length) continue;
+      for (const it of mine) {
+        total[dir] += it.qty;
+        byAcc[dir].set(it.accessory, (byAcc[dir].get(it.accessory) || 0) + it.qty);
+        b[dir] += it.qty;
+        p[dir] += it.qty;
+        p.items += 1;
+      }
+      p.rows.push({ id: t.id, dir, stock_no: t.stock_no, reference: t.reference, brand: t.brand, date: t.date, items: mine.map((it) => (it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory)), watch: t.watch });
+    }
+  }
+  const ranked = (m) => [...m].map(([accessory, n]) => ({ accessory, n })).sort((a, b) => b.n - a.n || a.accessory.localeCompare(b.accessory));
+  const countries = new Map();
+  for (const p of people.values()) {
+    const c = countries.get(p.country) || countries.set(p.country, { country: p.country, items: 0, clients: [] }).get(p.country);
+    c.items += p.items;
+    c.clients.push(p);
+  }
+  const nameOf = (p) => p.client?.name || '';
+  return {
+    as_of: await asOf(),
+    give: { total: total.give, by_accessory: ranked(byAcc.give) },
+    get: { total: total.get, by_accessory: ranked(byAcc.get) },
+    by_brand: [...brands.values()].sort((a, b) => b.give + b.get - (a.give + a.get) || a.brand.localeCompare(b.brand)),
+    by_country: [...countries.values()]
+      .sort((a, b) => a.country.localeCompare(b.country))
+      .map((c) => ({ ...c, clients: c.clients.sort((a, b) => Number(!a.client) - Number(!b.client) || nameOf(a).localeCompare(nameOf(b), 'en', { sensitivity: 'base' })) })),
+  };
+}
+
+/* A list as the app writes it: an array, or words split on commas and new lines. */
+const listOf = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,\n]+/)).map((x) => text(typeof x === 'object' && x ? x.name || x.accessory : x)).filter(Boolean);
+const PLACE_OF = { londonStock: 'London', dubaiStock: 'Dubai', hkStock: 'Hong Kong', safeStock: 'our safe', hkSituation: 'the HK list' };
+
+/*
+ * A watch's accessories (asked 26 Oct 2026: "what is missing against that
+ * watch and what we have"), from everything that says: Chrono Key's box,
+ * papers, service papers and accessories (our record); what each place's
+ * stock row says came with it and is missing; the transactions — what a
+ * client still owes us, what we still owe a buyer, what was settled; and the
+ * logistics app's To collect / To give lists. Each line says where it comes
+ * from and opens that record.
+ */
+async function accessoriesOf(watchId, rows, transactions) {
+  const { rows: w } = await query('SELECT box, papers, service_papers, accessories FROM watches WHERE id = $1', [watchId]);
+  const live = rows.filter((r) => !r.deleted_at);
+  const places = live
+    .filter((r) => PLACE_OF[r.kind] && !['moved', 'sold'].includes(r.data?.status))
+    .map((r) => ({ id: r.id, place: PLACE_OF[r.kind], present: listOf(r.data?.accessoriesPresent), missing: listOf(r.data?.accessoriesMissing) }))
+    .filter((p) => p.present.length || p.missing.length);
+  const label = (it) => (it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory);
+  const fromTx = (dir, done) =>
+    transactions.flatMap((t) => {
+      const items = t.items.filter((it) => it.dir === dir && it.done === done).map(label);
+      return items.length ? [{ id: t.id, items, client: t.client, type: t.type, date: t.date }] : [];
+    });
+  const list = (kind, who) =>
+    live
+      .filter((r) => r.kind === kind)
+      .map((r) => ({ id: r.id, items: listOf(r.data?.items), who: text(r.data?.[who]), in_safe: kind === 'accGive' && ticked(r.data?.inSafe) !== '', notes: text(r.data?.notes) }));
+  return {
+    chrono_key: w[0] ? { box: w[0].box, papers: w[0].papers, service_papers: w[0].service_papers, accessories: text(w[0].accessories) } : null,
+    places,
+    owed_to_us: fromTx('get', false),
+    we_owe: fromTx('give', false),
+    received: fromTx('get', true),
+    given: fromTx('give', true),
+    to_collect: list('accCollect', 'fromClient'),
+    to_give: list('accGive', 'toClient'),
   };
 }
 
