@@ -430,6 +430,21 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   (Chrono Key's "no", the row's `accessoriesMissing`, what a client still
   owes us, `accCollect`), We owe (pending give, `accGive`, in our safe),
   Given. `forWatch` → `accessories` (`accessoriesOf`).
+- **The Inventory card = the logistics app's stock card too** (asked 26 Oct
+  2026, "show these same things on card"): Ref · watch date, SN, Received
+  (the place row's `receivedAt` — milliseconds shown on the browser's own
+  calendar), From (our client by Chrono Key's id, else the typed purchased
+  from, else the row's `from`), ✓ what came with it (`accessoriesPresent`)
+  and Missing (`accessoriesMissing`) — from the London / Dubai / HK row it
+  is in now, never one a move left behind (`listWatches` → `received`,
+  `bought_from`, `accessories`). The app's "Add cost price" is not here.
+  Colour-coded and simplified (asked the same day): a band in the status's
+  colour over the text (green in stock, blue incoming, gold sold, red
+  deleted), the facts in one two-column list (one line each on a phone), a
+  green "With it" and a red "Missing" box, blue for in safe / hand carry,
+  the photo count on the picture. At the foot **Bought for** and, once sold,
+  **Sold for** — not B2C ("instead of B2C show purchase price and sold
+  price"); a purchase with no currency stated shows the bare figure.
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds
