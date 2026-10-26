@@ -122,7 +122,16 @@ export async function listWatches(opts = {}) {
                   ORDER BY e.n, p.o LIMIT 1) s
               WHERE i.kind = 'kashanPlans' AND i.deleted_at IS NULL AND COALESCE(i.data->>'status', '') <> 'completed'
                 AND i.stock_nos @> ARRAY[w.stock_no]
-              ORDER BY i.id LIMIT 1) AS hand_carry
+              ORDER BY i.id LIMIT 1) AS hand_carry,
+            -- Where the logistics app holds it now (London, Dubai, Hong Kong): when it came in, and what came with it — its own stock card.
+            (SELECT jsonb_build_object('received', i.data->'receivedAt', 'with', i.data->'accessoriesPresent', 'missing', i.data->'accessoriesMissing', 'from', i.data->>'from')
+               FROM logistics_items i
+              WHERE i.kind IN ('londonStock', 'dubaiStock', 'hkStock') AND i.deleted_at IS NULL AND i.stock_nos @> ARRAY[w.stock_no]
+                AND COALESCE(i.data->>'status', '') IN ('', 'current', 'consignment')
+              ORDER BY i.updated_at DESC, i.id DESC LIMIT 1) AS lg_place,
+            -- Who it was bought from: Chrono Key's link to our client (by id), as the Clients panel names them.
+            (SELECT COALESCE(NULLIF(trim(concat_ws(' ', c.forename, c.surname)), ''), NULLIF(c.nickname, ''), NULLIF(c.company, ''))
+               FROM clients c WHERE c.id = w.purchased_from_client_id AND c.deleted_at IS NULL) AS bought_from_name
        FROM w WHERE ${where.join(' AND ')}
       ORDER BY ${order}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -135,6 +144,11 @@ export async function listWatches(opts = {}) {
     facets: { status: byStatus, location: byLocation, brand: byBrand.slice(0, 40) },
   };
 }
+
+/* A list as the logistics app writes it: an array, or words split on commas and new lines. */
+const words = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,\n]+/)).map((x) => String(x ?? '').trim()).filter(Boolean);
+/* The day it came in: the app keeps milliseconds or a day; milliseconds are left for the browser's own calendar. */
+const receivedOf = (v) => (typeof v === 'number' || /^\d{10,13}$/.test(String(v ?? '')) ? Number(v) : /^\d{4}-\d{2}-\d{2}/.test(String(v ?? '')) ? String(v).slice(0, 10) : null);
 
 const summary = (w) => ({
   id: w.id,
@@ -155,8 +169,14 @@ const summary = (w) => ({
   b2c_currency: w.b2c_currency,
   sale_price: w.sale_price,
   sale_currency: w.sale_currency,
+  purchase_price: w.purchase_price,
+  purchase_currency: w.purchase_currency,
   photo_id: w.photo_id,
   photo_count: w.photo_count,
+  // The logistics app's stock card on ours: who from (our client by Chrono Key's id, else as typed), when it came in, what came with it.
+  bought_from: w.bought_from_name || String(w.purchased_from || '').trim() || String(w.lg_place?.from || '').trim() || null,
+  received: w.lg_place ? receivedOf(w.lg_place.received) : null,
+  accessories: w.lg_place ? { with: words(w.lg_place.with), missing: words(w.lg_place.missing) } : null,
   hand_carry: w.hand_carry
     ? {
         plan: String(w.hand_carry.plan || '').trim(),

@@ -773,6 +773,29 @@ test('accessories: owed either way counted as the app counts, by accessory, bran
   assert.deepEqual(A.to_give.map((g) => [g.items, g.who, g.in_safe]), [[['Strap'], 'Adam Rasul', true]]);
 });
 
+test('the Inventory card carries the logistics app’s stock card: serial, received, who from, what came with it', async () => {
+  const nathan = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Nathan james', 'williamson', 'manual') RETURNING id")).rows[0].id;
+  await db(
+    "INSERT INTO watches(stock_no, brand, model, reference, serial, watch_date, origin, status, purchased_from_client_id, purchased_from) VALUES ('3751', 'Rolex', 'Daytona', '116500LN', '6WT18264', '08/2023', 'manual', 'in_stock', $1, 'nathan w')",
+    [nathan]
+  );
+  await db("INSERT INTO watches(stock_no, brand, origin, status, purchased_from) VALUES ('3752', 'Tudor', 'manual', 'in_stock', 'typed seller')");
+  await db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ('dubaiStock', $1, '{3751}', 'manual')", [
+    { stockNumber: '3751', status: 'current', receivedAt: 1792800000000, from: 'Nathan james williamson', accessoriesPresent: ['Watch', 'Warranty Card', 'Box'], accessoriesMissing: 'Green Tag, White Tag' },
+  ]);
+  await db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ('londonStock', $1, '{3751}', 'manual')", [{ stockNumber: '3751', status: 'moved', receivedAt: '2026-01-01', accessoriesPresent: 'old' }]);
+
+  const { listWatches } = await import('../src/watches/index.js');
+  const t = (await listWatches({ q: '3751' })).watches[0];
+  assert.deepEqual(
+    [t.reference, t.serial, t.watch_date, t.bought_from, t.received, t.accessories],
+    ['116500LN', '6WT18264', '08/2023', 'Nathan james williamson', 1792800000000, { with: ['Watch', 'Warranty Card', 'Box'], missing: ['Green Tag', 'White Tag'] }],
+    'our client by id over the typed name; the place it is in now, not a row a move left behind'
+  );
+  const plain = (await listWatches({ q: '3752' })).watches[0];
+  assert.deepEqual([plain.bought_from, plain.received, plain.accessories], ['typed seller', null, null], 'no logistics row: nothing made up');
+});
+
 /* ── the API ── */
 
 function client() {

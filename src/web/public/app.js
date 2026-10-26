@@ -352,44 +352,50 @@ async function loadList(more = false) {
   $('#more').classList.toggle('hide', shown.length >= r.total);
 }
 
+/*
+ * An Inventory card (asked 26 Oct 2026: "more colour coded and simplify
+ * it"). Colour says status only, as everywhere in the console: a band in the
+ * status's colour across the top of the text, green for what came with it,
+ * red for what is missing, blue for where it is moving. The facts sit in one
+ * two-column list — the logistics app's stock card, read at a glance — and
+ * the prices stand alone at the foot.
+ */
 function tile(w) {
-  const price =
-    w.status === 'sold' && w.sale_price
-      ? `Sold ${money(w.sale_price, w.sale_currency, { plain: true })}`
-      : w.b2c_price
-        ? `B2C ${money(w.b2c_price, w.b2c_currency, { plain: true })}`
-        : w.b2b_price
-          ? `B2B ${money(w.b2b_price, w.b2b_currency, { plain: true })}`
-          : '';
-  return `<button class="tile" data-id="${w.id}">
+  // What we paid and, once sold, what it sold for (asked 26 Oct 2026: "instead of B2C show purchase price and sold price").
+  const prices = [
+    w.purchase_price && ['Bought for', money(w.purchase_price, w.purchase_currency, { plain: true }), ''],
+    w.sale_price && ['Sold for', money(w.sale_price, w.sale_currency, { plain: true }), 'sold'],
+  ].filter(Boolean);
+  const received = w.received && (typeof w.received === 'number' ? dayWords(localDay(w.received)) : dayWords(w.received));
+  const facts = [
+    ['Ref', [w.reference, w.watch_date].filter(Boolean).join(' · ')],
+    ['Serial', w.serial],
+    ['Received', received],
+    ['From', w.bought_from],
+  ].filter(([, v]) => v);
+  // Where it is moving or held for someone: a status of its own, in the "moving" blue.
+  const moving = [
+    w.in_safe && `In safe${w.in_safe.for ? ` for ${w.in_safe.for}` : ''}${w.in_safe.with_owner ? ', out with its owner' : ''}`,
+    w.hand_carry &&
+      `Hand carry${w.hand_carry.plan ? ` · ${w.hand_carry.plan}` : ''}${w.hand_carry.role ? ` · ${w.hand_carry.role}${w.hand_carry.to ? ` in ${w.hand_carry.to}` : ''}` : ''}${
+        w.hand_carry.date ? `, ${dayWords(w.hand_carry.date)}` : ''
+      }`,
+  ].filter(Boolean);
+  const status = w.deleted_at ? 'deleted' : w.status || 'other';
+  return `<button class="tile st-${esc(status)}" data-id="${w.id}">
     <div class="pic">${
       w.photo_id
         ? `<img loading="lazy" src="/api/photos/${w.photo_id}?thumb=1" alt="">`
         : `<span>${esc(w.reference || 'No photo')}</span>`
-    }</div>
+    }${w.photo_count > 1 ? `<span class="pic-n">${w.photo_count} photos</span>` : ''}</div>
     <div class="body">
+      <div class="m"><b class="tile-no">${w.stock_no ? `#${esc(w.stock_no)}` : 'No stock number'}</b>${chip(status)}${w.location ? `<span>${esc(w.location)}</span>` : ''}</div>
       <div class="t">${esc(w.title)}</div>
-      <div class="m">${w.stock_no ? `<b>#${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)} ${
-        w.location ? esc(w.location) : ''
-      }</div>
-      ${
-        // A client's watch in our safe (the logistics app's In Safe page), and whose.
-        w.in_safe
-          ? `<div class="m"><span class="chip insafe" title="A client’s watch we hold in our safe">In safe${w.in_safe.for ? ` · for ${esc(w.in_safe.for)}` : ''}${
-              w.in_safe.with_owner ? ' · out with its owner' : ''
-            }</span></div>`
-          : ''
-      }
-      ${
-        // On an open hand-carry plan (the logistics app's Hand Carry page): whose, and what is done with it where.
-        w.hand_carry
-          ? `<div class="m"><span class="chip insafe" title="On an open hand-carry plan">Hand carry${w.hand_carry.plan ? ` · ${esc(w.hand_carry.plan)}` : ''}${
-              w.hand_carry.role ? ` · ${esc(w.hand_carry.role)}${w.hand_carry.to ? ` in ${esc(w.hand_carry.to)}` : ''}` : ''
-            }${w.hand_carry.date ? `, ${esc(dayWords(w.hand_carry.date))}` : ''}</span></div>`
-          : ''
-      }
-      <div class="m">${esc(w.watch_date)}${w.photo_count ? ` · ${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}` : ''}</div>
-      ${price ? `<div class="p">${price}</div>` : ''}
+      ${facts.length ? `<div class="tile-facts">${facts.map(([k, v]) => `<div class="f"><span class="k">${k}</span> <span class="v">${esc(v)}</span></div>`).join('')}</div>` : ''}
+      ${w.accessories?.with.length ? `<div class="tile-acc ok"><b>With it</b> ${esc(w.accessories.with.join(', '))}</div>` : ''}
+      ${w.accessories?.missing.length ? `<div class="tile-acc miss"><b>Missing</b> ${esc(w.accessories.missing.join(', '))}</div>` : ''}
+      ${moving.map((t) => `<div class="tile-move">${esc(t)}</div>`).join('')}
+      ${prices.length ? `<div class="p">${prices.map(([k, v, cls]) => `<div class="pr ${cls}"><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` : ''}
     </div>
   </button>`;
 }

@@ -212,5 +212,7 @@ export function displayTitle(w) {
   let model = w.model || '';
   // "Rolex Rolex Cosmograph Daytona" — Chrono Key's model often repeats the brand.
   if (brand && model.toLowerCase().startsWith(`${brand.toLowerCase()} `)) model = model.slice(brand.length + 1);
-  return [brand, model, w.reference].filter(Boolean).join(' ').trim() || (w.stock_no ? `Stock ${w.stock_no}` : 'Untitled watch');
+  // …and "Richard Mille RM 67-01 RM 67-01": a model that already names the reference.
+  const ref = w.reference && !model.toLowerCase().includes(String(w.reference).toLowerCase()) ? w.reference : '';
+  return [brand, model, ref].filter(Boolean).join(' ').trim() || (w.stock_no ? `Stock ${w.stock_no}` : 'Untitled watch');
 }
