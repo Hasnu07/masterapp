@@ -350,7 +350,16 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .sf-for { font-size: 14px; }
 .sf-notes { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .sf-card:focus-visible, .sf-row:focus-visible, table.list.lg tr:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-@media (max-width: 640px) { .sf-view .pill, #co-origins .pill { min-height: 44px; } }
+/* Hand carry: a plan, its route and its stops */
+.hc-plan { margin-bottom: 14px; }
+.hc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hc-route { margin: 8px 0 6px; font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.hc-route span { color: var(--muted); }
+.hc-stop { border-top: 1px solid var(--line); padding: 10px 0 2px; }
+.hc-stop-h { font-size: 15px; font-weight: 600; margin: 0 0 2px; font-family: inherit; }
+.hc-stop .ov-row { border-top: 1px dashed var(--line); }
+.hc-ours { font-size: 13px; text-align: right; }
+@media (max-width: 640px) { .sf-view .pill, #co-origins .pill, #hc-show .pill { min-height: 44px; } #hc-out .ov-row-main { flex-basis: 100%; } .hc-ours { text-align: left; } }
 .lg-title { font-size: 26px; margin: 4px 0 6px; }
 .lg-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
 .lg-subtabs .pill { font-size: 13px; }

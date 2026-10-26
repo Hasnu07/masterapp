@@ -157,14 +157,15 @@ function lgHeader(active, note = '') {
 }
 
 /*
- * The In Safe and Checked out tabs carry how many watches each holds, on
+ * The In Safe, Checked out and Hand carry tabs carry how many each holds, on
  * every logistics page — read again at most once a minute.
  */
 const LG_COUNTED = {
-  safe: { url: '/api/logistics/in-safe', what: (n) => `${n} client watch${n === 1 ? '' : 'es'} in the safe` },
-  checkout: { url: '/api/logistics/checked-out', what: (n) => `${n} watch${n === 1 ? '' : 'es'} checked out` },
+  safe: { url: '/api/logistics/in-safe', n: (r) => r.watches.length, what: (n) => `${n} client watch${n === 1 ? '' : 'es'} in the safe` },
+  checkout: { url: '/api/logistics/checked-out', n: (r) => r.watches.length, what: (n) => `${n} watch${n === 1 ? '' : 'es'} checked out` },
+  handcarry: { url: '/api/logistics/hand-carry', n: (r) => r.plans.length, what: (n) => `${n} open hand-carry plan${n === 1 ? '' : 's'}` },
 };
-const lgCount = { safe: null, checkout: null, at: 0 };
+const lgCount = { safe: null, checkout: null, handcarry: null, at: 0 };
 const lgTabLabel = (g) => {
   const n = lgCount[g.key];
   return `${esc(g.label)}${LG_COUNTED[g.key] && n ? ` <b class="lg-n" title="${esc(LG_COUNTED[g.key].what(n))}">${n}</b>` : ''}`;
@@ -182,7 +183,7 @@ function lgCountBadges(active) {
   for (const [key, c] of Object.entries(LG_COUNTED)) {
     if (key === active) continue;
     api(c.url)
-      .then((r) => lgSetCount(key, r.watches.length))
+      .then((r) => lgSetCount(key, c.n(r)))
       .catch(() => (lgCount.at = 0));
   }
 }
@@ -195,6 +196,7 @@ async function showLogistics(group) {
   if (!group || group === 'overview') return showLogisticsOverview();
   if (group === 'safe') return showLogisticsSafe();
   if (group === 'checkout') return showLogisticsCheckout();
+  if (group === 'handcarry') return showLogisticsHandCarry();
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
   if (group === 'contacts-all') group = 'contacts';
@@ -681,6 +683,152 @@ function drawCheckout() {
       </article>`
     )
     .join('')}</div>`;
+}
+
+/* ── hand carry ─────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Hand Carry page (asked 26 Oct 2026): a person's plan of
+ * stops, and at each the watches delivered, collected or moved. Same links as
+ * In Safe and Checked out — each watch to our watch and its clients, the typed
+ * buyer or supplier as far as it goes (lgPerson) — in this console's own look.
+ * Open plans, the app's Plans History, and what is waiting for a plan. The
+ * plan's own buttons (add a stop, assign, optimise, send to movements) are
+ * the record's edit here.
+ */
+const hc = { q: '', show: 'open', data: null };
+
+async function showLogisticsHandCarry() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('handcarry')}
+    <p class="sub" style="margin:0 0 12px">Plans for carrying watches by hand — each stop and what is delivered, collected or moved there. Every watch is linked to our stock and its client.</p>
+    <div class="lg-toolbar" style="grid-template-columns:1fr">
+      <input class="q" type="search" id="hcq" placeholder="Plan, city, stock number, brand, model, client…" value="${esc(hc.q)}">
+    </div>
+    <div class="lg-subtabs" id="hc-show" role="group" aria-label="Show"></div>
+    <div class="count" id="hc-count">Reading the plans…</div>
+    <div id="hc-out"></div>`;
+  let timer;
+  $('#hcq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      hc.q = e.target.value;
+      drawHandCarry();
+    }, 150);
+  });
+  $('#hc-show').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-s]');
+    if (!b) return;
+    hc.show = b.dataset.s;
+    drawHandCarry();
+  });
+  lgOpenOnClick($('#hc-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/hand-carry');
+  } catch (err) {
+    if (seq === lgPage && $('#hc-count')) $('#hc-count').textContent = `Could not read the plans: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#hc-out')) return;
+  hc.data = r;
+  lgSetCount('handcarry', r.plans.length);
+  drawHandCarry();
+}
+
+const HC_ROLE = { deliver: ['Deliver', 'moving', 'To'], collect: ['Collect', 'warn', 'From'], move: ['Move', '', 'From'] };
+/* One watch on a stop or waiting for one: what, who it goes to or comes from, and ours with its clients. */
+const hcRow = (x, role, extra = '') => {
+  const [tag, tone, dir] = HC_ROLE[role];
+  const who = x.who ? `${dir} <b>${lgPerson(x.who.name, x.who.link)}</b>` : '';
+  return `<div class="ov-row"${x.id ? ` data-id="${x.id}" tabindex="0" role="link"` : ''}>
+    <div class="ov-row-main">
+      <div><span class="lg-tag ${tone}">${tag}</span> ${/\d/.test(x.stock_no) ? `<span class="lg-stock">#${esc(x.stock_no)}</span> ` : ''}<b>${esc([x.brand, x.model].filter(Boolean).join(' · ') || 'Watch')}</b></div>
+      <div class="count" style="margin:2px 0 0">${[who, x.place && esc(x.place), extra].filter(Boolean).join(' · ') || '&nbsp;'}</div>
+    </div>
+    <div class="ov-row-side hc-ours">${coOurs(x)}</div>
+  </div>`;
+};
+const hcWords = (p) =>
+  [
+    p.name,
+    p.start,
+    p.notes,
+    ...p.stops.flatMap((s) => [s.to, s.from, s.flight, s.notes, ...['deliver', 'collect', 'move'].flatMap((k) => s[k].flatMap((x) => [x.stock_no, x.brand, x.model, x.place, x.who?.name, x.who?.link?.client_name, x.watch?.bought_from?.name, x.watch?.sold_to?.name]))]),
+  ];
+const hcWaitWords = (x) => [x.stock_no, x.brand, x.model, x.place, x.who?.name, x.who?.link?.client_name, x.on_plan?.name, x.watch?.bought_from?.name, x.watch?.sold_to?.name];
+
+function hcPlan(p) {
+  const c = p.counts;
+  const flights = p.flights.map((f) => money(f.amount, f.currency || '')).join(' + ');
+  const route = [p.start || 'Start', ...p.stops.map((s) => `${s.to || '?'}${s.date ? ` ${dayWords(s.date).replace(/ \d{4}$/, '')}` : ''}`)];
+  return `<section class="panel hc-plan">
+    <div class="hc-head">
+      <h2 class="sf-h"><a href="#/lg/${p.id}">${esc(p.name)}’s plan</a></h2>
+      ${p.completed ? `<span class="lg-tag">Completed${p.completed_at ? ` ${esc(sfDay(p.completed_at))}` : ''}</span>` : ''}
+    </div>
+    <div class="count" style="margin:4px 0 0">${[
+      `${c.stops} stop${c.stops === 1 ? '' : 's'}`,
+      `${c.deliver} to deliver`,
+      `${c.collect} to collect`,
+      c.move && `${c.move} to move`,
+    ]
+      .filter(Boolean)
+      .join(' · ')}${flights ? ` · flights ${flights}` : ''}</div>
+    <p class="hc-route">${route.map((x) => esc(x)).join(' <span aria-hidden="true">→</span> ')}</p>
+    ${p.notes ? `<p class="sf-notes" style="margin:0 0 8px">${esc(p.notes)}</p>` : ''}
+    ${
+      p.stops.length
+        ? p.stops
+            .map((s) => {
+              const items = [...s.deliver.map((x) => hcRow(x, 'deliver')), ...s.collect.map((x) => hcRow(x, 'collect')), ...s.move.map((x) => hcRow(x, 'move'))];
+              const when = [s.date && dayWords(s.date), s.time, s.flight, s.cost && money(s.cost, s.currency || '')].filter(Boolean);
+              return `<div class="hc-stop">
+                <h3 class="hc-stop-h">Stop ${s.n} — ${esc(s.to || 'not written')}${s.from ? ` <span class="count" style="margin:0;font-weight:400">from ${esc(s.from)}</span>` : ''}</h3>
+                ${when.length ? `<div class="count" style="margin:0">${when.map((w, i) => (i === when.length - 1 && s.cost ? w : esc(w))).join(' · ')}</div>` : ''}
+                ${s.notes ? `<div class="sf-notes">${esc(s.notes)}</div>` : ''}
+                ${items.length ? items.join('') : '<p class="sub" style="margin:6px 0 0">Nothing assigned to this stop yet.</p>'}
+              </div>`;
+            })
+            .join('')
+        : '<p class="sub" style="margin:8px 0 0">No stops yet.</p>'
+    }
+  </section>`;
+}
+
+function drawHandCarry() {
+  const r = hc.data;
+  if (!r || !$('#hc-out')) return;
+  const waitN = r.waiting.deliver.length + r.waiting.collect.length;
+  $('#hc-show').innerHTML = [
+    ['open', 'Open plans', r.plans.length],
+    ['waiting', 'Waiting for a plan', waitN],
+    ['history', 'Plans history', r.history.length],
+  ]
+    .map(([k, label, n]) => `<button type="button" class="pill${hc.show === k ? ' on' : ''}" data-s="${k}" aria-pressed="${hc.show === k}">${label}<b>${n}</b></button>`)
+    .join('');
+  const words = hc.q.toLowerCase().split(/\s+/).filter(Boolean);
+
+  if (hc.show === 'waiting') {
+    const pick = (list) => list.filter((x) => sfMatch(words, ...hcWaitWords(x)));
+    const deliver = pick(r.waiting.deliver);
+    const collect = pick(r.waiting.collect);
+    const onPlan = (x) => (x.on_plan ? `<a href="#/lg/${x.on_plan.id}">on ${esc(x.on_plan.name)}’s plan, stop ${x.on_plan.stop}${x.on_plan.to ? ` (${esc(x.on_plan.to)})` : ''}</a>` : 'not on a plan yet');
+    const box = (title, list, role, blank) => `<section class="panel sf-acc">
+      <h2 class="sf-h">${title} <span class="count">${list.length}</span></h2>
+      ${list.length ? list.map((x) => hcRow(x, role, onPlan(x))).join('') : `<p class="sub" style="margin:6px 0 0">${words.length ? 'Nothing matches.' : blank}</p>`}
+    </section>`;
+    $('#hc-count').textContent = `${deliver.length} ready to deliver · ${collect.length} to collect${words.length ? ` (of ${r.waiting.deliver.length} and ${r.waiting.collect.length})` : ''}`;
+    $('#hc-out').innerHTML = box('Ready to deliver', deliver, 'deliver', 'Nothing is waiting to be delivered.') + box('To collect', collect, 'collect', 'No incomings waiting to be collected.');
+    return;
+  }
+  const all = hc.show === 'history' ? r.history : r.plans;
+  const plans = all.filter((p) => sfMatch(words, ...hcWords(p)));
+  const n = plans.length;
+  $('#hc-count').textContent = `${n} ${hc.show === 'history' ? 'completed ' : 'open '}plan${n === 1 ? '' : 's'}${words.length ? ` of ${all.length}` : ''}`;
+  $('#hc-out').innerHTML = n
+    ? plans.map(hcPlan).join('')
+    : `<p class="sub">${words.length ? 'No plan matches.' : hc.show === 'history' ? 'No plan has been completed yet.' : 'No hand-carry plan is open right now.'}</p>`;
 }
 
 /* ── the overview ───────────────────────────────────────────────── */

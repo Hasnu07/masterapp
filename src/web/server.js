@@ -553,6 +553,7 @@ export function createServer() {
   app.get('/api/logistics/overview', need('viewer'), wrap(async (req, res) => res.json(await logistics.overview())));
   app.get('/api/logistics/in-safe', need('viewer'), wrap(async (req, res) => res.json(await logistics.inSafe())));
   app.get('/api/logistics/checked-out', need('viewer'), wrap(async (req, res) => res.json(await logistics.checkedOut())));
+  app.get('/api/logistics/hand-carry', need('viewer'), wrap(async (req, res) => res.json(await logistics.handCarry())));
   /* Search everything: our watches and clients, and the logistics records — nothing twice. */
   app.get(
     '/api/logistics/search',

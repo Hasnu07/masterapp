@@ -22,6 +22,8 @@ export const GROUPS = [
   { key: 'safe', label: 'In Safe' },
   // Watches held somewhere for a while, not sold, as the app's Checkout page (asked 26 Oct 2026). checkedOut() reads it.
   { key: 'checkout', label: 'Checked out' },
+  // A person's plan of stops — deliver, collect, move — as the app's Hand Carry page (asked 26 Oct 2026). handCarry() reads it.
+  { key: 'handcarry', label: 'Hand carry' },
   { key: 'sales', label: 'Sales & delivery' },
   { key: 'trips', label: 'Trips' },
   { key: 'accessories', label: 'Accessories' },

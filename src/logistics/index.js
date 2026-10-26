@@ -6,7 +6,7 @@ import { listWatches } from '../watches/index.js';
 import { listClients, clientName } from '../clients/index.js';
 import { config } from '../config.js';
 import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics/sync.js';
-import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
+import { GROUPS, KINDS, KIND, isSecret, stockList } from './kinds.js';
 import * as situation from './situation.js';
 import { linksByName } from './clients.js';
 
@@ -693,7 +693,7 @@ export async function forWatch(watchId) {
     asOf(),
   ]);
   const items = rows.map((r) => ({ ...r, id: r.id }));
-  const opts = { clientName: ctx.client };
+  const opts = { clientName: ctx.client, stockNo };
   const costs = situation.costs(stockNo, items);
   costs.total = await costTotal(costs.totals, w[0].purchase_currency);
   return {
@@ -731,8 +731,12 @@ function picturesOf(d) {
  * pages links to our stock and to our client in one go.
  */
 async function oursByStock(rows) {
-  const nos = [...new Set(rows.flatMap((r) => r.stock_nos || []))];
-  if (!nos.length) return () => null;
+  const byNo = await oursByNumber(rows.flatMap((r) => r.stock_nos || []));
+  return (r) => (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean) || null;
+}
+async function oursByNumber(list) {
+  const nos = [...new Set(list)];
+  if (!nos.length) return new Map();
   const person = (col) =>
     `(SELECT jsonb_build_object('id', c.id, 'forename', c.forename, 'surname', c.surname, 'nickname', c.nickname, 'company', c.company)
         FROM clients c WHERE c.id = w.${col} AND c.deleted_at IS NULL)`;
@@ -744,13 +748,12 @@ async function oursByStock(rows) {
     [nos]
   );
   const who = (c) => (c ? { id: c.id, name: clientName(c) } : null);
-  const byNo = new Map(
+  return new Map(
     ours.map((w) => [
       w.stock_no,
       { id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, photo_id: w.photo_id, bought_from: who(w.bought_from), sold_to: who(w.sold_to) },
     ])
   );
-  return (r) => (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean) || null;
 }
 
 /*
@@ -894,6 +897,98 @@ export async function checkedOut() {
     watches,
     rows: all.length,
     by_origin: [...origins].map(([origin, n]) => ({ origin, n })).sort((a, b) => b.n - a.n || a.origin.localeCompare(b.origin)),
+  };
+}
+
+/*
+ * The logistics app's Hand Carry plans (asked 26 Oct 2026; its kashanPlans):
+ * a person's plan of stops, each with the watches delivered there (from Ready
+ * for delivery, to the buyer typed on it), collected (incomings, from the
+ * supplier) or moved (a place's stock). Same links as everywhere: each watch
+ * to our watch of that number and through it to our clients (Chrono Key's
+ * ids); the typed buyer or supplier to the logistics client of that name, and
+ * to ours only as that one is (linksByName). Open plans first, then the
+ * app's Plans History (completed). And what is waiting for one: Ready for
+ * delivery not shipped, incomings pending or in transit (the app's own two
+ * lists), each saying which open plan has it, if any.
+ */
+export async function handCarry() {
+  const [plansQ, readyQ, incQ] = await Promise.all([
+    query("SELECT * FROM logistics_items WHERE kind = 'kashanPlans' AND deleted_at IS NULL ORDER BY id"),
+    query("SELECT * FROM logistics_items WHERE kind = 'readyForDelivery' AND deleted_at IS NULL AND COALESCE(data->>'status','') <> 'shipped' ORDER BY happened_at DESC NULLS LAST, id DESC"),
+    query("SELECT * FROM logistics_items WHERE kind = 'incomings' AND deleted_at IS NULL AND data->>'status' IN ('pending', 'in_transit') ORDER BY happened_at DESC NULLS LAST, id DESC"),
+  ]);
+  const all = [...plansQ.rows, ...readyQ.rows, ...incQ.rows];
+  const ours = await oursByNumber(all.flatMap((r) => r.stock_nos || []));
+  const watchOf = (stock) => stockList(stock).map((s) => ours.get(s)).find(Boolean) || null;
+  const typed = [];
+  for (const p of plansQ.rows) {
+    for (const leg of Array.isArray(p.data?.legs) ? p.data.legs : []) {
+      for (const x of [...(leg?.deliveries || []), ...(leg?.collections || [])]) typed.push(x?.clientName, x?.supplier);
+    }
+  }
+  const people = await linksByName([...typed, ...readyQ.rows.map((r) => r.data?.soldToBuyer), ...incQ.rows.map((r) => r.data?.supplier)]);
+  const person = (name) => (text(name) ? { name: text(name), link: people.get(text(name)) || null } : null);
+
+  const ITEM = {
+    deliver: (x) => ({ who: person(x.clientName), place: text(x.clientCountry), source_id: text(x.readyId) }),
+    collect: (x) => ({ who: person(x.supplier), place: text(x.country), source_id: text(x.incId) }),
+    move: (x) => ({ who: null, place: text(x.fromLocation), source_id: text(x.stockId) }),
+  };
+  const plans = plansQ.rows.map((r) => {
+    const d = r.data || {};
+    const flights = new Map();
+    const stops = (Array.isArray(d.legs) ? d.legs : []).map((leg, i) => {
+      const l = leg || {};
+      const items = Object.fromEntries(
+        situation.PLAN_PARTS.map(([part, role]) => [
+          role,
+          (Array.isArray(l[part]) ? l[part] : []).map((x) => ({
+            stock_no: text(x?.stockNumber),
+            brand: text(x?.brand),
+            model: text(x?.model),
+            ...ITEM[role](x || {}),
+            watch: watchOf(x?.stockNumber),
+          })),
+        ])
+      );
+      const cost = Number(l.flightCost) || 0;
+      const currency = text(l.flightCostCurrency).toUpperCase();
+      if (cost > 0) flights.set(currency, (flights.get(currency) || 0) + cost);
+      return { n: i + 1, from: text(l.fromCity), to: text(l.toCity), date: dayOf(l.date), time: text(l.time), flight: text(l.flightInfo), cost: cost || null, currency, notes: text(l.notes), ...items };
+    });
+    const count = (role) => stops.reduce((a, s) => a + s[role].length, 0);
+    return {
+      id: r.id,
+      name: text(d.name) || 'Plan',
+      start: text(d.currentCity),
+      notes: text(d.notes),
+      completed: d.status === 'completed',
+      completed_at: d.status === 'completed' ? iso(d.completedAt) : null,
+      stops,
+      counts: { stops: stops.length, deliver: count('deliver'), collect: count('collect'), move: count('move') },
+      flights: [...flights].map(([currency, amount]) => ({ currency, amount: Math.round(amount * 100) / 100 })),
+      locked: (r.locked_fields || []).length > 0,
+    };
+  });
+
+  // Which open plan carries a waiting row: by the row's own id, as the app assigns it.
+  const onPlan = new Map();
+  for (const p of plans.filter((x) => !x.completed)) {
+    for (const s of p.stops) for (const x of [...s.deliver, ...s.collect]) if (x.source_id && !onPlan.has(x.source_id)) onPlan.set(x.source_id, { id: p.id, name: p.name, stop: s.n, to: s.to });
+  }
+  const waiting = (r, who, model, place) => {
+    const d = r.data || {};
+    return { id: r.id, stock_no: text(d.stockNumber), brand: text(d.brand), model, who: person(who), place, on_plan: onPlan.get(text(r.source_id)) || null, watch: watchOf(d.stockNumber) };
+  };
+  return {
+    as_of: await asOf(),
+    plans: plans.filter((p) => !p.completed),
+    history: plans.filter((p) => p.completed).sort((a, b) => String(b.completed_at || '').localeCompare(String(a.completed_at || '')) || b.id - a.id),
+    waiting: {
+      deliver: readyQ.rows.map((r) => waiting(r, r.data?.soldToBuyer, text(r.data?.watchModel || r.data?.watchReference), text(r.data?.soldFromLocation))),
+      collect: incQ.rows.map((r) => waiting(r, r.data?.supplier, text(r.data?.reference || r.data?.model), text(r.data?.location || r.data?.inventoryDest))),
+    },
   };
 }
 

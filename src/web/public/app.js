@@ -380,6 +380,14 @@ function tile(w) {
             }</span></div>`
           : ''
       }
+      ${
+        // On an open hand-carry plan (the logistics app's Hand Carry page): whose, and what is done with it where.
+        w.hand_carry
+          ? `<div class="m"><span class="chip insafe" title="On an open hand-carry plan">Hand carry${w.hand_carry.plan ? ` · ${esc(w.hand_carry.plan)}` : ''}${
+              w.hand_carry.role ? ` · ${esc(w.hand_carry.role)}${w.hand_carry.to ? ` in ${esc(w.hand_carry.to)}` : ''}` : ''
+            }${w.hand_carry.date ? `, ${esc(dayWords(w.hand_carry.date))}` : ''}</span></div>`
+          : ''
+      }
       <div class="m">${esc(w.watch_date)}${w.photo_count ? ` · ${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}` : ''}</div>
       ${price ? `<div class="p">${price}</div>` : ''}
     </div>

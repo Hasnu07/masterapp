@@ -647,6 +647,58 @@ test('checked out: linked to our watch and its clients, one entry per watch, a j
   assert.equal(link('3303'), null, 'a name no logistics client carries links nowhere');
 });
 
+test('hand carry: plans with their stops, every watch linked to ours and its clients, what waits for a plan, and the plan on our watch', async () => {
+  const add = (kind, data, stock, sourceId = null) =>
+    db("INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [kind, sourceId, data, stock]);
+  const buyer = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Lifestyle', 'Watches', 'manual') RETURNING id")).rows[0].id;
+  const diego = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Diego', 'Ruiz', 'manual') RETURNING id")).rows[0].id;
+  const w = (await db("INSERT INTO watches(stock_no, brand, model, origin, status, sold_to_client_id) VALUES ('3401', 'Patek Philippe', 'Nautilus', 'manual', 'sold', $1) RETURNING id", [buyer])).rows[0].id;
+  await add('clients', { name: 'Diego Ruiz' }, []);
+  const plan = (
+    await add('kashanPlans', {
+      name: 'Cristian', currentCity: 'Bahrain',
+      legs: [
+        { id: 'L1', toCity: 'UAE', date: '2026-08-25', time: '15:35', flightCost: 1358, flightCostCurrency: 'EUR',
+          deliveries: [{ id: 'd1', readyId: 'HC-R1', stockNumber: '3401', brand: 'Patek Philippe', model: 'Nautilus', clientName: 'Lifestyle Watches', clientCountry: 'Dubai' }],
+          collections: [] },
+        { id: 'L2', toCity: 'Valencia', date: '2026-08-27',
+          collections: [{ id: 'c1', incId: 'HC-I1', stockNumber: '3402', brand: 'Rolex', model: '126529LN', supplier: 'Diego Ruiz', country: 'Spain' }] },
+        { id: 'L3', toCity: 'Munich', date: '2026-08-27' },
+      ],
+    }, ['3401', '3402'])
+  ).rows[0].id;
+  await add('kashanPlans', { name: 'Kashan', status: 'completed', completedAt: 1760000000000, legs: [{ toCity: 'London', deliveries: [{ stockNumber: '3403' }] }] }, ['3403']);
+  await add('readyForDelivery', { stockNumber: '3401', brand: 'Patek Philippe', soldToBuyer: 'Lifestyle Watches' }, ['3401'], 'HC-R1');
+  await add('readyForDelivery', { stockNumber: '3404', brand: 'Rolex', soldToBuyer: 'Someone', status: 'shipped' }, ['3404'], 'HC-R2');
+  await add('incomings', { stockNumber: '3405', brand: 'Rolex', supplier: 'Diego Ruiz', status: 'pending' }, ['3405'], 'HC-I2');
+
+  const r = await m.lg.handCarry();
+  const p = r.plans.find((x) => x.id === plan);
+  assert.deepEqual([p.name, p.start, p.counts], ['Cristian', 'Bahrain', { stops: 3, deliver: 1, collect: 1, move: 0 }]);
+  assert.deepEqual(p.flights, [{ currency: 'EUR', amount: 1358 }]);
+  const d = p.stops[0].deliver[0];
+  assert.deepEqual([d.watch.id, d.watch.sold_to], [w, { id: buyer, name: 'Lifestyle Watches' }], 'our watch, and its buyer by Chrono Key’s id');
+  const c = p.stops[1].collect[0];
+  assert.equal(c.watch, null, 'an incoming we do not hold yet');
+  assert.deepEqual([c.who.name, c.who.link.client_id], ['Diego Ruiz', diego], 'the typed supplier, linked as far as the logistics client is');
+  assert.equal(p.stops[2].deliver.length + p.stops[2].collect.length, 0, 'a stop with nothing on it');
+  assert.ok(r.history.some((x) => x.name === 'Kashan' && x.completed), 'a completed plan is history');
+  assert.ok(!r.plans.some((x) => x.name === 'Kashan'));
+  const waitNos = r.waiting.deliver.map((x) => x.stock_no);
+  assert.ok(waitNos.includes('3401') && !waitNos.includes('3404'), 'a shipped sale waits for nobody');
+  assert.equal(r.waiting.deliver.find((x) => x.stock_no === '3401').on_plan.name, 'Cristian', 'which open plan has it');
+  const inc = r.waiting.collect.find((x) => x.stock_no === '3405');
+  assert.equal(inc.on_plan, null);
+  assert.equal(inc.who.link.client_id, diego);
+
+  // Our watch says so: on its tile, and in its "right now" and history.
+  const { listWatches } = await import('../src/watches/index.js');
+  assert.deepEqual((await listWatches({ q: '3401' })).watches[0].hand_carry, { plan: 'Cristian', to: 'UAE', date: '2026-08-25', role: 'deliver' });
+  const page = await m.lg.forWatch(w);
+  assert.ok(page.now.overlays.some((o) => /Cristian’s hand-carry plan · stop 1, UAE .* to deliver · to Lifestyle Watches/.test(o.text)), JSON.stringify(page.now.overlays));
+  assert.ok(page.timeline.some((e) => e.text === 'Hand carry — deliver in UAE'));
+});
+
 /* ── the API ── */
 
 function client() {
@@ -685,6 +737,10 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const out = await viewer.call('GET', '/api/logistics/checked-out');
   assert.equal(out.status, 200);
   assert.ok(Array.isArray(out.body.watches) && Array.isArray(out.body.by_origin));
+  assert.ok(meta.logistics.groups.some((g) => g.key === 'handcarry'), 'the Hand carry tab');
+  const hand = await viewer.call('GET', '/api/logistics/hand-carry');
+  assert.equal(hand.status, 200);
+  assert.ok(Array.isArray(hand.body.plans) && Array.isArray(hand.body.waiting.deliver));
   assert.ok(meta.logistics.kinds.some((k) => k.key === 'shipments' && k.fields.length));
 
   assert.equal((await client().call('GET', '/api/logistics/items')).status, 401, 'signed out reads nothing');

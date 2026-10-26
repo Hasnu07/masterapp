@@ -381,6 +381,24 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   (Hong Kong / Dubai / London) as chips, days out, list or cards
   (`checkedOut()`, `/api/logistics/checked-out`). The tab shows how many.
   Return / delete are the record's edit and delete, not buttons here.
+- **Hand carry** (asked 26 Oct 2026, "same rules, same linking shown against
+  a watch stock on main"; "make sure the ui remains consistent" — the
+  console's look, not the app's): a Logistics tab, the app's Hand Carry /
+  Mission Plan page (`kashanPlans`). A plan = `name`, `currentCity` (the
+  start), `legs` (stops: `toCity`, `date`, `time`, `flightInfo`,
+  `flightCost` + `flightCostCurrency`) with `deliveries` (from Ready for
+  delivery: `readyId`, the buyer `clientName`), `collections` (incomings:
+  `incId`, `supplier`) and `stockMoves`; `status: 'completed'` +
+  `completedAt` = Plans History. Read from the app's own code, not guessed.
+  Every watch linked to ours and its clients by id; the typed buyer /
+  supplier via `linksByName`. Open plans, history, and "Waiting for a plan"
+  — the app's two side lists (Ready for delivery not shipped, incomings
+  pending / in transit), each saying which open plan has it (by its row id,
+  as the app assigns). On our watch: the Inventory tile ("Hand carry ·
+  Cristian · deliver in UAE, 25 Aug 2026", `listWatches` → `hand_carry`),
+  "right now" and the history (`situation.planStops`; `forWatch` passes the
+  stock number). `handCarry()`, `/api/logistics/hand-carry`. Adding stops,
+  assigning, AI flights, optimise, send to movements: the record's edit.
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds

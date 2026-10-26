@@ -297,6 +297,12 @@ export function now(items, ctx = {}) {
     const d = i.data;
     overlays.push({ text: [`On ${d.personName ? `${d.personName}’s` : 'a'} trip`, [d.fromLocation, d.toLocation].filter(Boolean).join(' → '), d.startDate && `from ${day(d.startDate)}`].filter(Boolean).join(' · '), tone: 'moving', itemId: i.id });
   }
+  // On a hand-carry plan still open: which stop, and what is done with it there. Only when the watch is known (the watch page).
+  for (const i of ctx.stockNo ? of('kashanPlans').filter((x) => x.data.status !== 'completed') : []) {
+    const s = planStops(i.data, ctx.stockNo)[0];
+    if (!s) continue;
+    overlays.push({ text: [`On ${i.data.name ? `${i.data.name}’s` : 'a'} hand-carry plan`, planStopWords(s)].filter(Boolean).join(' · '), tone: 'moving', itemId: i.id });
+  }
   for (const i of of('driverDeliveries').filter((x) => x.data.status === 'out')) {
     const d = i.data;
     overlays.push({ text: ['With driver', d.driverName, d.destination && `to ${d.destination}`].filter(Boolean).join(' · '), tone: 'moving', itemId: i.id });
@@ -329,6 +335,35 @@ export function now(items, ctx = {}) {
   if (placeRow) overlays.push({ text: 'Needs polish', tone: 'warn', itemId: placeRow.id });
 
   return { ...head, overlays };
+}
+
+/* ── hand carry ───────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's hand-carry plans (kashanPlans): a plan's stops (legs),
+ * each delivering watches from Ready for delivery (to the buyer typed on it),
+ * collecting incomings (from the supplier) or moving a place's stock.
+ */
+export const PLAN_PARTS = [
+  ['deliveries', 'deliver'],
+  ['collections', 'collect'],
+  ['stockMoves', 'move'],
+];
+const planWho = (s) => (s.role === 'deliver' && s.item.clientName ? `to ${s.item.clientName}` : s.role === 'collect' && s.item.supplier ? `from ${s.item.supplier}` : '');
+/* "stop 1, UAE · 25 Aug 2026 · to deliver to Lifestyle Watches" */
+export const planStopWords = (s) => [`stop ${s.n}${s.leg.toCity ? `, ${s.leg.toCity}` : ''}`, s.leg.date && day(s.leg.date), `to ${s.role}`, planWho(s)].filter(Boolean).join(' · ');
+
+/** The stops of a plan that carry this watch, in the plan's order, and what is done with it at each. */
+export function planStops(d, stockNo) {
+  const out = [];
+  (Array.isArray(d?.legs) ? d.legs : []).forEach((leg, n) => {
+    for (const [part, role] of PLAN_PARTS) {
+      for (const item of Array.isArray(leg?.[part]) ? leg[part] : []) {
+        if (stockList(item?.stockNumber).includes(stockNo)) out.push({ n: n + 1, leg, role, item });
+      }
+    }
+  });
+  return out;
 }
 
 /* ── the watch's logistics history ────────────────────────────────── */
@@ -447,6 +482,11 @@ export function timeline(items, ctx = {}) {
         push({ at, kind: i.kind, itemId: i.id, text: `${at && at > today ? 'Trip planned' : 'Trip'} — ${d.personName || ''}`.replace(/ — $/, ''), detail: [d.fromLocation, d.toLocation].filter(Boolean).join(' → ') });
         break;
       }
+      case 'kashanPlans':
+        for (const s of ctx.stockNo ? planStops(d, ctx.stockNo) : []) {
+          push({ at: when(s.leg.date), kind: i.kind, itemId: i.id, text: `Hand carry — ${s.role}${s.leg.toCity ? ` in ${s.leg.toCity}` : ''}`, detail: [d.name && `${d.name}’s plan`, d.status === 'completed' && 'completed', planWho(s)].filter(Boolean).join(' · ') });
+        }
+        break;
       case 'driverDeliveries':
         push({ at: when(d.dateGiven) || when(d.ts), kind: i.kind, itemId: i.id, text: `Given to driver ${d.driverName || ''}`.trim(), detail: d.destination || '' });
         break;
