@@ -178,7 +178,8 @@ export function now(items, ctx = {}) {
       since: when(d.deliveredAt) || when(d.soldDate) || when(d.ts),
       itemId: sold.id,
     };
-    const held = of('safeStock').find((i) => i.data.soldId === d.id && (i.data.status || 'current') === 'current');
+    // Held for the buyer: the row the app made from this sale, or one a person added by hand (no sale named).
+    const held = of('safeStock').find((i) => (i.data.soldId === d.id || !i.data.soldId) && (i.data.status || 'current') === 'current');
     if (held) head.detail = [head.detail, `held in our safe for ${held.data.from || 'the buyer'}`].filter(Boolean).join('; ');
   }
 
@@ -216,7 +217,7 @@ export function now(items, ctx = {}) {
       );
       if (!row) continue;
       const d = row.data;
-      const bits = [corner(d)];
+      const bits = [corner(d), kind === 'safeStock' && d.from && `for ${d.from}`];
       let headline = kind === 'safeStock' ? 'In our safe (a client’s watch)' : `In ${place}`;
       let tone = 'here';
       if (d.consignment?.with || d.status === 'consignment') {

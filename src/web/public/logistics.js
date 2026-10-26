@@ -146,10 +146,34 @@ const lgTabIntoView = () => $('.lg-tabs a.on')?.scrollIntoView({ block: 'nearest
 
 function lgHeader(active, note = '') {
   setTimeout(lgTabIntoView);
+  if (active !== 'safe') setTimeout(lgSafeBadge);
   return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}</div>
     <div class="lg-tabs" role="navigation" aria-label="Logistics">${lgGroups()
-      .map((g) => `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${esc(g.label)}</a>`)
+      .map(
+        (g) =>
+          `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" data-g="${esc(g.key)}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${lgTabLabel(g)}</a>`
+      )
       .join('')}</div>`;
+}
+
+/*
+ * The In Safe tab carries how many clients' watches we hold, on every
+ * logistics page — read again at most once a minute.
+ */
+const lgSafe = { n: null, at: 0 };
+const lgTabLabel = (g) =>
+  `${esc(g.label)}${g.key === 'safe' && lgSafe.n ? ` <b class="lg-n" title="${lgSafe.n} client watch${lgSafe.n === 1 ? '' : 'es'} in the safe">${lgSafe.n}</b>` : ''}`;
+function lgSafeCount(n) {
+  lgSafe.n = n;
+  const a = $('.lg-tabs a[data-g="safe"]');
+  if (a) a.innerHTML = lgTabLabel(lgGroups().find((g) => g.key === 'safe'));
+}
+function lgSafeBadge() {
+  if (Date.now() - lgSafe.at < 60_000) return;
+  lgSafe.at = Date.now();
+  api('/api/logistics/in-safe')
+    .then((r) => lgSafeCount(r.watches.length))
+    .catch(() => (lgSafe.at = 0));
 }
 
 /* ── a tab: one group's records ─────────────────────────────────── */
@@ -158,6 +182,7 @@ let lgSeq = 0;
 let lgShown = [];
 async function showLogistics(group) {
   if (!group || group === 'overview') return showLogisticsOverview();
+  if (group === 'safe') return showLogisticsSafe();
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
   if (group === 'contacts-all') group = 'contacts';
@@ -254,6 +279,196 @@ async function loadLogistics(more = false) {
       )
       .join('') || '<tr><td colspan="5" class="count">Nothing here yet.</td></tr>';
   $('#lg-more').classList.toggle('hide', lgShown.length >= r.total);
+}
+
+/* ── in the safe ────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's In Safe page (asked 26 Oct 2026): the clients' watches
+ * we hold — not our stock, never priced — each saying who it is for, and the
+ * accessories we owe a client sitting in the safe. Cards or a list, searched
+ * and sorted here (the safe holds tens, not thousands). A card opens its
+ * record (edit, delete, history); our own watch of the same number is linked.
+ */
+const sf = { q: '', sort: 'new', view: 'cards', data: null };
+try {
+  sf.view = localStorage.getItem('masterapp.safeView') === 'list' ? 'list' : 'cards';
+} catch {
+  /* no storage: cards */
+}
+
+async function showLogisticsSafe() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('safe')}
+    <p class="sub" style="margin:0 0 12px">Clients’ watches we are holding — not our stock. Each one says who it is for.</p>
+    <div class="lg-toolbar">
+      <input class="q" type="search" id="sfq" placeholder="Stock number, reference, serial, brand, model, client…" value="${esc(sf.q)}">
+      <select id="sfsort" aria-label="Order">
+        <option value="new">Newest first</option>
+        <option value="stockAsc">Stock number, low to high</option>
+        <option value="stockDesc">Stock number, high to low</option>
+      </select>
+      <div class="sf-view" role="group" aria-label="View">
+        <button type="button" class="pill" data-v="cards">Cards</button><button type="button" class="pill" data-v="list">List</button>
+      </div>
+    </div>
+    <section class="panel sf-acc hide" id="sf-acc"></section>
+    <div class="count" id="sf-count">Reading the safe…</div>
+    <div id="sf-out"></div>`;
+  $('#sfsort').value = sf.sort;
+  let timer;
+  $('#sfq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      sf.q = e.target.value;
+      drawSafe();
+    }, 150);
+  });
+  $('#sfsort').addEventListener('change', (e) => {
+    sf.sort = e.target.value;
+    drawSafe();
+  });
+  $$('.sf-view .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      sf.view = b.dataset.v;
+      try {
+        localStorage.setItem('masterapp.safeView', sf.view);
+      } catch {
+        /* remembered for this visit only */
+      }
+      drawSafe();
+    })
+  );
+  // A card or a row opens its record; a link inside it (our watch) goes where it says.
+  const open = (e) => {
+    const at = e.target.closest('#sf-out [data-id], #sf-acc [data-id]');
+    if (!at || e.target.closest('a')) return;
+    if (e.type === 'keydown') {
+      if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+    }
+    location.hash = `#/lg/${at.dataset.id}`;
+  };
+  $('#sf-out').addEventListener('click', open);
+  $('#sf-out').addEventListener('keydown', open);
+  $('#sf-acc').addEventListener('click', open);
+  $('#sf-acc').addEventListener('keydown', open);
+  let r;
+  try {
+    r = await api('/api/logistics/in-safe');
+  } catch (err) {
+    if (seq === lgPage && $('#sf-count')) $('#sf-count').textContent = `Could not read the safe: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#sf-out')) return;
+  sf.data = r;
+  lgSafe.at = Date.now();
+  lgSafeCount(r.watches.length);
+  drawSafe();
+}
+
+const sfDay = (iso) => (iso ? dayWords(localDay(new Date(iso).getTime())) : '');
+const sfNo = (s) => Number(String(s || '').replace(/\D/g, '')) || 0;
+const sfMatch = (words, ...values) => {
+  const blob = values.join(' ').toLowerCase();
+  return words.every((w) => blob.includes(w));
+};
+const sfPic = (w) =>
+  w.picture
+    ? `<img loading="lazy" src="${esc(fileUrl(w.picture, true))}" alt="">`
+    : w.watch?.photo_id
+      ? `<img loading="lazy" src="/api/photos/${w.watch.photo_id}?thumb=1" alt="">`
+      : '<span>No photo</span>';
+/* What is worth knowing at a glance, in words: out with its owner, polish, consignment, what is missing. */
+const sfTags = (w) =>
+  [
+    w.with_owner && `<span class="lg-tag warn">Out with its owner${w.with_owner === 'yes' ? '' : ` — ${esc(w.with_owner)}`}</span>`,
+    w.polish && `<span class="lg-tag warn">At polish with ${esc(w.polish)}</span>`,
+    !w.polish && w.need_polish && '<span class="lg-tag">Needs polish</span>',
+    w.consignment && `<span class="lg-tag warn">On consignment with ${esc(w.consignment)}</span>`,
+    w.accessories_missing && `<span class="lg-tag">Missing: ${esc(w.accessories_missing)}</span>`,
+  ]
+    .filter(Boolean)
+    .join('');
+const sfOurs = (w) => (w.watch ? `<a href="#/watch/${w.watch.id}">Our watch #${esc(w.watch.stock_no)}</a>` : '');
+
+function drawSafe() {
+  const r = sf.data;
+  if (!r || !$('#sf-out')) return;
+  $$('.sf-view .pill').forEach((b) => b.classList.toggle('on', b.dataset.v === sf.view));
+  const words = sf.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const watches = r.watches
+    .filter((w) => sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.owner, w.where, w.accessories_present, w.accessories_missing, w.notes, w.watch_date))
+    .sort((a, b) =>
+      sf.sort === 'stockAsc'
+        ? sfNo(a.stock_no) - sfNo(b.stock_no)
+        : sf.sort === 'stockDesc'
+          ? sfNo(b.stock_no) - sfNo(a.stock_no)
+          : String(b.received_at || '').localeCompare(String(a.received_at || '')) || b.id - a.id
+    );
+  const acc = r.accessories.filter((a) => sfMatch(words, a.stock_no, a.about, a.items, a.for_client, a.notes));
+
+  const box = $('#sf-acc');
+  box.classList.toggle('hide', !acc.length);
+  box.innerHTML = acc.length
+    ? `<h2 class="sf-h">Accessories in the safe <span class="count">${acc.length}</span></h2>
+       ${ovExplain('Things we owe a client, sitting in the safe.')}
+       ${acc
+         .map(
+           (a) => `<div class="ov-row sf-row" data-id="${a.id}" tabindex="0" role="link">
+             <div class="ov-row-main">
+               <div>${a.stock_no ? `<span class="lg-stock">#${esc(a.stock_no)}</span> ` : ''}<b>${esc(a.items || 'Accessories')}</b></div>
+               <div class="count" style="margin:2px 0 0">${[a.for_client && `For <b>${esc(a.for_client)}</b>`, a.about && esc(a.about), a.notes && esc(a.notes), a.in_safe_at && `in the safe since ${esc(sfDay(a.in_safe_at))}`].filter(Boolean).join(' · ')}</div>
+             </div>
+             <div class="ov-row-side">${a.watch ? `<a href="#/watch/${a.watch.id}">Our watch</a>` : ''}</div>
+           </div>`
+         )
+         .join('')}`
+    : '';
+
+  const n = watches.length;
+  $('#sf-count').textContent = `${n} watch${n === 1 ? '' : 'es'}${words.length ? ` of ${r.watches.length}` : ''} in the safe${acc.length ? ` · ${acc.length} accessor${acc.length === 1 ? 'y' : 'ies'}` : ''}`;
+  if (!n) {
+    $('#sf-out').innerHTML = `<p class="sub">${words.length ? 'Nothing in the safe matches.' : 'The safe holds no client watches right now.'}</p>`;
+    return;
+  }
+  if (sf.view === 'list') {
+    $('#sf-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
+        <th>Stock</th><th>Watch</th><th>For</th><th>Received</th><th>Accessories</th><th>Notes</th>
+      </tr></thead><tbody>${watches
+        .map(
+          (w) => `<tr data-id="${w.id}" tabindex="0">
+            <td style="white-space:nowrap"><span class="lg-stock">#${esc(w.stock_no || '—')}</span></td>
+            <td><a href="#/lg/${w.id}"><b>${esc([w.brand, w.model].filter(Boolean).join(' ') || 'Watch')}</b></a>
+              <div class="count" style="margin:2px 0 0">${esc([w.reference && `Ref ${w.reference}`, w.serial && `Serial ${w.serial}`].filter(Boolean).join(' · '))}</div>
+              ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}</td>
+            <td><b>${esc(w.owner || '—')}</b></td>
+            <td style="white-space:nowrap">${esc(sfDay(w.received_at))}</td>
+            <td>${esc(w.accessories_present || '')}</td>
+            <td>${esc(w.notes || '')}${w.watch ? `<div>${sfOurs(w)}</div>` : ''}</td>
+          </tr>`
+        )
+        .join('')}</tbody></table></div>`;
+    return;
+  }
+  $('#sf-out').innerHTML = `<div class="grid sf-grid">${watches
+    .map(
+      (w) => `<article class="tile sf-card" data-id="${w.id}" tabindex="0" role="link" aria-label="${esc(`#${w.stock_no} ${w.brand} ${w.model}, for ${w.owner || 'a client'}`)}">
+        <div class="pic">${sfPic(w)}</div>
+        <div class="body">
+          <div class="m"><span class="lg-stock">#${esc(w.stock_no || '—')}</span>${w.brand ? ` <span>${esc(w.brand)}</span>` : ''}</div>
+          <div class="t">${esc(w.model || w.brand || 'Watch')}</div>
+          <div class="sf-for">For <b>${esc(w.owner || 'not written')}</b></div>
+          ${w.reference || w.watch_date ? `<div class="m">${esc([w.reference && `Ref ${w.reference}`, w.watch_date].filter(Boolean).join(' · '))}</div>` : ''}
+          ${w.serial ? `<div class="m">Serial ${esc(w.serial)}</div>` : ''}
+          <div class="m">${esc([w.received_at && `Received ${sfDay(w.received_at)}`, w.where && `in ${w.where}`].filter(Boolean).join(' · '))}</div>
+          ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}
+          ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
+          ${w.watch ? `<div class="m">${sfOurs(w)}</div>` : ''}
+        </div>
+      </article>`
+    )
+    .join('')}</div>`;
 }
 
 /* ── the overview ───────────────────────────────────────────────── */

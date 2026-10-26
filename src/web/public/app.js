@@ -372,6 +372,14 @@ function tile(w) {
       <div class="m">${w.stock_no ? `<b>#${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)} ${
         w.location ? esc(w.location) : ''
       }</div>
+      ${
+        // A client's watch in our safe (the logistics app's In Safe page), and whose.
+        w.in_safe
+          ? `<div class="m"><span class="chip insafe" title="A client’s watch we hold in our safe">In safe${w.in_safe.for ? ` · for ${esc(w.in_safe.for)}` : ''}${
+              w.in_safe.with_owner ? ' · out with its owner' : ''
+            }</span></div>`
+          : ''
+      }
       <div class="m">${esc(w.watch_date)}${w.photo_count ? ` · ${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}` : ''}</div>
       ${price ? `<div class="p">${price}</div>` : ''}
     </div>

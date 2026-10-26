@@ -18,6 +18,8 @@ export const GROUPS = [
   { key: 'shipments', label: 'Shipments' },
   { key: 'incoming', label: 'Incoming' },
   { key: 'stock', label: 'Stock by place' },
+  // Clients' watches we hold, as the logistics app's own In Safe page (asked 26 Oct 2026). No lists of its own: inSafe() reads it.
+  { key: 'safe', label: 'In Safe' },
   { key: 'sales', label: 'Sales & delivery' },
   { key: 'trips', label: 'Trips' },
   { key: 'accessories', label: 'Accessories' },

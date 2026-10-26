@@ -551,6 +551,7 @@ export function createServer() {
   /* ── logistics ───────────────────────────────────────────────── */
 
   app.get('/api/logistics/overview', need('viewer'), wrap(async (req, res) => res.json(await logistics.overview())));
+  app.get('/api/logistics/in-safe', need('viewer'), wrap(async (req, res) => res.json(await logistics.inSafe())));
   /* Search everything: our watches and clients, and the logistics records — nothing twice. */
   app.get(
     '/api/logistics/search',

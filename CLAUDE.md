@@ -353,6 +353,18 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   finds 11668 or a timestamp). A logistics contact is hidden only when our
   client of that name is in the same answer. Chips: the HK list by its
   section; the safe (clients' watches) only under All; moved copies never.
+- **In Safe** (asked 26 Oct 2026): a Logistics tab, the logistics app's own
+  In Safe page — clients' watches we hold, NOT our stock, never priced. Its
+  `safeStock` rows still in the safe (a row a move left behind is history),
+  each with who it is for (the row's `from`, the app's Owner), out with its
+  owner (`withClient`), polish, what is missing; and "Accessories in the safe":
+  `accGive` rows ticked `inSafe`. Cards or a list, searched and sorted in the
+  page; a card opens its record, and our watch of that number is linked
+  (`inSafe()`, `/api/logistics/in-safe`). The tab shows how many watches. On
+  the Inventory tiles a watch in the safe says "In safe · for <name>"
+  (`listWatches` → `in_safe`), and the watch page's "right now" names them.
+  The app's Give / Move / Sold buttons are not here: Give and the rest write
+  into the logistics records, so open the record and edit it.
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds

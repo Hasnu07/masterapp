@@ -103,7 +103,12 @@ export async function listWatches(opts = {}) {
      SELECT w.*, count(*) OVER()::int AS total,
             (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL
               ORDER BY p.sort, p.id LIMIT 1) AS photo_id,
-            (SELECT count(*)::int FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL) AS photo_count
+            (SELECT count(*)::int FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL) AS photo_count,
+            -- In the logistics app's safe now, and for whom (its row's "from"): a client's, held here.
+            (SELECT jsonb_build_object('for', i.data->>'from', 'out', i.data->>'withClient') FROM logistics_items i
+              WHERE i.kind = 'safeStock' AND i.deleted_at IS NULL AND i.stock_nos @> ARRAY[w.stock_no]
+                AND COALESCE(i.data->>'status', '') IN ('', 'current', 'consignment')
+              ORDER BY i.updated_at DESC, i.id DESC LIMIT 1) AS in_safe
        FROM w WHERE ${where.join(' AND ')}
       ORDER BY ${order}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -138,6 +143,7 @@ const summary = (w) => ({
   sale_currency: w.sale_currency,
   photo_id: w.photo_id,
   photo_count: w.photo_count,
+  in_safe: w.in_safe ? { for: String(w.in_safe.for || '').trim(), with_owner: /^(true|✓|✔|yes|y|x|1)$/i.test(String(w.in_safe.out || '').trim()) } : null,
   origin: w.origin,
   deleted_at: w.deleted_at,
 });

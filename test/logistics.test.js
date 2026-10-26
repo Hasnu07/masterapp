@@ -566,6 +566,45 @@ test('search without strays: a stock number exactly, a contact hidden only besid
   assert.deepEqual(await nos('all'), ['hkSituation:2500', 'safeStock:2600']);
 });
 
+test('in the safe: clients’ watches with who each is for, accessories owed there, and the badge on our stock', async () => {
+  const add = (kind, data, stock) =>
+    db("INSERT INTO logistics_items(kind, data, stock_nos, origin) VALUES ($1, $2, $3, 'manual') RETURNING id", [kind, data, stock]);
+  const { rows: ours } = await db(
+    "INSERT INTO watches(stock_no, brand, model, origin, status) VALUES ('3101', 'Rolex', 'Oyster Perpetual 28', 'manual', 'sold') RETURNING id"
+  );
+  await add('safeStock', { stockNumber: '3101', brand: 'Rolex', watchModel: 'Oyster Perpetual 28', watchReference: '276200', from: 'Mark', inSafe: '✓', receivedAt: 1761000000000, status: 'current' }, ['3101']);
+  await add('safeStock', { stockNumber: '3102', brand: 'Patek Philippe', watchModel: 'Nautilus', from: 'Mark', withClient: true, needPolish: true, status: 'current', receivedAt: 1761100000000 }, ['3102']);
+  await add('safeStock', { stockNumber: '3103', brand: 'Tudor', from: 'Someone', status: 'moved' }, ['3103']);
+  await add('accGive', { stockNumber: '3101', items: 'RM Box', toClient: 'Mark', inSafe: true, inSafeAt: 1761200000000 }, ['3101']);
+  await add('accGive', { stockNumber: '3102', items: 'Booklet', toClient: 'Mark' }, ['3102']);
+  await add('accGive', { stockNumber: '3102', items: 'Strap', toClient: 'Mark', inSafe: 'no' }, ['3102']);
+  await add('safeStock', { stockNumber: '3104', brand: 'Omega', from: 'Ali', withClient: 'false', inSafe: 'Box 2', status: 'current', receivedAt: 1760000000000 }, ['3104']);
+
+  const r = await m.lg.inSafe();
+  const mine = r.watches.filter((w) => w.stock_no.startsWith('310'));
+  assert.deepEqual(mine.map((w) => [w.stock_no, w.owner]), [['3102', 'Mark'], ['3101', 'Mark'], ['3104', 'Ali']], 'newest first; a row a move left behind is not in the safe');
+  const omega = mine.find((w) => w.stock_no === '3104');
+  assert.equal(omega.with_owner, '', '"false" typed is not out with its owner');
+  assert.equal(omega.where, 'Box 2', 'words in the tick say which safe');
+  const op = mine.find((w) => w.stock_no === '3101');
+  assert.equal(op.where, '', 'a tick says nothing about which safe');
+  assert.equal(op.watch.id, ours[0].id, 'our own watch of that number is linked');
+  const naut = mine.find((w) => w.stock_no === '3102');
+  assert.equal(naut.with_owner, 'yes');
+  assert.equal(naut.need_polish, true);
+  assert.equal(naut.watch, null, 'one we do not hold stays the logistics record it is');
+  assert.deepEqual(r.accessories.filter((a) => a.stock_no.startsWith('310')).map((a) => [a.items, a.for_client, a.about]), [['RM Box', 'Mark', 'Rolex Oyster Perpetual 28']], 'only what is ticked in the safe');
+
+  // Our stock list says it is in the safe, and for whom; the watch page names them too.
+  const { listWatches } = await import('../src/watches/index.js');
+  const tile = (await listWatches({ q: '3101' })).watches[0];
+  assert.deepEqual(tile.in_safe, { for: 'Mark', with_owner: false });
+  assert.equal((await listWatches({ q: '1668' })).watches[0].in_safe, null);
+  const page = await m.lg.forWatch(ours[0].id);
+  assert.match(page.now.headline, /safe/);
+  assert.match(page.now.detail, /for Mark/);
+});
+
 /* ── the API ── */
 
 function client() {
@@ -596,6 +635,10 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
 
   const meta = (await viewer.call('GET', '/api/meta')).body;
   assert.ok(meta.logistics.groups.some((g) => g.key === 'shipments'));
+  assert.ok(meta.logistics.groups.some((g) => g.key === 'safe'), 'the In Safe tab');
+  const safe = await viewer.call('GET', '/api/logistics/in-safe');
+  assert.equal(safe.status, 200);
+  assert.ok(Array.isArray(safe.body.watches) && Array.isArray(safe.body.accessories));
   assert.ok(meta.logistics.kinds.some((k) => k.key === 'shipments' && k.fields.length));
 
   assert.equal((await client().call('GET', '/api/logistics/items')).status, 401, 'signed out reads nothing');

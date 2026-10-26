@@ -705,6 +705,102 @@ export async function forWatch(watchId) {
   };
 }
 
+/* ── in the safe ─────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's In Safe page (asked 26 Oct 2026): clients' watches we
+ * hold — never our stock, so never priced — each with who it is for (the
+ * row's "from", the app's Owner), and the accessories we owe a client that
+ * sit in the safe ("To give" ticked "in our safe"). A row a move left behind
+ * is history, not the safe now.
+ */
+const NOW_IN_PLACE = "COALESCE(data->>'status','') IN ('', 'current', 'consignment')";
+const text = (v) => (v === null || v === undefined || v === false ? '' : String(v).trim());
+const TICK = /^(true|✓|✔|yes|y|x|1)$/i;
+const UNTICKED = /^(false|no|n|0)$/i;
+/* A tick field that may instead say where or why: '' when unticked, 'yes' for a bare tick, else its words. */
+const ticked = (v) => (UNTICKED.test(text(v)) ? '' : TICK.test(text(v)) ? 'yes' : text(v));
+
+export async function inSafe() {
+  const [watchRows, accRows] = await Promise.all([
+    query(`SELECT * FROM logistics_items WHERE kind = 'safeStock' AND deleted_at IS NULL AND ${NOW_IN_PLACE}`),
+    query("SELECT * FROM logistics_items WHERE kind = 'accGive' AND deleted_at IS NULL AND lower(COALESCE(data->>'inSafe','')) NOT IN ('', 'false', 'no', 'n', '0')"),
+  ]);
+  const nos = [...new Set([...watchRows.rows, ...accRows.rows].flatMap((r) => r.stock_nos || []))];
+  const { rows: ours } = nos.length
+    ? await query(
+        `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.status,
+                (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id
+           FROM watches w WHERE w.stock_no = ANY($1) AND w.deleted_at IS NULL`,
+        [nos]
+      )
+    : { rows: [] };
+  const byNo = new Map(ours.map((w) => [w.stock_no, w]));
+  const prefix = photoPrefix();
+  const isPicture = (v) => typeof v === 'string' && (/^lgfile:\d+$/.test(v) || (prefix && v.startsWith(prefix)));
+  const iso = (v) => {
+    const t = situation.when(v);
+    return t ? new Date(t).toISOString() : null;
+  };
+  const ourWatch = (r) => {
+    const w = (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean);
+    return w ? { id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, photo_id: w.photo_id } : null;
+  };
+
+  const watches = watchRows.rows
+    .map((r) => {
+      const d = r.data || {};
+      return {
+        id: r.id,
+        stock_no: text(d.stockNumber),
+        brand: text(d.brand),
+        model: text(d.watchModel || d.model || d.description),
+        reference: text(d.watchReference || d.reference),
+        watch_date: text(d.watchDate),
+        serial: text(d.watchSerial || d.serial),
+        owner: text(d.from),
+        received_at: iso(d.receivedAt) || iso(d.createdAt) || new Date(r.created_at).toISOString(),
+        // Which safe or box, when it says more than a tick; whether it is out with its owner for now.
+        where: ticked(d.inSafe) === 'yes' ? '' : ticked(d.inSafe),
+        with_owner: ticked(d.withClient),
+        accessories_present: text(d.accessoriesPresent),
+        accessories_missing: text(d.accessoriesMissing),
+        need_polish: d.needPolish === true || d.needPolish === 'true',
+        polish: d.polish?.sentTo && d.polish.status !== 'done' ? text(d.polish.sentTo) : '',
+        consignment: text(d.consignment?.with),
+        notes: text(d.notes),
+        held_for_buyer: Boolean(d.heldForBuyer || d.soldId),
+        picture: (Array.isArray(d.photos) ? d.photos : []).find(isPicture) || null,
+        photo_count: (Array.isArray(d.photos) ? d.photos : []).filter(isPicture).length,
+        origin: r.origin,
+        locked: (r.locked_fields || []).length > 0,
+        watch: ourWatch(r),
+      };
+    })
+    .sort((a, b) => String(b.received_at || '').localeCompare(String(a.received_at || '')) || b.id - a.id);
+
+  const accessories = accRows.rows
+    .map((r) => {
+      const d = r.data || {};
+      const w = ourWatch(r);
+      const safeRow = watches.find((x) => x.stock_no && x.stock_no === text(d.stockNumber));
+      return {
+        id: r.id,
+        stock_no: text(d.stockNumber),
+        // What the watch is, as the app shows it under the number: ours, else the safe's own row.
+        about: w ? w.title : [safeRow?.brand, safeRow?.reference].filter(Boolean).join(' · '),
+        items: text(d.items),
+        for_client: text(d.toClient),
+        notes: text(d.notes),
+        in_safe_at: iso(d.inSafeAt),
+        watch: w,
+      };
+    })
+    .sort((a, b) => String(b.in_safe_at || '').localeCompare(String(a.in_safe_at || '')) || b.id - a.id);
+
+  return { as_of: await asOf(), watches, accessories };
+}
+
 /* ── the overview ────────────────────────────────────────────────── */
 
 export async function overview() {
