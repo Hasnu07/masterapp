@@ -450,6 +450,31 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   shipment, Mark sold, Add cost, Ask Owner, Plan Collections, Pick from FOB
   — masterapp never writes back): a row opens its record. Old lists at
   `#/logistics/incoming-all`.
+- **Shipments** (asked 26 Oct 2026, "the same tab … make sure our rule of
+  stock no and clients stays"): the Logistics → Shipments tab is the app's
+  Live Shipments + Need to Give and Collect (`shippingPage()`,
+  `/api/logistics/shipping`), read from its code. Live: shipments pending /
+  in transit, one card per shipment however many stock numbers it carries;
+  the stage = `situation.stage` (the app's `shpState`: no tracking, pending,
+  booked → picked up → in transit → customs → delivered, exception from the
+  carrier); from / to = the app's client by `fromClientId` / `toClientId`
+  (name + country) else the typed place, its country picked out of the words
+  (`shpCountryIn`); cost = `costAmount` + `costCurrency` else the old typed
+  "USD 1,200"; a watch we do not hold is described from its logistics row
+  (`lookupStockMeta`). Counters (active, in transit, needs attention =
+  exception or no tracking, delivered this week, cost per currency), the
+  carrier's latest word as a still strip (not the app's moving ticker), four
+  filters + search, the exception alert, a card opened shows progress, its
+  watches (ours linked) and the details; Delivered this week under them.
+  Give & collect: Ready for delivery (sold, awaiting handover or its
+  shipment's status; the total in dollars), Accessories to collect (`accCollect`),
+  the client situation report = the logistics client's own page (printable),
+  Need to give to clients (`accGive`, "In our safe"). Every watch → ours and
+  its clients; a client id → ours as the logistics client is; a typed buyer
+  / client via `linksByName`. **The buttons that change records wait for the
+  switch-over** (as for Incoming); read-only ones stay: open the record,
+  track with the carrier (FedEx / DHL / 17TRACK page), copy the tracking
+  number, print. Old lists at `#/logistics/shipments-all`.
 - **The Inventory card = the logistics app's stock card too** (asked 26 Oct
   2026, "show these same things on card"): Ref · watch date, SN, Received
   (the place row's `receivedAt` — milliseconds shown on the browser's own

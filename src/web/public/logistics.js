@@ -198,6 +198,9 @@ async function showLogistics(group) {
   if (group === 'accessories') return showLogisticsAccessories();
   // The Incoming tab is the app's Incomings page; its lists (incomings, owner decisions, picked from Chrono Key) are one link away.
   if (group === 'incoming') return showLogisticsIncoming();
+  // The Shipments tab is the app's Live Shipments and Need to Give and Collect; its lists are one link away.
+  if (group === 'shipments') return showLogisticsShipments();
+  if (group === 'shipments-all') group = 'shipments';
   if (group === 'incoming-all') group = 'incoming';
   if (group === 'accessories-all') group = 'accessories';
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
@@ -946,6 +949,386 @@ function drawTransactions() {
         </tr>`
       )
       .join('')}</tbody></table></div>`;
+}
+
+/* ── shipments ──────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Shipments tab (asked 26 Oct 2026: "the same tab, the
+ * same features … our rule of stock no and clients stays"), in this console's
+ * look. Live shipments: one card per shipment however many watches it
+ * carries, its stage (the app's shpState), where from and to, what it cost,
+ * the carrier's latest word; Delivered this week under them. Need to give and
+ * collect: Ready for delivery, Accessories to collect, the client situation
+ * report, Need to give to clients. Every watch linked to ours and its
+ * clients, every client as far as the match goes. The app's buttons that
+ * change its records wait for the switch-over (as for Incoming): a card or a
+ * row opens its record; tracking opens the carrier's own page.
+ */
+const shp = { view: 'live', q: '', f: { stage: '', from: '', to: '', carrier: '' }, open: new Set(), showDone: false, data: null };
+const SHP_STAGE = {
+  booked: ['Booked', 8, 'blue'],
+  picked_up: ['Picked up', 24, 'blue'],
+  in_transit: ['In transit', 55, 'blue'],
+  customs: ['Customs', 82, 'warn'],
+  delivered: ['Delivered', 100, 'good'],
+  exception: ['Delivery exception', 70, 'bad'],
+  no_tracking: ['No tracking', 4, 'muted'],
+  pending: ['Pending', 8, 'warn'],
+  cancelled: ['Cancelled', 0, 'muted'],
+};
+const SHP_STEPS = ['booked', 'picked_up', 'in_transit', 'customs', 'delivered'];
+const shpCarrier = (s) => s.stage.track?.carrier || (s.tracking ? (/^\d{12,15}$/.test(s.tracking) ? 'FedEx' : /^\d{10}$/.test(s.tracking) ? 'DHL' : '') : '');
+/* The carrier's own tracking page, for a person to read — nothing is changed. */
+const shpTrackUrl = (s) =>
+  shpCarrier(s) === 'FedEx'
+    ? `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(s.tracking)}`
+    : shpCarrier(s) === 'DHL'
+      ? `https://www.dhl.com/global-en/home/tracking/tracking-express.html?submit=1&tracking-id=${encodeURIComponent(s.tracking)}`
+      : `https://t.17track.net/en#nums=${encodeURIComponent(s.tracking)}`;
+const shpPlaceLink = (p) => (p.link ? lgPerson(p.name, p.link) : esc(p.name));
+const shpTitle = (s) => {
+  const w = s.watches[0] || {};
+  return [w.brand, w.ref || w.model].filter(Boolean).join(' ') || s.items || 'No description';
+};
+
+async function showLogisticsShipments() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('shipments')}
+    <div class="inc-controls shp-switch" role="group" aria-label="Show">
+      <button type="button" class="pill" data-view="live">Live shipments</button>
+      <button type="button" class="pill" data-view="give">Need to give and collect <b id="shp-ready-n"></b></button>
+      <a class="count" style="margin:0 0 0 auto;align-self:center" href="#/logistics/shipments-all">See the lists</a>
+    </div>
+    <div id="shp-out"><p class="count">Reading the shipments…</p></div>`;
+  $$('[data-view]').forEach((b) =>
+    b.addEventListener('click', () => {
+      shp.view = b.dataset.view;
+      drawShipments();
+    })
+  );
+  // Clicks on the page: a card's top opens and closes it; a row opens its record; links, buttons and the report go their own way.
+  $('#shp-out').addEventListener('click', (e) => {
+    if (e.target.closest('a, input, select, label')) return;
+    const act = e.target.closest('[data-act]');
+    if (act) {
+      const s = shp.data.shipments.find((x) => String(x.id) === act.dataset.id);
+      if (act.dataset.act === 'copy' && s?.tracking) navigator.clipboard?.writeText(s.tracking).then(() => (act.textContent = 'Copied'), () => (act.textContent = 'Could not copy'));
+      if (act.dataset.act === 'print') window.print();
+      if (act.dataset.act === 'done') {
+        shp.showDone = !shp.showDone;
+        drawShipments();
+      }
+      if (act.dataset.act === 'report') shpOpenReport();
+      return;
+    }
+    const top = e.target.closest('.shp-top');
+    if (top) {
+      const id = top.dataset.ship;
+      shp.open.has(id) ? shp.open.delete(id) : shp.open.add(id);
+      drawShipments();
+    }
+  });
+  $('#shp-out').addEventListener('keydown', (e) => {
+    const top = e.target.closest('.shp-top');
+    if (top && e.target === top && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      top.click();
+    }
+    if (e.target.id === 'shp-report' && e.key === 'Enter') shpOpenReport();
+  });
+  $('#shp-out').addEventListener('input', (e) => {
+    if (e.target.id !== 'shpq') return;
+    clearTimeout(shp.timer);
+    shp.timer = setTimeout(() => {
+      shp.q = e.target.value;
+      drawShipments();
+    }, 150);
+  });
+  $('#shp-out').addEventListener('change', (e) => {
+    const k = e.target.dataset.f;
+    if (!k) return;
+    shp.f[k] = e.target.value;
+    drawShipments();
+  });
+  lgOpenOnClick($('#shp-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/shipping');
+  } catch (err) {
+    if (seq === lgPage && $('#shp-out')) $('#shp-out').innerHTML = `<p class="count">Could not read the shipments: ${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== lgPage || !$('#shp-out')) return;
+  shp.data = r;
+  drawShipments();
+}
+
+/* The client situation report: the logistics client's own page, which has all of it — and prints. */
+function shpOpenReport() {
+  const name = ($('#shp-report')?.value || '').trim().toLowerCase();
+  const c = shp.data.clients.find((x) => x.name.trim().toLowerCase() === name);
+  if (c) location.hash = `#/lg-client/${c.id}`;
+  else if ($('#shp-report-msg')) $('#shp-report-msg').textContent = name ? 'No logistics client has that name. Pick one from the list as you type.' : 'Type a client’s name first.';
+}
+
+function shpMatches(s) {
+  const f = shp.f;
+  if (f.stage && s.stage.key !== f.stage) return false;
+  if (f.from && s.from.label !== f.from) return false;
+  if (f.to && s.to.label !== f.to) return false;
+  if (f.carrier && shpCarrier(s) !== f.carrier) return false;
+  const words = shp.q.toLowerCase().split(/\s+/).filter(Boolean);
+  return sfMatch(words, s.tracking, s.items, s.note, s.from.name, s.to.name, s.from.country, s.to.country, ...s.watches.flatMap((w) => [w.stock, w.brand, w.ref, w.model]));
+}
+
+function drawShipments() {
+  const r = shp.data;
+  if (!r || !$('#shp-out')) return;
+  $$('[data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === shp.view));
+  $('#shp-ready-n').textContent = r.ready.length;
+  if (shp.view === 'give') return drawGiveCollect();
+
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const onBoard = r.shipments.filter((s) => s.status === 'pending' || s.status === 'in_transit');
+  const recent = r.shipments.filter((s) => s.status === 'delivered' && s.delivered_at && s.delivered_at > weekAgo);
+  const active = onBoard
+    .filter(shpMatches)
+    .sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || Number(b.has_watch) - Number(a.has_watch) || b.date.localeCompare(a.date) || b.created - a.created);
+  const done = recent.filter(shpMatches).sort((a, b) => String(b.delivered_at).localeCompare(String(a.delivered_at)));
+  const counted = [...active, ...done];
+  const moving = active.filter((s) => ['booked', 'picked_up', 'in_transit', 'customs'].includes(s.stage.key)).length;
+  const costs = {};
+  for (const s of counted) if (s.cost) costs[s.cost.currency] = (costs[s.cost.currency] || 0) + s.cost.amount;
+
+  // The filters offer what the board holds.
+  const uniq = (fn) => [...new Set(r.shipments.map(fn).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const sel = (k, values, label, labels = {}) => {
+    if (!values.includes(shp.f[k])) shp.f[k] = '';
+    return `<select data-f="${k}" aria-label="${label}" class="${shp.f[k] ? 'on' : ''}"><option value="">${label}</option>${values
+      .map((v) => `<option value="${esc(v)}"${shp.f[k] === v ? ' selected' : ''}>${esc(labels[v] || v)}</option>`)
+      .join('')}</select>`;
+  };
+  const stageLabels = Object.fromEntries(Object.entries(SHP_STAGE).map(([k, v]) => [k, v[0]]));
+  // The carrier's latest word on everything moving, one line each — the app's live tracking strip, standing still.
+  const tracked = onBoard.filter((s) => s.tracking);
+  const strip = tracked.length
+    ? `<div class="panel shp-strip"><span class="ov-tile-label">Live tracking</span>${tracked
+        .map((s) => {
+          const [label, , tone] = SHP_STAGE[s.stage.key] || SHP_STAGE.pending;
+          const no = s.watches[0]?.stock ? `#${s.watches[0].stock}` : s.tracking;
+          return `<span class="shp-strip-i"><b>${esc(no)}</b> <span class="lg-tag ${tone === 'bad' ? 'problem' : tone === 'good' ? '' : tone === 'blue' ? 'moving' : 'warn'}">${esc(s.stage.track?.label || label)}${s.stage.track?.location ? ` · ${esc(s.stage.track.location)}` : ''}</span></span>`;
+        })
+        .join('')}</div>`
+    : '';
+  const tile = (n, label, help) => `<div class="ov-tile"><span class="ov-tile-label">${label}</span><b>${n}</b><small>${help}</small></div>`;
+  // The page is drawn again as the search is typed: the cursor stays where it was.
+  const typing = document.activeElement?.id === 'shpq' ? document.activeElement.selectionStart : null;
+  $('#shp-out').innerHTML = `
+    <div class="inc-head">
+      <p class="sub" style="margin:0">${onBoard.length ? `${active.length} shipment${active.length === 1 ? '' : 's'} on the board, ${moving} moving.` : 'Track watches moving between places.'}</p>
+      <button type="button" class="pill" data-act="print">Print</button>
+    </div>
+    ${strip}
+    <div class="ov-tiles shp-tiles">
+      ${tile(active.length, 'Active shipments', 'In progress')}
+      ${tile(active.filter((s) => ['in_transit', 'picked_up', 'customs', 'booked'].includes(s.stage.key)).length, 'In transit', 'Moving')}
+      ${tile(counted.filter((s) => s.stage.key === 'exception' || s.stage.key === 'no_tracking').length, 'Needs attention', 'A problem, or no tracking')}
+      ${tile(done.length, 'Delivered', 'This week')}
+      <div class="ov-tile"><span class="ov-tile-label">Total shipping cost</span><b class="shp-cost-n">${
+        Object.keys(costs).length ? Object.entries(costs).map(([c, n]) => money(Math.round(n), c)).join(' · ') : '—'
+      }</b><small>Across these shipments</small></div>
+    </div>
+    <div class="inc-filters shp-filters">
+      <input class="q" type="search" id="shpq" placeholder="Reference, stock number, client or tracking…" value="${esc(shp.q)}" aria-label="Search the shipments">
+      ${sel('stage', Object.keys(SHP_STAGE).filter((k) => k !== 'cancelled'), 'Any status', stageLabels)}
+      ${sel('from', uniq((s) => s.from.label), 'Any origin')}
+      ${sel('to', uniq((s) => s.to.label), 'Any destination')}
+      ${sel('carrier', uniq(shpCarrier), 'Any carrier')}
+    </div>
+    ${
+      active.length || done.length
+        ? active.map(shpCard).join('') +
+          (done.length
+            ? `<button type="button" class="pill shp-done" data-act="done" aria-expanded="${shp.showDone}">Delivered this week <b>${done.length}</b></button>${shp.showDone ? done.map(shpCard).join('') : ''}`
+            : '')
+        : `<p class="sub">${r.shipments.length ? 'No shipment matches these filters.' : 'Nothing is on its way right now.'}</p>`
+    }`;
+  if (typing !== null) {
+    const q = $('#shpq');
+    q.focus();
+    q.setSelectionRange(typing, typing);
+  }
+}
+
+function shpCard(s) {
+  const [label, pct, tone] = SHP_STAGE[s.stage.key] || SHP_STAGE.pending;
+  const w0 = s.watches[0] || {};
+  const pic = s.picture || w0.picture;
+  const img = pic ? `<img loading="lazy" src="${esc(fileUrl(pic, true))}" alt="">` : w0.watch?.photo_id ? `<img loading="lazy" src="/api/photos/${w0.watch.photo_id}?thumb=1" alt="">` : '';
+  const live =
+    s.stage.track?.label
+      ? `<span class="inc-dot ${tone}"></span>${esc(s.stage.track.label)}${s.stage.track.location ? ` · ${esc(s.stage.track.location)}` : ''}`
+      : s.stage.key === 'no_tracking'
+        ? '<span class="inc-dot muted"></span>Carrier not assigned'
+        : '';
+  const items = s.items && s.items.toLowerCase() !== shpTitle(s).toLowerCase() ? s.items : '';
+  const no = (w) => (w.stock ? (w.watch ? `<a class="lg-stock" href="#/watch/${w.watch.id}" title="Our watch">#${esc(w.stock)}</a>` : `<span class="lg-stock">#${esc(w.stock)}</span>`) : '');
+  const open = shp.open.has(String(s.id));
+  const reached = s.stage.key === 'exception' ? SHP_STEPS.indexOf('in_transit') : SHP_STEPS.indexOf(s.stage.key);
+  return `<article class="panel shp-card shp-${esc(tone)}">
+    <div class="shp-top" data-ship="${s.id}" tabindex="0" role="button" aria-expanded="${open}">
+      <div class="shp-ph">${img || '<span class="inc-nopic"></span>'}${s.watches.length > 1 ? `<span class="pic-n">+${s.watches.length - 1}</span>` : ''}</div>
+      <div class="shp-what">
+        <div class="m">${no(w0)} <span class="chip shp-${esc(s.stage.key)}">${esc(label)}</span>${s.watches.length > 1 ? `<span class="count" style="margin:0">${s.watches.length} watches</span>` : ''}</div>
+        <div class="shp-title">${esc(shpTitle(s))}</div>
+        ${w0.model && w0.ref ? `<div class="count" style="margin:0">${esc(w0.model)}</div>` : ''}
+        ${s.from.name ? `<div class="count" style="margin:2px 0 0">From <b>${shpPlaceLink(s.from)}</b></div>` : ''}
+        ${items ? `<div class="count shp-items" style="margin:2px 0 0">${esc(items)}</div>` : ''}
+      </div>
+      <div class="shp-route">
+        <div><b>${esc(s.from.label || '—')}</b>${s.from.name && s.from.name !== s.from.label ? `<div class="count" style="margin:0">${shpPlaceLink(s.from)}</div>` : ''}</div>
+        <div class="shp-line" aria-label="${esc(label)}, ${pct}% of the way"><i style="width:${pct}%"></i><em style="left:${pct}%"></em></div>
+        <div style="text-align:right"><b>${esc(s.to.label || '—')}</b>${s.to.name && s.to.name !== s.to.label ? `<div class="count" style="margin:0">${shpPlaceLink(s.to)}</div>` : ''}</div>
+      </div>
+      <div class="shp-cost"><span class="ov-tile-label">Shipping cost</span><div>${s.cost ? money(s.cost.amount, s.cost.currency) : '<span class="blank">Not added</span>'}</div></div>
+      <div class="shp-right">
+        ${live ? `<div class="shp-live">${live}</div>` : ''}
+        <a class="btn" href="#/lg/${s.id}">Open</a>
+      </div>
+    </div>
+    ${
+      s.stage.key === 'exception'
+        ? `<div class="shp-exc"><b>Delivery exception.</b> ${esc(s.stage.track?.label || 'The carrier reported a problem')}${s.stage.track?.location ? ` · ${esc(s.stage.track.location)}` : ''}</div>`
+        : ''
+    }
+    ${
+      open
+        ? `<div class="shp-body">
+            <div>
+              <h3 class="hc-stop-h">Progress</h3>
+              <ol class="shp-steps">${SHP_STEPS.map((k, i) => `<li class="${reached >= 0 && i <= reached ? 'done' : ''}">${esc(SHP_STAGE[k][0])}</li>`).join('')}</ol>
+            </div>
+            <div>
+              <h3 class="hc-stop-h">${s.watches.length} watch${s.watches.length === 1 ? '' : 'es'} on this shipment</h3>
+              ${s.watches
+                .map(
+                  (w) => `<div class="ov-row"><div class="ov-row-main"><div>${no(w)} <b>${esc([w.brand, w.ref].filter(Boolean).join(' ') || w.model || '—')}</b></div>${
+                    w.model && w.ref ? `<div class="count" style="margin:0">${esc(w.model)}</div>` : ''
+                  }</div><div class="ov-row-side hc-ours">${w.watch ? coOurs(w) : ''}</div></div>`
+                )
+                .join('')}
+              <h3 class="hc-stop-h" style="margin-top:12px">Shipment</h3>
+              <div class="tile-facts">${[
+                ['Tracking', s.tracking],
+                ['Carrier', shpCarrier(s)],
+                ['Estimated delivery', s.stage.track?.eta ? dayWords(s.stage.track.eta) : s.expected ? dayWords(s.expected) : ''],
+                ['Booked', s.date && dayWords(s.date)],
+                ['Items', s.items],
+                ['Note', s.note],
+                ['Tracking read', s.stage.track?.as_of && fmtWhen(s.stage.track.as_of)],
+              ]
+                .filter(([, v]) => v)
+                .map(([k, v]) => `<div class="f"><span class="k">${k}</span> <span class="v">${esc(v)}</span></div>`)
+                .join('')}</div>
+              ${
+                s.tracking
+                  ? `<div class="lg-ov" style="margin-top:10px"><a class="btn" href="${esc(shpTrackUrl(s))}" target="_blank" rel="noopener">Track with ${esc(shpCarrier(s) || 'the carrier')}</a><button type="button" class="btn" data-act="copy" data-id="${s.id}">Copy tracking number</button></div>`
+                  : ''
+              }
+            </div>
+          </div>`
+        : ''
+    }
+  </article>`;
+}
+
+/* Need to give and collect: what is sold and waiting to be handed over, and the accessories either way. */
+function drawGiveCollect() {
+  const r = shp.data;
+  const totalUsd = r.ready.reduce((a, x) => a + (x.price_usd || 0), 0);
+  // The stock number, linked to our watch; under it what the watch is — except where a Watch column already says so.
+  const stockCell = (x, described = true) =>
+    `${/\d/.test(x.stock_no) ? (x.watch ? `<a class="lg-stock" href="#/watch/${x.watch.id}" title="Our watch">#${esc(x.stock_no)}</a>` : `<span class="lg-stock">#${esc(x.stock_no)}</span>`) : `<span class="lg-stock">${esc(x.stock_no || '—')}</span>`}${
+      described && (x.brand || x.model) ? `<div class="count" style="margin:2px 0 0">${esc([x.brand, x.model].filter(Boolean).join(' · '))}</div>` : ''
+    }`;
+  const who = (p) => (p ? lgPerson(p.name, p.link) : '—');
+  const handover = (x) =>
+    x.shipment === 'in_transit'
+      ? '<span class="chip incoming">In transit</span>'
+      : x.shipment === 'pending'
+        ? '<span class="chip incoming">Shipped (pending)</span>'
+        : x.shipment
+          ? '<span class="chip incoming">Shipment created</span>'
+          : '<span class="chip shp-pending">Awaiting handover</span>';
+  const accTable = (rows, cols, blank) =>
+    rows.length
+      ? `<div class="tscroll"><table class="list lg"><thead><tr>${cols.map(([h]) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows
+          .map((x) => `<tr data-id="${x.id}" tabindex="0">${cols.map(([, cell]) => `<td>${cell(x)}</td>`).join('')}</tr>`)
+          .join('')}</tbody></table></div>`
+      : `<p class="sub" style="margin:6px 0 0">${blank}</p>`;
+  $('#shp-out').innerHTML = `
+    <section class="panel shp-sec">
+      <div class="shp-sec-h">
+        <div><h2 class="sf-h">Ready for delivery</h2><p class="count" style="margin:2px 0 0">Sold from stock, waiting to be handed over or shipped.</p></div>
+        <div class="shp-sec-n"><div><b>${r.ready.length}</b><span class="ov-tile-label">Ready watches</span></div><div><b>${r.ready.length ? money(Math.round(totalUsd), 'USD') : '—'}</b><span class="ov-tile-label">Total sold value</span></div></div>
+      </div>
+      ${accTable(
+        r.ready,
+        [
+          ['Stock', (x) => stockCell(x, false)],
+          ['Watch', (x) => `<b>${esc(x.model || '—')}</b>${x.reference && x.reference !== x.model ? `<div class="count" style="margin:2px 0 0">Ref ${esc(x.reference)}</div>` : ''}`],
+          ['From', (x) => esc(x.from || '—')],
+          ['To buyer', (x) => `<b>${who(x.buyer)}</b>`],
+          ['Sold on', (x) => esc(x.sold_on ? dayWords(x.sold_on) : '—')],
+          ['Price', (x) => (x.price ? `${money(x.price, x.currency || '')}${x.price_usd && x.currency !== 'USD' ? `<div class="count" style="margin:2px 0 0">≈ ${money(Math.round(x.price_usd), 'USD')}</div>` : ''}` : '—')],
+          ['Status', handover],
+          ['Ours · client', (x) => coOurs(x)],
+        ],
+        'Nothing is waiting for delivery.'
+      )}
+    </section>
+    <section class="panel shp-sec">
+      <h2 class="sf-h">Accessories to collect</h2>
+      <p class="count" style="margin:2px 0 8px">Accessories we still need to collect from clients.</p>
+      ${accTable(
+        r.to_collect,
+        [
+          ['Stock', stockCell],
+          ['Reference', (x) => esc(x.ref || '—')],
+          ['Items missing', (x) => `<b>${esc(x.items || '—')}</b>`],
+          ['From client', (x) => who(x.who)],
+          ['Received from', (x) => esc(x.received_from || '—')],
+          ['Notes', (x) => esc(x.notes || '')],
+        ],
+        'Nothing to collect.'
+      )}
+    </section>
+    <section class="panel shp-sec shp-report">
+      <div><h2 class="sf-h">Client situation report</h2><p class="count" style="margin:2px 0 0">What we owe one client and what they owe us, with stock numbers, references and photos — on the client’s own page, ready to print.</p></div>
+      <div class="shp-report-f">
+        <label class="sr-only" for="shp-report">Client</label>
+        <input id="shp-report" type="search" list="shp-report-list" placeholder="Type a client’s name…" autocomplete="off">
+        <datalist id="shp-report-list">${r.clients.map((c) => `<option value="${esc(c.name)}">`).join('')}</datalist>
+        <button type="button" class="btn primary" data-act="report">Open report</button>
+      </div>
+      <p class="count" id="shp-report-msg" role="status" style="margin:4px 0 0"></p>
+    </section>
+    <section class="panel shp-sec">
+      <h2 class="sf-h">Need to give to clients</h2>
+      <p class="count" style="margin:2px 0 8px">Accessories we still owe to clients.</p>
+      ${accTable(
+        r.to_give,
+        [
+          ['Stock', stockCell],
+          ['Reference', (x) => esc(x.ref || '—')],
+          ['Items', (x) => `<b>${esc(x.items || '—')}</b>${x.in_safe ? ' <span class="lg-tag">In our safe</span>' : ''}`],
+          ['To client', (x) => who(x.who)],
+          ['Notes', (x) => esc(x.notes || '')],
+        ],
+        'Nothing to give.'
+      )}
+    </section>`;
 }
 
 /* ── incoming ───────────────────────────────────────────────────── */
