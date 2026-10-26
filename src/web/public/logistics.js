@@ -141,11 +141,7 @@ const stockTags = (nos) => (nos || []).map((s) => `<span class="lg-stock">#${esc
  * every logistics page — Overview first — and a tab's lists sit in a row
  * under them, so the menu is not a column of a dozen links.
  */
-/* On a phone the tabs scroll sideways: the one open is brought into view. */
-const lgTabIntoView = () => $('.lg-tabs a.on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
-
 function lgHeader(active, note = '') {
-  setTimeout(lgTabIntoView);
   setTimeout(() => lgCountBadges(active));
   return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}</div>
     <div class="lg-tabs" role="navigation" aria-label="Logistics">${lgGroups()
@@ -200,6 +196,9 @@ async function showLogistics(group) {
   if (group === 'transactions') return showLogisticsTransactions();
   // The Accessories tab is the app's Accessories Management page; its lists (to collect, to give, settlements, swaps) are one link away.
   if (group === 'accessories') return showLogisticsAccessories();
+  // The Incoming tab is the app's Incomings page; its lists (incomings, owner decisions, picked from Chrono Key) are one link away.
+  if (group === 'incoming') return showLogisticsIncoming();
+  if (group === 'incoming-all') group = 'incoming';
   if (group === 'accessories-all') group = 'accessories';
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
@@ -947,6 +946,450 @@ function drawTransactions() {
         </tr>`
       )
       .join('')}</tbody></table></div>`;
+}
+
+/* ── incoming ───────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Incomings page (asked 26 Oct 2026: "the same tab, the
+ * same features, the same way"), in this console's look. Its questions, in
+ * its order: where are the watches → who has them → where are they going →
+ * what to do. Counters, what needs attention, by location or by supplier, a
+ * list or a map, its five filters and search, each watch's status and what
+ * the owner decided, and what was received or shipped. Every watch linked to
+ * ours and its clients, the typed client as far as it goes. The app's buttons
+ * that change its records (add, import, mark arrived, receive, ship, ask the
+ * owner, plan collections, pick from FOB) wait for the switch-over (asked):
+ * open a row's record to edit it.
+ */
+const inc = { q: '', view: 'location', map: false, f: { loc: '', sup: '', brand: '', status: '', dest: '' }, open: new Set(), data: null };
+try {
+  inc.view = localStorage.getItem('masterapp.incView') === 'supplier' ? 'supplier' : 'location';
+} catch {
+  /* no storage: by location, as the app starts */
+}
+const INC_NO_LOC = 'Unknown location';
+const INC_NO_SUP = 'No client';
+const INC_STATUS = { pending: 'Pending', in_transit: 'In transit', arrived: 'Arrived', consignment: 'Consignment', cancelled: 'Cancelled', sold: 'Sold' };
+/* The owner's decision, as the app names each state; the tone is the console's status colour. */
+const INC_OD = {
+  DECISION_NEEDED: ['Decision needed', 'bad'],
+  SENT_TO_OWNER: ['Sent to owner', 'warn'],
+  VOICE_RECEIVED: ['Voice received', 'warn'],
+  AI_PROCESSING: ['Being read', 'warn'],
+  NEEDS_CLARIFICATION: ['Needs clarification', 'warn'],
+  AWAITING_CONFIRMATION: ['Awaiting confirmation', 'blue'],
+  APPROVED: ['Approved', 'good'],
+  IN_EXECUTION: ['In execution', 'blue'],
+  HOLD: ['Hold', 'muted'],
+  COMPLETED: ['Completed', 'good'],
+  NOT_ASKED: ['Not asked yet', 'muted'],
+};
+/* Two letters beside a country, as the app's flags read on a Windows PC. */
+const INC_CODE = {
+  switzerland: 'CH', spain: 'ES', italy: 'IT', dubai: 'AE', uae: 'AE', 'united arab emirates': 'AE', 'abu dhabi': 'AE', germany: 'DE', uk: 'GB', 'united kingdom': 'GB',
+  england: 'GB', london: 'GB', france: 'FR', paris: 'FR', usa: 'US', 'united states': 'US', 'hong kong': 'HK', hk: 'HK', japan: 'JP', singapore: 'SG', china: 'CN',
+  netherlands: 'NL', belgium: 'BE', austria: 'AT', portugal: 'PT', greece: 'GR', turkey: 'TR', qatar: 'QA', 'saudi arabia': 'SA', kuwait: 'KW', bahrain: 'BH',
+  oman: 'OM', india: 'IN', pakistan: 'PK', monaco: 'MC', luxembourg: 'LU', ireland: 'IE', canada: 'CA', australia: 'AU', sweden: 'SE', denmark: 'DK', poland: 'PL',
+};
+/* Where the dot goes on the map, [lat, lon] — the app's own table. */
+const INC_GEO = {
+  switzerland: [46.8, 8.2], spain: [40.4, -3.7], italy: [41.9, 12.5], dubai: [25.2, 55.3], uae: [25.2, 55.3], 'united arab emirates': [25.2, 55.3], 'abu dhabi': [24.4, 54.4],
+  germany: [51.2, 10.4], uk: [54, -2], 'united kingdom': [54, -2], england: [52.5, -1.5], london: [51.5, -0.1], france: [46.6, 2.2], paris: [48.9, 2.3], usa: [39.8, -98.6],
+  'united states': [39.8, -98.6], 'hong kong': [22.3, 114.2], hk: [22.3, 114.2], japan: [36.2, 138.3], singapore: [1.4, 103.8], china: [35.9, 104.2], netherlands: [52.1, 5.3],
+  belgium: [50.5, 4.5], austria: [47.5, 14.6], portugal: [39.4, -8.2], greece: [39.1, 21.8], turkey: [39, 35.2], qatar: [25.3, 51.2], 'saudi arabia': [23.9, 45.1], kuwait: [29.3, 47.5],
+  bahrain: [26, 50.5], oman: [21.5, 55.9], india: [20.6, 79], pakistan: [30.4, 69.3], monaco: [43.7, 7.4], luxembourg: [49.8, 6.1], ireland: [53.4, -8.2], canada: [56.1, -106.3],
+  australia: [-25.3, 133.8], sweden: [60.1, 18.6], denmark: [56.3, 9.5], poland: [51.9, 19.1],
+};
+const incLoc = (i) => i.location || INC_NO_LOC;
+const incSup = (i) => i.supplier || INC_NO_SUP;
+const incKey = (s) => String(s || '').trim().toLowerCase();
+const incIsDubai = (i) => /dubai|uae|united arab/i.test(i.destination);
+const incGroup = (rows, fn, unknown) => {
+  const m = new Map();
+  for (const r of rows) {
+    const k = fn(r);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(r);
+  }
+  // Biggest first, the unknown last — the app's order.
+  return [...m].sort((a, b) => (a[0] === unknown) - (b[0] === unknown) || b[1].length - a[1].length || a[0].localeCompare(b[0]));
+};
+const incSortRows = (rows) => rows.slice().sort((a, b) => (a.eta || '￿').localeCompare(b.eta || '￿') || b.created - a.created);
+/* The app's odCountLine: what the owner has decided, in a few words. */
+function incOdLine(rows) {
+  const c = {};
+  for (const r of rows) c[r.decision.status] = (c[r.decision.status] || 0) + 1;
+  return [
+    c.APPROVED && `${c.APPROVED} approved`,
+    c.IN_EXECUTION && `${c.IN_EXECUTION} in execution`,
+    c.HOLD && `${c.HOLD} on hold`,
+    c.DECISION_NEEDED && `${c.DECISION_NEEDED} to decide`,
+    c.SENT_TO_OWNER && `${c.SENT_TO_OWNER} with the owner`,
+    c.NEEDS_CLARIFICATION && `${c.NEEDS_CLARIFICATION} unclear`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+async function showLogisticsIncoming() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('incoming')}
+    <div class="inc-head">
+      <p class="sub" id="inc-sub" style="margin:0">Watches on their way to us.</p>
+      <a class="count" style="margin:0" href="#/logistics/incoming-all">See the lists</a>
+    </div>
+    <div id="inc-fob"></div>
+    <div class="ov-tiles inc-tiles" id="inc-stats"></div>
+    <div class="inc-controls">
+      <div class="sf-view" role="group" aria-label="Group by">
+        <button type="button" class="pill" data-v="location">By location</button><button type="button" class="pill" data-v="supplier">By supplier</button>
+      </div>
+      <div class="sf-view" role="group" aria-label="Show as">
+        <button type="button" class="pill" data-m="list">List</button><button type="button" class="pill" data-m="map">Map</button>
+      </div>
+    </div>
+    <div class="inc-filters">
+      <input class="q" type="search" id="incq" placeholder="Stock number, reference, client or location…" value="${esc(inc.q)}" aria-label="Search the incomings">
+      <select id="incf-loc" aria-label="Location"></select>
+      <select id="incf-sup" aria-label="Supplier"></select>
+      <select id="incf-brand" aria-label="Brand"></select>
+      <select id="incf-status" aria-label="Status"></select>
+      <select id="incf-dest" aria-label="Destination"></select>
+      <button type="button" class="pill hide" id="incf-clear">Clear filters</button>
+    </div>
+    <div id="inc-attn"></div>
+    <h2 class="sf-h inc-sec" id="inc-title">Incoming by location</h2>
+    <div id="inc-out"><p class="count">Reading the incomings…</p></div>
+    <details class="inc-hist" id="inc-hist"><summary><h2 class="sf-h">Received &amp; past <span class="count" id="inc-hist-n" style="margin:0"></span></h2></summary><div id="inc-hist-out"></div></details>`;
+  let timer;
+  $('#incq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      inc.q = e.target.value;
+      drawIncoming();
+    }, 150);
+  });
+  for (const k of Object.keys(inc.f)) {
+    $(`#incf-${k}`).addEventListener('change', (e) => {
+      inc.f[k] = e.target.value;
+      drawIncoming();
+    });
+  }
+  $('#incf-clear').addEventListener('click', () => {
+    inc.q = '';
+    $('#incq').value = '';
+    for (const k of Object.keys(inc.f)) inc.f[k] = '';
+    drawIncoming();
+  });
+  $$('.inc-controls [data-v]').forEach((b) =>
+    b.addEventListener('click', () => {
+      inc.view = b.dataset.v;
+      inc.map = false;
+      try {
+        localStorage.setItem('masterapp.incView', inc.view);
+      } catch {
+        /* remembered for this visit only */
+      }
+      drawIncoming();
+    })
+  );
+  $$('.inc-controls [data-m]').forEach((b) =>
+    b.addEventListener('click', () => {
+      inc.map = b.dataset.m === 'map';
+      drawIncoming();
+    })
+  );
+  // A card opens and closes; a row opens its record; a link inside goes where it says; a country on the map opens its card.
+  const onOut = (e) => {
+    const pin = e.target.closest('[data-country]');
+    if (pin) {
+      inc.map = false;
+      inc.view = 'location';
+      inc.open.add(`loc:${pin.dataset.country}`);
+      drawIncoming();
+      [...$$('.inc-card')].find((c) => c.dataset.key === `loc:${pin.dataset.country}`)?.scrollIntoView({ block: 'center' });
+      return;
+    }
+    const top = e.target.closest('.inc-card > summary');
+    if (top) {
+      // <details> toggles itself; remember it so a redraw keeps it.
+      const key = top.parentElement.dataset.key;
+      setTimeout(() => (top.parentElement.open ? inc.open.add(key) : inc.open.delete(key)));
+    }
+  };
+  $('#inc-out').addEventListener('click', onOut);
+  $('#inc-hist-out').addEventListener('click', onOut);
+  lgOpenOnClick($('#inc-out'), $('#inc-hist-out'), $('#inc-fob'));
+  let r;
+  try {
+    r = await api('/api/logistics/incoming');
+  } catch (err) {
+    if (seq === lgPage && $('#inc-out')) $('#inc-out').innerHTML = `<p class="count">Could not read the incomings: ${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== lgPage || !$('#inc-out')) return;
+  inc.data = r;
+  drawIncoming();
+}
+
+function incMatches(i) {
+  const f = inc.f;
+  if (f.loc && incLoc(i) !== f.loc) return false;
+  if (f.sup && incSup(i) !== f.sup) return false;
+  if (f.brand && i.brand !== f.brand) return false;
+  if (f.status && i.status !== f.status) return false;
+  if (f.dest && i.destination !== f.dest) return false;
+  const words = inc.q.toLowerCase().split(/\s+/).filter(Boolean);
+  return sfMatch(words, i.stock_no, i.reference, i.brand, i.supplier, i.location, i.destination, i.serial, i.notes, i.supplier_link?.client_name);
+}
+
+function drawIncoming() {
+  const r = inc.data;
+  if (!r || !$('#inc-out')) return;
+  const all = r.rows;
+  // The filters offer what the incomings hold; one whose value went away is cleared, as the app does.
+  const uniq = (fn) => [...new Set(all.map(fn).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const fill = (k, values, label, labels = {}) => {
+    const el = $(`#incf-${k}`);
+    if (!values.includes(inc.f[k])) inc.f[k] = '';
+    el.innerHTML = `<option value="">${label}</option>${values.map((v) => `<option value="${esc(v)}">${esc(labels[v] || v)}</option>`).join('')}`;
+    el.value = inc.f[k];
+    el.classList.toggle('on', Boolean(inc.f[k]));
+  };
+  fill('loc', uniq(incLoc), 'All locations');
+  fill('sup', uniq(incSup), 'All suppliers');
+  fill('brand', uniq((i) => i.brand), 'All brands');
+  fill('status', ['pending', 'in_transit', 'consignment', 'arrived', 'cancelled'], 'Any status', INC_STATUS);
+  fill('dest', uniq((i) => i.destination), 'Any destination');
+  $('#incf-clear').classList.toggle('hide', !(inc.q || Object.values(inc.f).some(Boolean)));
+  $$('.inc-controls [data-v]').forEach((b) => b.classList.toggle('on', !inc.map && b.dataset.v === inc.view));
+  $$('.inc-controls [data-m]').forEach((b) => b.classList.toggle('on', (b.dataset.m === 'map') === inc.map));
+
+  const rows = all.filter(incMatches);
+  const active = rows.filter((i) => !i.history);
+  const history = rows.filter((i) => i.history).sort((a, b) => String(b.shipped_at || b.received_at || '').localeCompare(String(a.shipped_at || a.received_at || '')));
+  const locs = new Set(active.map(incLoc)).size;
+  $('#inc-sub').textContent = active.length
+    ? `${active.length} watch${active.length === 1 ? '' : 'es'} across ${locs} location${locs === 1 ? '' : 's'}, waiting for collection, shipment or delivery.`
+    : 'Watches waiting for collection, shipment or delivery.';
+
+  // Picked from FOB: held in the logistics app until someone sends them on — shown, not sent from here.
+  const fob = r.fob_picked;
+  $('#inc-fob').innerHTML = fob.length
+    ? `<section class="panel sf-acc">
+        <h2 class="sf-h">Picked from Chrono Key <span class="count" style="margin:0">${fob.length}</span></h2>
+        ${ovExplain('Read from Chrono Key and held in the logistics app. They are not in Incoming until someone sends them there in the logistics app.')}
+        ${fob
+          .map(
+            (x) => `<div class="ov-row" data-id="${x.id}" tabindex="0" role="link"><div class="ov-row-main">
+              <div>${x.stock_no ? `<span class="lg-stock">#${esc(x.stock_no)}</span> ` : ''}<b>${esc([x.brand, x.model].filter(Boolean).join(' ') || 'Watch')}</b>${x.reference ? ` <span class="count" style="margin:0">${esc(x.reference)}</span>` : ''}</div>
+              <div class="count" style="margin:2px 0 0">${[x.supplier && `From ${esc(x.supplier)}`, x.buy_price && `Cost ${money(x.buy_price, x.buy_currency || '')}`, x.destination && `to ${esc(x.destination)}`, x.eta && `ETA ${esc(dayWords(x.eta))}`].filter(Boolean).join(' · ') || '&nbsp;'}</div>
+            </div><div class="ov-row-side hc-ours">${coOurs(x)}</div></div>`
+          )
+          .join('')}
+      </section>`
+    : '';
+
+  // Four numbers, and nothing else.
+  const tile = (n, label) => `<div class="ov-tile"><span class="ov-tile-label">${label}</span><b>${n}</b></div>`;
+  $('#inc-stats').innerHTML = [
+    tile(active.length, 'Incoming watches'),
+    tile(locs, 'Locations'),
+    tile(new Set(active.map(incSup)).size, 'Clients'),
+    tile(active.filter(incIsDubai).length, 'To Dubai'),
+  ].join('');
+
+  // Needs attention: only on screen when it has something to say.
+  const today = localDay();
+  const week = localDay(Date.now() + 7 * 86_400_000);
+  const transit = active.filter((i) => i.status === 'in_transit').length;
+  const soon = active.filter((i) => /^\d{4}-\d{2}-\d{2}/.test(i.eta) && i.eta.slice(0, 10) >= today && i.eta.slice(0, 10) <= week).length;
+  const noDest = active.filter((i) => !i.destination).length;
+  const attn = [
+    transit && `<span class="lg-tag moving">${transit} ${transit === 1 ? 'watch is' : 'watches are'} in transit</span>`,
+    soon && `<span class="lg-tag">${soon} ${soon === 1 ? 'arrives' : 'arrive'} this week</span>`,
+    noDest && `<span class="lg-tag warn">${noDest} ${noDest === 1 ? 'has' : 'have'} no destination set</span>`,
+  ].filter(Boolean);
+  $('#inc-attn').innerHTML = attn.length ? `<div class="panel inc-attn"><span class="ov-tile-label">Needs attention</span><span class="lg-ov" style="margin:0">${attn.join('')}</span></div>` : '';
+
+  $('#inc-title').textContent = inc.map ? 'Where they are' : inc.view === 'supplier' ? 'Incoming by client' : 'Incoming by location';
+  const filtered = rows.length !== all.length;
+  if (!active.length) $('#inc-out').innerHTML = `<p class="sub">Nothing is on its way${filtered ? ' that matches these filters' : ''}.</p>`;
+  else if (inc.map) $('#inc-out').innerHTML = incMap(incGroup(active, incLoc, INC_NO_LOC));
+  else if (inc.view === 'supplier') $('#inc-out').innerHTML = incGroup(active, incSup, INC_NO_SUP).map(([name, items]) => incSupplierCard(name, items)).join('');
+  else $('#inc-out').innerHTML = incGroup(active, incLoc, INC_NO_LOC).map(([c, items]) => incLocationCard(c, items, 'active')).join('');
+
+  $('#inc-hist-n').textContent = history.length ? `${history.length}` : '';
+  $('#inc-hist-out').innerHTML = history.length
+    ? incGroup(history, incLoc, INC_NO_LOC).map(([c, items]) => incLocationCard(c, items, 'history')).join('')
+    : `<p class="sub">Nothing received or cancelled yet.</p>`;
+}
+
+/* The status where the watch is, and on its own line what the owner decided — two things, two lines (the app's rule). */
+function incStatus(i, kind) {
+  const st = i.in_stock
+    ? `<span class="chip in_stock">Received${i.destination ? ` · ${esc(i.destination)}` : ''}</span>`
+    : i.shipped
+      ? '<span class="chip incoming">Shipped</span>'
+      : `<span class="chip inc-${esc(i.status)}">${esc(INC_STATUS[i.status] || i.status)}</span>`;
+  if (kind === 'history') return st;
+  const [label, tone] = INC_OD[i.decision.status] || INC_OD.DECISION_NEEDED;
+  return `${st}<div class="inc-od"><span class="inc-dot ${tone}" aria-hidden="true"></span><span>${esc(i.decision.what || label)}</span></div>`;
+}
+function incRow(i, kind) {
+  const when =
+    kind === 'history'
+      ? i.shipped
+        ? `Shipped${i.shipped_at ? ` ${sfDay(i.shipped_at)}` : ''}`
+        : i.received_at
+          ? `Received ${sfDay(i.received_at)}`
+          : i.status === 'cancelled'
+            ? 'Cancelled'
+            : '—'
+      : i.eta
+        ? /^\d{4}-\d{2}-\d{2}/.test(i.eta)
+          ? dayWords(i.eta)
+          : i.eta
+        : '—';
+  const pic = i.picture ? `<img loading="lazy" src="${esc(fileUrl(i.picture, true))}" alt="">` : i.watch?.photo_id ? `<img loading="lazy" src="/api/photos/${i.watch.photo_id}?thumb=1" alt="">` : '';
+  const no = /\d/.test(i.stock_no) ? (i.watch ? `<a class="lg-stock" href="#/watch/${i.watch.id}" title="Our watch">#${esc(i.stock_no)}</a>` : `<span class="lg-stock">#${esc(i.stock_no)}</span>`) : `<span class="lg-stock">${esc(i.stock_no || '—')}</span>`;
+  return `<tr data-id="${i.id}" tabindex="0">
+    <td class="inc-pic">${pic || '<span class="inc-nopic"></span>'}</td>
+    <td><b>${esc(i.brand || 'Unknown')}</b><div class="count" style="margin:2px 0 0">${esc(i.reference || '—')}</div></td>
+    <td style="white-space:nowrap">${no}</td>
+    <td>${i.supplier ? lgPerson(i.supplier, i.supplier_link) : '<span class="blank">No client</span>'}</td>
+    <td>${esc(incLoc(i))}${i.destination ? ` <span class="count" style="margin:0">→ ${esc(i.destination)}</span>` : ''}</td>
+    <td>${incStatus(i, kind)}</td>
+    <td style="white-space:nowrap">${esc(when)}</td>
+  </tr>`;
+}
+const incTable = (rows, kind) => `<div class="tscroll"><table class="list lg inc-table"><thead><tr>
+    <th></th><th>Watch</th><th>Stock</th><th>Client</th><th>Location → destination</th><th>Status</th><th>${kind === 'history' ? 'When' : 'ETA'}</th>
+  </tr></thead><tbody>${incSortRows(rows).map((i) => incRow(i, kind)).join('')}</tbody></table></div>`;
+
+function incLocationCard(country, rows, kind) {
+  const key = `${kind === 'history' ? 'hist' : 'loc'}:${country}`;
+  const sups = incGroup(rows, incSup, INC_NO_SUP);
+  const who = sups.slice(0, 5).map(([n, items]) => `${esc(n)} <b>${items.length}</b>`).join(' · ') + (sups.length > 5 ? ` · +${sups.length - 5} more` : '');
+  const od = kind === 'active' ? incOdLine(rows) : '';
+  const code = INC_CODE[incKey(country)];
+  return `<details class="panel inc-card" data-key="${esc(key)}"${inc.open.has(key) ? ' open' : ''}>
+    <summary>
+      <span class="inc-name">${code ? `<span class="inc-code">${code}</span>` : ''}${esc(country)}</span>
+      <span class="inc-who">${who}</span>
+      <span class="inc-n">${rows.length}</span>
+      ${od ? `<span class="inc-odline">${esc(od)}</span>` : ''}
+    </summary>
+    ${sups
+      .map(
+        ([name, items]) => `<div class="inc-sup">
+          <h3 class="inc-sup-h">${esc(name)} <span class="count" style="margin:0;font-weight:400">${items.length} watch${items.length === 1 ? '' : 'es'}</span>${
+            kind === 'active' && incOdLine(items) ? `<span class="count inc-sup-od">${esc(incOdLine(items))}</span>` : ''
+          }</h3>
+          ${incTable(items, kind)}
+        </div>`
+      )
+      .join('')}
+  </details>`;
+}
+function incSupplierCard(name, rows) {
+  const key = `sup:${name}`;
+  const where = incGroup(rows, incLoc, INC_NO_LOC).map(([c, items]) => `${esc(c)} <b>${items.length}</b>`).join(' · ');
+  const od = incOdLine(rows);
+  const link = rows.find((r) => r.supplier_link)?.supplier_link;
+  return `<details class="panel inc-card" data-key="${esc(key)}"${inc.open.has(key) ? ' open' : ''}>
+    <summary>
+      <span class="inc-name">${name === INC_NO_SUP ? esc(name) : lgPerson(name, link)}</span>
+      <span class="inc-who">${where}</span>
+      <span class="inc-n">${rows.length}</span>
+      ${od ? `<span class="inc-odline">${esc(od)}</span>` : ''}
+    </summary>
+    ${incTable(rows, 'active')}
+  </details>`;
+}
+
+/*
+ * The app's map: not an atlas but a route board — framed on the countries
+ * that hold stock, dots sized by how many sit there, a soft line from each
+ * into Dubai, the names down the two edges. Tap a country to open its card.
+ */
+function incMap(groups) {
+  const W = 360;
+  const GUT = 96;
+  const PAD = 16;
+  const LH = 13.5;
+  const pts = groups.map(([country, rows]) => (INC_GEO[incKey(country)] ? { country, n: rows.length, lat: INC_GEO[incKey(country)][0], lon: INC_GEO[incKey(country)][1] } : null)).filter(Boolean);
+  const missing = groups.length - pts.length;
+  if (!pts.length) return '<p class="sub">No location on the map yet.</p>';
+  const grow = (a, b, min) => {
+    const span = Math.max(b - a, min);
+    const mid = (a + b) / 2;
+    return [mid - span / 2 - span * 0.1, mid + span / 2 + span * 0.1];
+  };
+  const [x0, x1] = grow(Math.min(...pts.map((p) => p.lon)), Math.max(...pts.map((p) => p.lon)), 36);
+  const [y0, y1] = grow(Math.min(...pts.map((p) => p.lat)), Math.max(...pts.map((p) => p.lat)), 22);
+  const s = (W - GUT * 2) / (x1 - x0);
+  const H = Math.round(Math.max(118, Math.ceil(pts.length / 2) * LH + PAD * 2, Math.min(230, (y1 - y0) * s + PAD * 2)));
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const px = (lon) => W / 2 + (lon - cx) * s;
+  const py = (lat) => H / 2 - (lat - cy) * s;
+  const placed = pts.map((p) => ({ ...p, x: px(p.lon), y: py(p.lat), r: Math.max(2.6, Math.min(7, 2 + Math.sqrt(p.n) * 1.05)) }));
+  const hub = placed.find((p) => /dubai|uae|united arab/i.test(p.country));
+  const hx = hub ? hub.x : px(55.3);
+  const hy = hub ? hub.y : py(25.2);
+  const routes = placed
+    .filter((p) => p !== hub)
+    .map((p) => `<path class="route" d="M${p.x.toFixed(1)} ${p.y.toFixed(1)} Q${((p.x + hx) / 2).toFixed(1)} ${((p.y + hy) / 2 - Math.abs(p.x - hx) * 0.17).toFixed(1)} ${hx.toFixed(1)} ${hy.toFixed(1)}"/>`)
+    .join('');
+  // Each name to the nearer edge, the two columns evened out, stacked by the dot's height.
+  const mid = W / 2;
+  const half = Math.ceil(placed.length / 2);
+  const left = [];
+  const right = [];
+  placed
+    .slice()
+    .sort((a, b) => a.x - b.x)
+    .forEach((p) => (left.length < half && (p.x <= mid || right.length >= placed.length - half) ? left : right).push(p));
+  const stack = (col) => {
+    const c = col.slice().sort((a, b) => a.y - b.y);
+    c.forEach((p, k) => (p.ly = k === 0 ? p.y : Math.max(p.y, c[k - 1].ly + LH)));
+    const over = (c.length ? c[c.length - 1].ly : 0) - (H - PAD / 2);
+    if (over > 0) c.forEach((p) => (p.ly -= over));
+    c.forEach((p) => (p.ly = Math.max(PAD / 2 + 4, p.ly)));
+    return c;
+  };
+  const labels = [
+    ['left', stack(left)],
+    ['right', stack(right)],
+  ]
+    .map(([side, col]) =>
+      col
+        .map((p) => {
+          const isLeft = side === 'left';
+          const edge = isLeft ? GUT - 11 : W - GUT + 11;
+          const tx = isLeft ? edge - 4 : edge + 4;
+          // A mouse target only: the buttons under the map do the same from the keyboard.
+          return `<g class="pin" data-country="${esc(p.country)}" aria-hidden="true">
+            <path class="lead" d="M${edge.toFixed(1)} ${p.ly.toFixed(1)} L${(isLeft ? p.x - p.r - 2 : p.x + p.r + 2).toFixed(1)} ${p.ly.toFixed(1)} L${p.x.toFixed(1)} ${p.y.toFixed(1)}"/>
+            <text class="lbl" text-anchor="${isLeft ? 'end' : 'start'}" x="${tx.toFixed(1)}" y="${(p.ly - 0.6).toFixed(1)}">${esc(p.country)}</text>
+            <text class="lbl-n" text-anchor="${isLeft ? 'end' : 'start'}" x="${tx.toFixed(1)}" y="${(p.ly + 5.4).toFixed(1)}">${p.n} watch${p.n === 1 ? '' : 'es'}</text>
+          </g>`;
+        })
+        .join('')
+    )
+    .join('');
+  const dots = placed
+    .map((p) => `<g class="pin" data-country="${esc(p.country)}"><title>${esc(`${p.country} — ${p.n} watch${p.n === 1 ? '' : 'es'}`)}</title><circle class="dot${p === hub ? ' hub' : ''}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${p.r.toFixed(1)}"/></g>`)
+    .join('');
+  return `<div class="panel inc-map">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Where the incoming watches are">${routes}${dots}${labels}</svg>
+    <div class="inc-map-list">${groups.map(([c, rows]) => `<button type="button" class="pill" data-country="${esc(c)}">${esc(c)}<b>${rows.length}</b></button>`).join('')}</div>
+    <p class="count" style="margin:6px 0 0">Dot size is how many watches sit there${hub ? '; the ringed dot is Dubai, and the lines run into it' : ''}. Tap a country to open it.${
+      missing ? ` ${missing} location${missing === 1 ? '' : 's'} could not be placed.` : ''
+    }</p>
+  </div>`;
 }
 
 /* ── accessories ────────────────────────────────────────────────── */

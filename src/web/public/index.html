@@ -329,6 +329,7 @@ a.ov-tile:hover { border-color: #cdbf9f; }
   .ov-title { white-space: normal; overflow-wrap: anywhere; padding: 10px 0; }
   .ov-meta .lg-stock { display: inline-flex; align-items: center; min-height: 44px; }
   .ov-row .btn, #ov-scopes .pill, .ov-cost-in select, .lg-tabs a { min-height: 44px; }
+  .lg-tabs a { padding: 8px 10px; }
   .ov-all, .ov-all-btn, .ov-more { display: flex; align-items: center; min-height: 44px; padding-top: 0; }
   .ov-feed li { grid-template-columns: 1fr; gap: 2px; }
 }
@@ -357,8 +358,9 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 /* logistics: its own tabs across the top, its lists' kinds in a row under them */
 .lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
 .lg-head h1 { margin: 0; }
-.lg-tabs { display: flex; gap: 2px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; border-bottom: 1px solid var(--line); margin: 10px 0 16px; }
-.lg-tabs a { white-space: nowrap; padding: 9px 13px; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 14.5px;
+/* The tabs wrap onto the next line when the window is too narrow — never a sideways scroll (asked 26 Oct 2026). */
+.lg-tabs { display: flex; flex-wrap: wrap; gap: 0 2px; border-bottom: 1px solid var(--line); margin: 10px 0 16px; }
+.lg-tabs a { white-space: nowrap; padding: 9px 13px; display: inline-flex; align-items: center; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 14.5px;
   border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .lg-tabs a:hover { color: var(--ink); }
 .lg-tabs a.on { color: var(--ink); border-bottom-color: var(--gold); }
@@ -377,6 +379,65 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .sf-for { font-size: 14px; }
 .sf-notes { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .sf-card:focus-visible, .sf-row:focus-visible, table.list.lg tr:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* Incoming: the logistics app's Incomings page in the console's look */
+.inc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap; margin: 0 0 12px; }
+.ov-tiles.inc-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.inc-tiles .ov-tile { min-height: 0; }
+.inc-controls { display: flex; gap: 8px 16px; flex-wrap: wrap; margin: 0 0 8px; }
+.inc-filters { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(5, minmax(0, 1fr)) auto; gap: 8px; align-items: center; margin: 0 0 12px; }
+.inc-filters select.on { border-color: var(--gold); }
+@media (max-width: 1100px) { .inc-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .inc-filters .q { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .ov-tiles.inc-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inc-filters { grid-template-columns: 1fr 1fr; }
+  .inc-controls .pill, .inc-filters select, .inc-filters .pill { min-height: 44px; } }
+.inc-attn { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; margin: 0 0 16px; border-left: 4px solid var(--warn); }
+.inc-sec { margin: 8px 0 8px; }
+.inc-card { margin-bottom: 12px; padding: 0; }
+.inc-card > summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; padding: 14px 16px; cursor: pointer; list-style: none; }
+.inc-card > summary::-webkit-details-marker { display: none; }
+.inc-card > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: var(--radius); }
+.inc-card[open] > summary { border-bottom: 1px solid var(--line); }
+.inc-name { font-family: var(--serif); font-size: 21px; font-weight: 600; }
+.inc-code { font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--muted); margin-right: 8px; }
+.inc-who { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.inc-who b { color: var(--ink); font-weight: 600; }
+.inc-n { font-family: var(--serif); font-size: 24px; font-weight: 600; }
+.inc-odline { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.inc-sup { padding: 10px 16px 6px; border-top: 1px solid var(--line); }
+.inc-sup:first-of-type { border-top: 0; }
+.inc-sup-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0 0 6px; font-family: var(--sans); font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.inc-sup-od { margin: 0 0 0 auto; }
+.inc-card > .tscroll { padding: 0 16px 8px; }
+/* The same columns in every supplier's table, so they line up down the card. */
+table.inc-table { table-layout: fixed; width: 100%; min-width: 760px; }
+table.inc-table th:nth-child(1) { width: 56px; } table.inc-table th:nth-child(2) { width: 22%; } table.inc-table th:nth-child(3) { width: 9%; }
+table.inc-table th:nth-child(4) { width: 18%; } table.inc-table th:nth-child(5) { width: 19%; } table.inc-table th:nth-child(6) { width: 19%; }
+table.inc-table td { vertical-align: middle; overflow-wrap: anywhere; }
+.inc-card b, .inc-map-list b { font-weight: 600; }
+.inc-pic { width: 48px; }
+.inc-pic img, .inc-nopic { display: block; width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #f1ede6; }
+.inc-od { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 13px; color: var(--muted); max-width: 16em; }
+.inc-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.inc-dot.bad { background: var(--bad); } .inc-dot.warn { background: var(--warn); } .inc-dot.good { background: var(--good); } .inc-dot.blue { background: var(--blue); }
+.chip.inc-pending, .chip.inc-consignment { background: #eee; color: var(--muted); }
+.chip.inc-in_transit { background: var(--blue-soft); color: var(--blue); }
+.chip.inc-arrived { background: var(--good-soft); color: var(--good); }
+.chip.inc-cancelled { background: var(--bad-soft); color: var(--bad); }
+.chip.inc-sold { background: var(--gold-soft); color: var(--gold); }
+.inc-map { padding: 12px 16px; }
+.inc-map svg { display: block; width: 100%; max-width: 760px; margin: 0 auto; }
+.inc-map-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+/* Narrow: the drawn names would be too small to read — the buttons under the map name the countries instead. */
+@media (max-width: 767.98px) { .inc-map .lbl, .inc-map .lbl-n, .inc-map .lead { display: none; } .inc-map-list .pill { min-height: 44px; } }
+.inc-map .route { fill: none; stroke: var(--gold); stroke-width: .7; stroke-dasharray: 2 2; opacity: .55; }
+.inc-map .dot { fill: var(--blue); }
+.inc-map .dot.hub { fill: var(--gold); stroke: var(--gold-soft); stroke-width: 1.6; }
+.inc-map .lead { fill: none; stroke: var(--line); stroke-width: .6; }
+.inc-map .lbl { font: 600 7px var(--sans); fill: var(--ink); }
+.inc-map .lbl-n { font: 6px var(--sans); fill: var(--muted); }
+.inc-map .pin { cursor: pointer; }
+.inc-hist { margin-top: 18px; }
+.inc-hist > summary { cursor: pointer; padding: 8px 0; min-height: 44px; }
+.inc-hist > summary h2 { display: inline; }
 /* Accessories: the two totals, by brand, by client; and a watch's own panel */
 .acc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 640px) { .acc-two { grid-template-columns: 1fr; } }

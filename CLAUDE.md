@@ -430,6 +430,26 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   (Chrono Key's "no", the row's `accessoriesMissing`, what a client still
   owes us, `accCollect`), We owe (pending give, `accGive`, in our safe),
   Given. `forWatch` → `accessories` (`accessoriesOf`).
+- **Incoming** (asked 26 Oct 2026, "the same tab, the same features, the
+  same way"): the Logistics → Incoming tab is the app's Incomings page,
+  rules read from its code (`incomingPage()`, `/api/logistics/incoming`):
+  location / supplier / destination (`inventoryDest` London · Dubai · Hong
+  Kong is the firm answer, else the typed `destination`), status, the
+  owner's decision (`ownerDecisionId` → `ownerDecisions`; none = Decision
+  needed, `fromFob` = Not asked yet; its words as the app's `odDescribe`);
+  history = arrived / cancelled / shipped / taken into stock, its day the
+  stock row's `receivedAt` else `arrivedAt`. Head line, four counters,
+  Needs attention (in transit, arriving this week, no destination), By
+  location / By supplier, List / Map (the app's route board into Dubai; the
+  countries also as buttons, the drawn names hidden on narrow screens), five
+  filters + search, cards per country → supplier → rows, "7 to decide · 1
+  with owner", Received & past, Picked from Chrono Key (`fobPicked`, shown).
+  Rows linked to our watch and its clients; the typed client via
+  `linksByName`. **Its record-changing buttons wait for the switch-over**
+  (asked: Add, Import CSV, Mark Arrived, Receive to inventory, Create
+  shipment, Mark sold, Add cost, Ask Owner, Plan Collections, Pick from FOB
+  — masterapp never writes back): a row opens its record. Old lists at
+  `#/logistics/incoming-all`.
 - **The Inventory card = the logistics app's stock card too** (asked 26 Oct
   2026, "show these same things on card"): Ref · watch date, SN, Received
   (the place row's `receivedAt` — milliseconds shown on the browser's own
