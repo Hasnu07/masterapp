@@ -392,6 +392,44 @@ async function situationOf(cs, snap) {
   };
 }
 
+/*
+ * Who a typed name is, for a page that shows it (the safe's owner): the
+ * logistics client of that name, and which of ours that one is — by the same
+ * rule as everywhere (a person's choice, else its watches; a name alone only
+ * as matchOf allows). Two logistics clients of one name give one of ours only
+ * when both say the same.
+ */
+export async function linksByName(names) {
+  const snap = await snapshot();
+  const out = new Map();
+  for (const name of new Set(names.map((n) => String(n ?? '').trim()).filter(Boolean))) {
+    const cs = (snap.byName.get(normName(name)) || []).filter((c) => !c.us);
+    if (!cs.length) continue;
+    const ids = [...new Set(cs.map((c) => linkOf(c, snap).client_id))];
+    const ours = ids.length === 1 ? ids[0] : null;
+    out.set(name, { lg_client_id: cs[0].id, client_id: ours, client_name: ours ? snap.ourName.get(ours) || '' : '' });
+  }
+  return out;
+}
+
+/*
+ * Who a logistics client id is (a transaction's clientId, the app's own id):
+ * its name and country, and which of ours it is — the same link as on the
+ * Clients tab.
+ */
+export async function linksByClientId(cids) {
+  const snap = await snapshot();
+  const byCid = new Map(snap.clients.map((c) => [String(c.cid), c]));
+  const out = new Map();
+  for (const cid of new Set(cids.map((x) => String(x ?? '').trim()).filter(Boolean))) {
+    const c = byCid.get(cid);
+    if (!c) continue;
+    const link = c.us ? { client_id: null, client_name: '' } : linkOf(c, snap);
+    out.set(cid, { lg_client_id: c.id, name: c.name, country: String(c.data.country || '').trim(), client_id: link.client_id, client_name: link.client_name });
+  }
+  return out;
+}
+
 /* ── what the API serves ───────────────────────────────────────── */
 
 /** The Logistics → Clients tab: every logistics client, who of ours it is, and what is open with them. */

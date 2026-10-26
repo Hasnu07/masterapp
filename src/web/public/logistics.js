@@ -146,10 +146,46 @@ const lgTabIntoView = () => $('.lg-tabs a.on')?.scrollIntoView({ block: 'nearest
 
 function lgHeader(active, note = '') {
   setTimeout(lgTabIntoView);
+  setTimeout(() => lgCountBadges(active));
   return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}</div>
     <div class="lg-tabs" role="navigation" aria-label="Logistics">${lgGroups()
-      .map((g) => `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${esc(g.label)}</a>`)
+      .map(
+        (g) =>
+          `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" data-g="${esc(g.key)}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${lgTabLabel(g)}</a>`
+      )
       .join('')}</div>`;
+}
+
+/*
+ * The In Safe, Checked out and Hand carry tabs carry how many each holds, on
+ * every logistics page — read again at most once a minute.
+ */
+const LG_COUNTED = {
+  safe: { url: '/api/logistics/in-safe', n: (r) => r.watches.length, what: (n) => `${n} client watch${n === 1 ? '' : 'es'} in the safe` },
+  checkout: { url: '/api/logistics/checked-out', n: (r) => r.watches.length, what: (n) => `${n} watch${n === 1 ? '' : 'es'} checked out` },
+  handcarry: { url: '/api/logistics/hand-carry', n: (r) => r.plans.length, what: (n) => `${n} open hand-carry plan${n === 1 ? '' : 's'}` },
+};
+const lgCount = { safe: null, checkout: null, handcarry: null, at: 0 };
+const lgTabLabel = (g) => {
+  const n = lgCount[g.key];
+  return `${esc(g.label)}${LG_COUNTED[g.key] && n ? ` <b class="lg-n" title="${esc(LG_COUNTED[g.key].what(n))}">${n}</b>` : ''}`;
+};
+function lgSetCount(key, n) {
+  lgCount[key] = n;
+  const a = $(`.lg-tabs a[data-g="${key}"]`);
+  const g = lgGroups().find((x) => x.key === key);
+  if (a && g) a.innerHTML = lgTabLabel(g);
+}
+/* The tab open now counts its own list as it reads it: only the others are asked for. */
+function lgCountBadges(active) {
+  if (Date.now() - lgCount.at < 60_000) return;
+  lgCount.at = Date.now();
+  for (const [key, c] of Object.entries(LG_COUNTED)) {
+    if (key === active) continue;
+    api(c.url)
+      .then((r) => lgSetCount(key, c.n(r)))
+      .catch(() => (lgCount.at = 0));
+  }
 }
 
 /* ── a tab: one group's records ─────────────────────────────────── */
@@ -158,6 +194,13 @@ let lgSeq = 0;
 let lgShown = [];
 async function showLogistics(group) {
   if (!group || group === 'overview') return showLogisticsOverview();
+  if (group === 'safe') return showLogisticsSafe();
+  if (group === 'checkout') return showLogisticsCheckout();
+  if (group === 'handcarry') return showLogisticsHandCarry();
+  if (group === 'transactions') return showLogisticsTransactions();
+  // The Accessories tab is the app's Accessories Management page; its lists (to collect, to give, settlements, swaps) are one link away.
+  if (group === 'accessories') return showLogisticsAccessories();
+  if (group === 'accessories-all') group = 'accessories';
   // The Clients tab shows each client's situation; its records, as lists, are one link away.
   if (group === 'contacts') return showLogisticsClients();
   if (group === 'contacts-all') group = 'contacts';
@@ -254,6 +297,783 @@ async function loadLogistics(more = false) {
       )
       .join('') || '<tr><td colspan="5" class="count">Nothing here yet.</td></tr>';
   $('#lg-more').classList.toggle('hide', lgShown.length >= r.total);
+}
+
+/* ── in the safe ────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's In Safe page (asked 26 Oct 2026): the clients' watches
+ * we hold — not our stock, never priced — each saying who it is for, and the
+ * accessories we owe a client sitting in the safe. Cards or a list, searched
+ * and sorted here (the safe holds tens, not thousands). A card opens its
+ * record (edit, delete, history); our own watch of the same number is linked.
+ */
+const sf = { q: '', sort: 'new', view: 'cards', data: null };
+try {
+  sf.view = localStorage.getItem('masterapp.safeView') === 'list' ? 'list' : 'cards';
+} catch {
+  /* no storage: cards */
+}
+
+async function showLogisticsSafe() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('safe')}
+    <p class="sub" style="margin:0 0 12px">Clients’ watches we are holding — not our stock. Each one says who it is for.</p>
+    <div class="lg-toolbar">
+      <input class="q" type="search" id="sfq" placeholder="Stock number, reference, serial, brand, model, client…" value="${esc(sf.q)}">
+      <select id="sfsort" aria-label="Order">
+        <option value="new">Newest first</option>
+        <option value="stockAsc">Stock number, low to high</option>
+        <option value="stockDesc">Stock number, high to low</option>
+      </select>
+      <div class="sf-view" role="group" aria-label="View">
+        <button type="button" class="pill" data-v="cards">Cards</button><button type="button" class="pill" data-v="list">List</button>
+      </div>
+    </div>
+    <section class="panel sf-acc hide" id="sf-acc"></section>
+    <div class="count" id="sf-count">Reading the safe…</div>
+    <div id="sf-out"></div>`;
+  $('#sfsort').value = sf.sort;
+  let timer;
+  $('#sfq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      sf.q = e.target.value;
+      drawSafe();
+    }, 150);
+  });
+  $('#sfsort').addEventListener('change', (e) => {
+    sf.sort = e.target.value;
+    drawSafe();
+  });
+  $$('.sf-view .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      sf.view = b.dataset.v;
+      try {
+        localStorage.setItem('masterapp.safeView', sf.view);
+      } catch {
+        /* remembered for this visit only */
+      }
+      drawSafe();
+    })
+  );
+  lgOpenOnClick($('#sf-out'), $('#sf-acc'));
+  let r;
+  try {
+    r = await api('/api/logistics/in-safe');
+  } catch (err) {
+    if (seq === lgPage && $('#sf-count')) $('#sf-count').textContent = `Could not read the safe: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#sf-out')) return;
+  sf.data = r;
+  lgSetCount('safe', r.watches.length);
+  drawSafe();
+}
+
+/* A moment as this computer's day; a day the app wrote as a day (YYYY-MM-DD) stays that day, whatever the time zone. */
+const sfDay = (iso) => (!iso ? '' : /^\d{4}-\d{2}-\d{2}$/.test(iso) ? dayWords(iso) : dayWords(localDay(new Date(iso).getTime())));
+const sfNo = (s) => Number(String(s || '').replace(/\D/g, '')) || 0;
+const sfMatch = (words, ...values) => {
+  const blob = values.join(' ').toLowerCase();
+  return words.every((w) => blob.includes(w));
+};
+const sfPic = (w) =>
+  w.picture
+    ? `<img loading="lazy" src="${esc(fileUrl(w.picture, true))}" alt="">`
+    : w.watch?.photo_id
+      ? `<img loading="lazy" src="/api/photos/${w.watch.photo_id}?thumb=1" alt="">`
+      : '<span>No photo</span>';
+/* What is worth knowing at a glance, in words: out with its owner, polish, consignment, what is missing. */
+const sfTags = (w) =>
+  [
+    w.with_owner && `<span class="lg-tag warn">Out with its owner${w.with_owner === 'yes' ? '' : ` — ${esc(w.with_owner)}`}</span>`,
+    w.polish && `<span class="lg-tag warn">At polish with ${esc(w.polish)}</span>`,
+    !w.polish && w.need_polish && '<span class="lg-tag">Needs polish</span>',
+    w.consignment && `<span class="lg-tag warn">On consignment with ${esc(w.consignment)}</span>`,
+    w.accessories_missing && `<span class="lg-tag">Missing: ${esc(w.accessories_missing)}</span>`,
+  ]
+    .filter(Boolean)
+    .join('');
+const sfOurs = (w) => (w.watch ? `<a href="#/watch/${w.watch.id}">Our watch #${esc(w.watch.stock_no)}</a>` : '');
+/*
+ * A typed name, linked as far as it goes: to our client when the logistics
+ * client of that name is one of ours (by its watches), else to that logistics
+ * client's page; our client's own name beside it when it reads differently.
+ */
+function lgPerson(name, link, blank = 'not written') {
+  if (!name) return esc(blank);
+  if (link?.client_id) {
+    const other = link.client_name && link.client_name.trim().toLowerCase() !== name.trim().toLowerCase();
+    return `<a href="#/client/${link.client_id}">${esc(name)}</a>${other ? ` <span class="count" style="margin:0;font-weight:400">· our client ${esc(link.client_name)}</span>` : ''}`;
+  }
+  if (link?.lg_client_id) return `<a href="#/lg-client/${link.lg_client_id}" title="Their logistics page — not linked to one of our clients yet">${esc(name)}</a>`;
+  return esc(name);
+}
+/* A card or a row opens its record; a link inside it goes where it says. */
+function lgOpenOnClick(...boxes) {
+  const open = (e) => {
+    const at = e.target.closest('[data-id]');
+    if (!at || e.target.closest('a')) return;
+    if (e.type === 'keydown') {
+      if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+    }
+    location.hash = `#/lg/${at.dataset.id}`;
+  };
+  for (const box of boxes) {
+    box.addEventListener('click', open);
+    box.addEventListener('keydown', open);
+  }
+}
+
+function drawSafe() {
+  const r = sf.data;
+  if (!r || !$('#sf-out')) return;
+  $$('.sf-view .pill').forEach((b) => b.classList.toggle('on', b.dataset.v === sf.view));
+  const words = sf.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const watches = r.watches
+    .filter((w) => sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.owner, w.owner_link?.client_name, w.where, w.accessories_present, w.accessories_missing, w.notes, w.watch_date))
+    .sort((a, b) =>
+      sf.sort === 'stockAsc'
+        ? sfNo(a.stock_no) - sfNo(b.stock_no)
+        : sf.sort === 'stockDesc'
+          ? sfNo(b.stock_no) - sfNo(a.stock_no)
+          : String(b.received_at || '').localeCompare(String(a.received_at || '')) || b.id - a.id
+    );
+  const acc = r.accessories.filter((a) => sfMatch(words, a.stock_no, a.about, a.items, a.for_client, a.notes));
+
+  const box = $('#sf-acc');
+  box.classList.toggle('hide', !acc.length);
+  box.innerHTML = acc.length
+    ? `<h2 class="sf-h">Accessories in the safe <span class="count">${acc.length}</span></h2>
+       ${ovExplain('Things we owe a client, sitting in the safe.')}
+       ${acc
+         .map(
+           (a) => `<div class="ov-row sf-row" data-id="${a.id}" tabindex="0" role="link">
+             <div class="ov-row-main">
+               <div>${a.stock_no ? `<span class="lg-stock">#${esc(a.stock_no)}</span> ` : ''}<b>${esc(a.items || 'Accessories')}</b></div>
+               <div class="count" style="margin:2px 0 0">${[a.for_client && `For <b>${lgPerson(a.for_client, a.for_link)}</b>`, a.about && esc(a.about), a.notes && esc(a.notes), a.in_safe_at && `in the safe since ${esc(sfDay(a.in_safe_at))}`].filter(Boolean).join(' · ')}</div>
+             </div>
+             <div class="ov-row-side">${a.watch ? `<a href="#/watch/${a.watch.id}">Our watch</a>` : ''}</div>
+           </div>`
+         )
+         .join('')}`
+    : '';
+
+  const n = watches.length;
+  $('#sf-count').textContent = `${n} watch${n === 1 ? '' : 'es'}${words.length ? ` of ${r.watches.length}` : ''} in the safe${acc.length ? ` · ${acc.length} accessor${acc.length === 1 ? 'y' : 'ies'}` : ''}`;
+  if (!n) {
+    $('#sf-out').innerHTML = `<p class="sub">${words.length ? 'Nothing in the safe matches.' : 'The safe holds no client watches right now.'}</p>`;
+    return;
+  }
+  if (sf.view === 'list') {
+    $('#sf-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
+        <th>Stock</th><th>Watch</th><th>For</th><th>Received</th><th>Accessories</th><th>Notes</th>
+      </tr></thead><tbody>${watches
+        .map(
+          (w) => `<tr data-id="${w.id}" tabindex="0">
+            <td style="white-space:nowrap"><span class="lg-stock">#${esc(w.stock_no || '—')}</span></td>
+            <td><a href="#/lg/${w.id}"><b>${esc([w.brand, w.model].filter(Boolean).join(' ') || 'Watch')}</b></a>
+              <div class="count" style="margin:2px 0 0">${esc([w.reference && `Ref ${w.reference}`, w.serial && `Serial ${w.serial}`].filter(Boolean).join(' · '))}</div>
+              ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}</td>
+            <td><b>${lgPerson(w.owner, w.owner_link, '—')}</b></td>
+            <td style="white-space:nowrap">${esc(sfDay(w.received_at))}</td>
+            <td>${esc(w.accessories_present || '')}</td>
+            <td>${esc(w.notes || '')}${w.watch ? `<div>${sfOurs(w)}</div>` : ''}</td>
+          </tr>`
+        )
+        .join('')}</tbody></table></div>`;
+    return;
+  }
+  $('#sf-out').innerHTML = `<div class="grid sf-grid">${watches
+    .map(
+      (w) => `<article class="tile sf-card" data-id="${w.id}" tabindex="0" role="link" aria-label="${esc(`#${w.stock_no} ${w.brand} ${w.model}, for ${w.owner || 'a client'}`)}">
+        <div class="pic">${sfPic(w)}</div>
+        <div class="body">
+          <div class="m"><span class="lg-stock">#${esc(w.stock_no || '—')}</span>${w.brand ? ` <span>${esc(w.brand)}</span>` : ''}</div>
+          <div class="t">${esc(w.model || w.brand || 'Watch')}</div>
+          <div class="sf-for">For <b>${lgPerson(w.owner, w.owner_link)}</b></div>
+          ${w.reference || w.watch_date ? `<div class="m">${esc([w.reference && `Ref ${w.reference}`, w.watch_date].filter(Boolean).join(' · '))}</div>` : ''}
+          ${w.serial ? `<div class="m">Serial ${esc(w.serial)}</div>` : ''}
+          <div class="m">${esc([w.received_at && `Received ${sfDay(w.received_at)}`, w.where && `in ${w.where}`].filter(Boolean).join(' · '))}</div>
+          ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}
+          ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
+          ${w.watch ? `<div class="m">${sfOurs(w)}</div>` : ''}
+        </div>
+      </article>`
+    )
+    .join('')}</div>`;
+}
+
+/* ── checked out ────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Checkout page (asked 26 Oct 2026): watches held
+ * somewhere for a while, not sold. Each linked to our watch of that number and
+ * to our client through it — who it was bought from, who it was sold to — so
+ * "given back to Khawar" sits beside the client Chrono Key says it came from.
+ * A watch the app lists more than once (checked out again without a return)
+ * is one entry here, its earlier rows under it.
+ */
+const co = { q: '', sort: 'new', view: 'list', origin: '', data: null };
+try {
+  co.view = localStorage.getItem('masterapp.checkoutView') === 'cards' ? 'cards' : 'list';
+} catch {
+  /* no storage: the list, as the app shows it */
+}
+
+async function showLogisticsCheckout() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('checkout')}
+    <p class="sub" style="margin:0 0 12px">Watches held somewhere for a while — not sold. Each is linked to our stock and to the client it came from or went to.</p>
+    <div class="lg-toolbar">
+      <input class="q" type="search" id="coq" placeholder="Stock number, brand, model, reference, serial, client, reason…" value="${esc(co.q)}">
+      <select id="cosort" aria-label="Order">
+        <option value="new">Checked out most recently</option>
+        <option value="old">Out the longest</option>
+        <option value="stockAsc">Stock number, low to high</option>
+        <option value="stockDesc">Stock number, high to low</option>
+      </select>
+      <div class="sf-view" role="group" aria-label="View">
+        <button type="button" class="pill" data-v="list">List</button><button type="button" class="pill" data-v="cards">Cards</button>
+      </div>
+    </div>
+    <div class="lg-subtabs" id="co-origins" role="group" aria-label="Checked out from"></div>
+    <div class="count" id="co-count">Reading what is checked out…</div>
+    <div id="co-out"></div>`;
+  $('#cosort').value = co.sort;
+  let timer;
+  $('#coq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      co.q = e.target.value;
+      drawCheckout();
+    }, 150);
+  });
+  $('#cosort').addEventListener('change', (e) => {
+    co.sort = e.target.value;
+    drawCheckout();
+  });
+  $$('.sf-view .pill').forEach((b) =>
+    b.addEventListener('click', () => {
+      co.view = b.dataset.v;
+      try {
+        localStorage.setItem('masterapp.checkoutView', co.view);
+      } catch {
+        /* remembered for this visit only */
+      }
+      drawCheckout();
+    })
+  );
+  $('#co-origins').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-o]');
+    if (!b) return;
+    co.origin = b.dataset.o;
+    drawCheckout();
+  });
+  lgOpenOnClick($('#co-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/checked-out');
+  } catch (err) {
+    if (seq === lgPage && $('#co-count')) $('#co-count').textContent = `Could not read what is checked out: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#co-out')) return;
+  co.data = r;
+  if (co.origin && !r.by_origin.some((o) => o.origin === co.origin)) co.origin = '';
+  lgSetCount('checkout', r.watches.length);
+  drawCheckout();
+}
+
+/* How long it has been out, in days, by this computer's calendar. */
+const coDays = (day) => {
+  const n = Math.round((Date.parse(localDay()) - Date.parse(String(day || '').slice(0, 10))) / 86_400_000);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+const coWhen = (w) => {
+  const n = coDays(w.checked_out);
+  return [sfDay(w.checked_out), n !== null && (n === 0 ? 'today' : `${n} day${n === 1 ? '' : 's'}`)].filter(Boolean).join(' · ');
+};
+/* Our watch and our clients — by Chrono Key's ids, never the typed reason. */
+const coOurs = (w) => {
+  const o = w.watch;
+  if (!o) return '<span class="blank">Not one of our watches</span>';
+  return [
+    `<a href="#/watch/${o.id}">Our watch #${esc(o.stock_no)}</a> ${chip(o.status)}`,
+    o.bought_from && `Bought from <a href="#/client/${o.bought_from.id}"><b>${esc(o.bought_from.name)}</b></a>`,
+    o.sold_to && `Sold to <a href="#/client/${o.sold_to.id}"><b>${esc(o.sold_to.name)}</b></a>`,
+  ]
+    .filter(Boolean)
+    .map((x) => `<div>${x}</div>`)
+    .join('');
+};
+const coEarlier = (w) =>
+  w.earlier.length
+    ? `<div class="count" style="margin:4px 0 0">Also checked out ${w.earlier
+        .map((e) => `<a href="#/lg/${e.id}">${esc(sfDay(e.checked_out) || 'earlier')}</a>${e.reason ? ` (${esc(e.reason)})` : ''}`)
+        .join(', ')} — not returned in between</div>`
+    : '';
+
+function drawCheckout() {
+  const r = co.data;
+  if (!r || !$('#co-out')) return;
+  $$('.sf-view .pill').forEach((b) => b.classList.toggle('on', b.dataset.v === co.view));
+  $('#co-origins').innerHTML = [{ origin: '', n: r.watches.length }, ...r.by_origin]
+    .map((o) => `<button type="button" class="pill${o.origin === co.origin ? ' on' : ''}" data-o="${esc(o.origin)}" aria-pressed="${o.origin === co.origin}">${esc(o.origin ? `From ${o.origin}` : 'All')}<b>${o.n}</b></button>`)
+    .join('');
+  const words = co.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const watches = r.watches
+    .filter((w) => !co.origin || w.origin === co.origin)
+    .filter((w) =>
+      sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.origin, w.reason, w.notes, w.watch?.bought_from?.name, w.watch?.sold_to?.name, ...w.earlier.map((e) => e.reason))
+    )
+    .sort((a, b) =>
+      co.sort === 'old'
+        ? String(a.checked_out).localeCompare(String(b.checked_out)) || a.id - b.id
+        : co.sort === 'stockAsc'
+          ? sfNo(a.stock_no) - sfNo(b.stock_no)
+          : co.sort === 'stockDesc'
+            ? sfNo(b.stock_no) - sfNo(a.stock_no)
+            : String(b.checked_out).localeCompare(String(a.checked_out)) || b.id - a.id
+    );
+
+  const n = watches.length;
+  const all = co.origin ? r.by_origin.find((o) => o.origin === co.origin)?.n || 0 : r.watches.length;
+  $('#co-count').textContent = `${n} watch${n === 1 ? '' : 'es'}${words.length ? ` of ${all}` : ''} checked out${
+    r.rows > r.watches.length ? ` · the logistics app lists ${r.rows} rows: a watch checked out again without a return is shown once` : ''
+  }`;
+  if (!n) {
+    $('#co-out').innerHTML = `<p class="sub">${words.length || co.origin ? 'Nothing checked out matches.' : 'Nothing is checked out right now.'}</p>`;
+    return;
+  }
+  // A number with no digits ("-", "xxxxxx") is no stock number: shown as typed, without the #.
+  const stockOf = (w) => `<span class="lg-stock">${/\d/.test(w.stock_no) ? `#${esc(w.stock_no)}` : esc(w.stock_no && w.stock_no !== '-' ? w.stock_no : '—')}</span>`;
+  // "Other" is the app's brand for one it does not list; the model then names it ("Richard Mille Automatic RM 72-01").
+  const title = (w) => esc([/^other$/i.test(w.brand) && w.model ? '' : w.brand, w.model].filter(Boolean).join(' ') || 'Watch');
+  const specs = (w) => esc([w.reference && `Ref ${w.reference}`, w.serial && `Serial ${w.serial}`, w.watch_date].filter(Boolean).join(' · '));
+  if (co.view === 'list') {
+    $('#co-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
+        <th>Stock</th><th>Watch</th><th>From</th><th>Checked out</th><th>Reason / who</th><th>Ours · client</th><th>Notes</th>
+      </tr></thead><tbody>${watches
+        .map(
+          (w) => `<tr data-id="${w.id}" tabindex="0">
+            <td style="white-space:nowrap">${stockOf(w)}</td>
+            <td><a href="#/lg/${w.id}"><b>${title(w)}</b></a>${specs(w) ? `<div class="count" style="margin:2px 0 0">${specs(w)}</div>` : ''}${coEarlier(w)}</td>
+            <td>${esc(w.origin || '—')}</td>
+            <td style="white-space:nowrap">${esc(coWhen(w))}</td>
+            <td>${esc(w.reason || '—')}</td>
+            <td>${coOurs(w)}</td>
+            <td>${esc(w.notes || '')}${w.photo_count ? `<div class="count" style="margin:2px 0 0">${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}</div>` : ''}</td>
+          </tr>`
+        )
+        .join('')}</tbody></table></div>`;
+    return;
+  }
+  $('#co-out').innerHTML = `<div class="grid sf-grid">${watches
+    .map(
+      (w) => `<article class="tile sf-card" data-id="${w.id}" tabindex="0" role="link" aria-label="${esc(`#${w.stock_no} ${w.brand} ${w.model}, checked out ${sfDay(w.checked_out)}`)}">
+        <div class="pic">${sfPic(w)}</div>
+        <div class="body">
+          <div class="m">${stockOf(w)}${w.brand && !/^other$/i.test(w.brand) ? ` <span>${esc(w.brand)}</span>` : ''}</div>
+          <div class="t">${esc(w.model || w.brand || 'Watch')}</div>
+          ${specs(w) ? `<div class="m">${specs(w)}</div>` : ''}
+          <div class="m">${esc([`Out ${coWhen(w)}`, w.origin && `from ${w.origin}`].filter(Boolean).join(' · '))}</div>
+          ${w.reason ? `<div class="sf-for"><b>${esc(w.reason)}</b></div>` : ''}
+          ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
+          <div class="m">${coOurs(w)}</div>
+          ${coEarlier(w)}
+        </div>
+      </article>`
+    )
+    .join('')}</div>`;
+}
+
+/* ── hand carry ─────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Hand Carry page (asked 26 Oct 2026): a person's plan of
+ * stops, and at each the watches delivered, collected or moved. Same links as
+ * In Safe and Checked out — each watch to our watch and its clients, the typed
+ * buyer or supplier as far as it goes (lgPerson) — in this console's own look.
+ * Open plans, the app's Plans History, and what is waiting for a plan. The
+ * plan's own buttons (add a stop, assign, optimise, send to movements) are
+ * the record's edit here.
+ */
+const hc = { q: '', show: 'open', data: null };
+
+async function showLogisticsHandCarry() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('handcarry')}
+    <p class="sub" style="margin:0 0 12px">Plans for carrying watches by hand — each stop and what is delivered, collected or moved there. Every watch is linked to our stock and its client.</p>
+    <div class="lg-toolbar" style="grid-template-columns:1fr">
+      <input class="q" type="search" id="hcq" placeholder="Plan, city, stock number, brand, model, client…" value="${esc(hc.q)}">
+    </div>
+    <div class="lg-subtabs" id="hc-show" role="group" aria-label="Show"></div>
+    <div class="count" id="hc-count">Reading the plans…</div>
+    <div id="hc-out"></div>`;
+  let timer;
+  $('#hcq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      hc.q = e.target.value;
+      drawHandCarry();
+    }, 150);
+  });
+  $('#hc-show').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-s]');
+    if (!b) return;
+    hc.show = b.dataset.s;
+    drawHandCarry();
+  });
+  lgOpenOnClick($('#hc-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/hand-carry');
+  } catch (err) {
+    if (seq === lgPage && $('#hc-count')) $('#hc-count').textContent = `Could not read the plans: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#hc-out')) return;
+  hc.data = r;
+  lgSetCount('handcarry', r.plans.length);
+  drawHandCarry();
+}
+
+const HC_ROLE = { deliver: ['Deliver', 'moving', 'To'], collect: ['Collect', 'warn', 'From'], move: ['Move', '', 'From'] };
+/* One watch on a stop or waiting for one: what, who it goes to or comes from, and ours with its clients. */
+const hcRow = (x, role, extra = '') => {
+  const [tag, tone, dir] = HC_ROLE[role];
+  const who = x.who ? `${dir} <b>${lgPerson(x.who.name, x.who.link)}</b>` : '';
+  return `<div class="ov-row"${x.id ? ` data-id="${x.id}" tabindex="0" role="link"` : ''}>
+    <div class="ov-row-main">
+      <div><span class="lg-tag ${tone}">${tag}</span> ${/\d/.test(x.stock_no) ? `<span class="lg-stock">#${esc(x.stock_no)}</span> ` : ''}<b>${esc([x.brand, x.model].filter(Boolean).join(' · ') || 'Watch')}</b></div>
+      <div class="count" style="margin:2px 0 0">${[who, x.place && esc(x.place), extra].filter(Boolean).join(' · ') || '&nbsp;'}</div>
+    </div>
+    <div class="ov-row-side hc-ours">${coOurs(x)}</div>
+  </div>`;
+};
+const hcWords = (p) =>
+  [
+    p.name,
+    p.start,
+    p.notes,
+    ...p.stops.flatMap((s) => [s.to, s.from, s.flight, s.notes, ...['deliver', 'collect', 'move'].flatMap((k) => s[k].flatMap((x) => [x.stock_no, x.brand, x.model, x.place, x.who?.name, x.who?.link?.client_name, x.watch?.bought_from?.name, x.watch?.sold_to?.name]))]),
+  ];
+const hcWaitWords = (x) => [x.stock_no, x.brand, x.model, x.place, x.who?.name, x.who?.link?.client_name, x.on_plan?.name, x.watch?.bought_from?.name, x.watch?.sold_to?.name];
+
+function hcPlan(p) {
+  const c = p.counts;
+  const flights = p.flights.map((f) => money(f.amount, f.currency || '')).join(' + ');
+  const route = [p.start || 'Start', ...p.stops.map((s) => `${s.to || '?'}${s.date ? ` ${dayWords(s.date).replace(/ \d{4}$/, '')}` : ''}`)];
+  return `<section class="panel hc-plan">
+    <div class="hc-head">
+      <h2 class="sf-h"><a href="#/lg/${p.id}">${esc(p.name)}’s plan</a></h2>
+      ${p.completed ? `<span class="lg-tag">Completed${p.completed_at ? ` ${esc(sfDay(p.completed_at))}` : ''}</span>` : ''}
+    </div>
+    <div class="count" style="margin:4px 0 0">${[
+      `${c.stops} stop${c.stops === 1 ? '' : 's'}`,
+      `${c.deliver} to deliver`,
+      `${c.collect} to collect`,
+      c.move && `${c.move} to move`,
+    ]
+      .filter(Boolean)
+      .join(' · ')}${flights ? ` · flights ${flights}` : ''}</div>
+    <p class="hc-route">${route.map((x) => esc(x)).join(' <span aria-hidden="true">→</span> ')}</p>
+    ${p.notes ? `<p class="sf-notes" style="margin:0 0 8px">${esc(p.notes)}</p>` : ''}
+    ${
+      p.stops.length
+        ? p.stops
+            .map((s) => {
+              const items = [...s.deliver.map((x) => hcRow(x, 'deliver')), ...s.collect.map((x) => hcRow(x, 'collect')), ...s.move.map((x) => hcRow(x, 'move'))];
+              const when = [s.date && dayWords(s.date), s.time, s.flight, s.cost && money(s.cost, s.currency || '')].filter(Boolean);
+              return `<div class="hc-stop">
+                <h3 class="hc-stop-h">Stop ${s.n} — ${esc(s.to || 'not written')}${s.from ? ` <span class="count" style="margin:0;font-weight:400">from ${esc(s.from)}</span>` : ''}</h3>
+                ${when.length ? `<div class="count" style="margin:0">${when.map((w, i) => (i === when.length - 1 && s.cost ? w : esc(w))).join(' · ')}</div>` : ''}
+                ${s.notes ? `<div class="sf-notes">${esc(s.notes)}</div>` : ''}
+                ${items.length ? items.join('') : '<p class="sub" style="margin:6px 0 0">Nothing assigned to this stop yet.</p>'}
+              </div>`;
+            })
+            .join('')
+        : '<p class="sub" style="margin:8px 0 0">No stops yet.</p>'
+    }
+  </section>`;
+}
+
+function drawHandCarry() {
+  const r = hc.data;
+  if (!r || !$('#hc-out')) return;
+  const waitN = r.waiting.deliver.length + r.waiting.collect.length;
+  $('#hc-show').innerHTML = [
+    ['open', 'Open plans', r.plans.length],
+    ['waiting', 'Waiting for a plan', waitN],
+    ['history', 'Plans history', r.history.length],
+  ]
+    .map(([k, label, n]) => `<button type="button" class="pill${hc.show === k ? ' on' : ''}" data-s="${k}" aria-pressed="${hc.show === k}">${label}<b>${n}</b></button>`)
+    .join('');
+  const words = hc.q.toLowerCase().split(/\s+/).filter(Boolean);
+
+  if (hc.show === 'waiting') {
+    const pick = (list) => list.filter((x) => sfMatch(words, ...hcWaitWords(x)));
+    const deliver = pick(r.waiting.deliver);
+    const collect = pick(r.waiting.collect);
+    const onPlan = (x) => (x.on_plan ? `<a href="#/lg/${x.on_plan.id}">on ${esc(x.on_plan.name)}’s plan, stop ${x.on_plan.stop}${x.on_plan.to ? ` (${esc(x.on_plan.to)})` : ''}</a>` : 'not on a plan yet');
+    const box = (title, list, role, blank) => `<section class="panel sf-acc">
+      <h2 class="sf-h">${title} <span class="count">${list.length}</span></h2>
+      ${list.length ? list.map((x) => hcRow(x, role, onPlan(x))).join('') : `<p class="sub" style="margin:6px 0 0">${words.length ? 'Nothing matches.' : blank}</p>`}
+    </section>`;
+    $('#hc-count').textContent = `${deliver.length} ready to deliver · ${collect.length} to collect${words.length ? ` (of ${r.waiting.deliver.length} and ${r.waiting.collect.length})` : ''}`;
+    $('#hc-out').innerHTML = box('Ready to deliver', deliver, 'deliver', 'Nothing is waiting to be delivered.') + box('To collect', collect, 'collect', 'No incomings waiting to be collected.');
+    return;
+  }
+  const all = hc.show === 'history' ? r.history : r.plans;
+  const plans = all.filter((p) => sfMatch(words, ...hcWords(p)));
+  const n = plans.length;
+  $('#hc-count').textContent = `${n} ${hc.show === 'history' ? 'completed ' : 'open '}plan${n === 1 ? '' : 's'}${words.length ? ` of ${all.length}` : ''}`;
+  $('#hc-out').innerHTML = n
+    ? plans.map(hcPlan).join('')
+    : `<p class="sub">${words.length ? 'No plan matches.' : hc.show === 'history' ? 'No plan has been completed yet.' : 'No hand-carry plan is open right now.'}</p>`;
+}
+
+/* ── transactions ───────────────────────────────────────────────── */
+
+/*
+ * The logistics app's All Transactions page (asked 26 Oct 2026): each watch
+ * bought or sold with the accessories that go with it, and what is still
+ * pending either way. Linked as on the other tabs: the watch to ours and its
+ * clients, the client (the app's own id) to the logistics client and — as
+ * that one is — to ours. The same rows sit on the watch's own page, with its
+ * costs (txBlock), never on its tile.
+ */
+const tx = { q: '', type: '', country: '', client: '', data: null };
+
+/* "4/4 pending", "complete", "no items" — the app's own words. */
+const txStatus = (t) =>
+  !t.total ? '<span class="count" style="margin:0">no items</span>' : !t.pending ? '<span class="lg-tag">Complete</span>' : `<span class="lg-tag warn">${t.pending}/${t.total} pending</span>`;
+const txAcc = (it) => esc(it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory);
+/* What is still owed, by which way it goes, then what is already settled. */
+const txItems = (t) => {
+  const open = (dir) => t.items.filter((it) => !it.done && it.dir === dir);
+  return [
+    open('give').length && `<span class="lg-tag warn">We give: ${open('give').map(txAcc).join(', ')}</span>`,
+    open('get').length && `<span class="lg-tag warn">They give: ${open('get').map(txAcc).join(', ')}</span>`,
+    t.items.some((it) => it.done) && `<span class="lg-tag">Settled: ${t.items.filter((it) => it.done).map(txAcc).join(', ')}</span>`,
+  ]
+    .filter(Boolean)
+    .join('');
+};
+const txClient = (t) => (t.client ? lgPerson(t.client.name, t.client) : '<span class="blank">not written</span>');
+const txType = (t) => (t.type === 'sold' ? 'Sold' : t.type === 'bought' ? 'Bought' : t.type || '—');
+
+async function showLogisticsTransactions() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('transactions')}
+    <p class="sub" style="margin:0 0 12px">Accessory transactions — each watch bought or sold, and the accessories still to give or collect. Every row is linked to our stock and its client.</p>
+    <div class="lg-toolbar tx-toolbar">
+      <input class="q" type="search" id="txq" placeholder="Stock number, reference, client, accessory…" value="${esc(tx.q)}">
+      <select id="txtype" aria-label="Type"><option value="">All types</option><option value="bought">Bought</option><option value="sold">Sold</option></select>
+      <select id="txcountry" aria-label="Country"><option value="">All countries</option></select>
+      <select id="txclient" aria-label="Client"><option value="">All clients</option></select>
+    </div>
+    <div class="count" id="tx-count">Reading the transactions…</div>
+    <div id="tx-out"></div>`;
+  let timer;
+  $('#txq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      tx.q = e.target.value;
+      drawTransactions();
+    }, 150);
+  });
+  for (const [id, key] of [['#txtype', 'type'], ['#txcountry', 'country'], ['#txclient', 'client']]) {
+    $(id).addEventListener('change', (e) => {
+      tx[key] = e.target.value;
+      drawTransactions();
+    });
+  }
+  lgOpenOnClick($('#tx-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/transactions');
+  } catch (err) {
+    if (seq === lgPage && $('#tx-count')) $('#tx-count').textContent = `Could not read the transactions: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#tx-out')) return;
+  tx.data = r;
+  $('#txcountry').innerHTML = `<option value="">All countries</option>${r.countries.map((c) => `<option>${esc(c)}</option>`).join('')}`;
+  $('#txclient').innerHTML = `<option value="">All clients</option>${r.clients.map((c) => `<option value="${c.id}">${esc(c.name)}${c.country ? ` (${esc(c.country)})` : ''}</option>`).join('')}`;
+  if (!r.countries.includes(tx.country)) tx.country = '';
+  if (!r.clients.some((c) => String(c.id) === tx.client)) tx.client = '';
+  $('#txtype').value = tx.type;
+  $('#txcountry').value = tx.country;
+  $('#txclient').value = tx.client;
+  drawTransactions();
+}
+
+function drawTransactions() {
+  const r = tx.data;
+  if (!r || !$('#tx-out')) return;
+  const words = tx.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = r.transactions.filter(
+    (t) =>
+      (!tx.type || t.type === tx.type) &&
+      (!tx.country || t.client?.country === tx.country) &&
+      (!tx.client || String(t.client?.lg_client_id) === tx.client) &&
+      sfMatch(words, t.stock_no, t.reference, t.brand, t.notes, t.client?.name, t.client?.client_name, ...t.items.map((it) => it.accessory), t.watch?.bought_from?.name, t.watch?.sold_to?.name)
+  );
+  const n = rows.length;
+  const pending = rows.filter((t) => t.pending).length;
+  $('#tx-count').textContent = `${n} transaction${n === 1 ? '' : 's'}${n < r.transactions.length ? ` of ${r.transactions.length}` : ''} · ${pending} with accessories pending`;
+  if (!n) {
+    $('#tx-out').innerHTML = `<p class="sub">${r.transactions.length ? 'No transaction matches.' : 'The logistics app has no accessory transactions.'}</p>`;
+    return;
+  }
+  $('#tx-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
+      <th>Date</th><th>Stock</th><th>Type</th><th>Watch</th><th>Client</th><th>Country</th><th>Accessories</th><th>Status</th><th>Ours · client</th>
+    </tr></thead><tbody>${rows
+      .map(
+        (t) => `<tr data-id="${t.id}" tabindex="0">
+          <td style="white-space:nowrap">${esc(sfDay(t.date) || '—')}</td>
+          <td style="white-space:nowrap">${/\d/.test(t.stock_no) ? `<span class="lg-stock">#${esc(t.stock_no)}</span>` : esc(t.stock_no || '—')}</td>
+          <td>${esc(txType(t))}</td>
+          <td><a href="#/lg/${t.id}"><b>${esc(t.brand || 'Watch')}</b></a>${t.reference && t.reference !== t.stock_no ? `<div class="count" style="margin:2px 0 0">Ref ${esc(t.reference)}</div>` : ''}</td>
+          <td><b>${txClient(t)}</b></td>
+          <td>${esc(t.client?.country || '—')}</td>
+          <td>${txItems(t) ? `<div class="lg-ov" style="margin:0">${txItems(t)}</div>` : ''}</td>
+          <td style="white-space:nowrap">${txStatus(t)}</td>
+          <td>${coOurs(t)}</td>
+        </tr>`
+      )
+      .join('')}</tbody></table></div>`;
+}
+
+/* ── accessories ────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Accessories Management page (asked 26 Oct 2026): what
+ * we owe clients and what they owe us — by accessory, by brand, and by client
+ * (grouped by country, one row per transaction and direction) — counted as
+ * the app counts. Each row linked to our watch and the client as on the
+ * Transactions tab. Settling is the transaction's edit, not a button here.
+ */
+const acc = { q: '', data: null };
+
+async function showLogisticsAccessories() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('accessories')}
+    <p class="sub" style="margin:0 0 12px">Everything we owe and are owed, by accessory, brand and client — from the accessory transactions. <a href="#/logistics/accessories-all">See the lists</a> (to collect, to give, settlements, swaps).</p>
+    <div id="acc-top" class="acc-two"></div>
+    <div id="acc-brand"></div>
+    <div class="lg-toolbar" style="grid-template-columns:1fr;margin-top:14px">
+      <input class="q" type="search" id="accq" placeholder="Client, country, stock number, reference, accessory…" value="${esc(acc.q)}">
+    </div>
+    <div class="count" id="acc-count">Reading the accessories…</div>
+    <div id="acc-out"></div>`;
+  let timer;
+  $('#accq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      acc.q = e.target.value;
+      drawAccClients();
+    }, 150);
+  });
+  lgOpenOnClick($('#acc-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/accessories');
+  } catch (err) {
+    if (seq === lgPage && $('#acc-count')) $('#acc-count').textContent = `Could not read the accessories: ${err.message}`;
+    return;
+  }
+  if (seq !== lgPage || !$('#acc-out')) return;
+  acc.data = r;
+  const side = (title, s, blank) => `<section class="panel">
+      <h2 class="sf-h">${title}</h2>
+      <div class="acc-n">${s.total}</div>
+      ${s.by_accessory.length ? `<div class="acc-break">${s.by_accessory.map((a) => `<div><span>${esc(a.accessory)}</span><b>${a.n}</b></div>`).join('')}</div>` : `<p class="sub" style="margin:4px 0 0">${blank}</p>`}
+    </section>`;
+  $('#acc-top').innerHTML = side('We need to give clients', r.give, 'Nothing to give — all clear.') + side('Clients need to give us', r.get, 'Nothing owed to us — all clear.');
+  $('#acc-brand').innerHTML = `<section class="panel" style="margin-top:14px">
+      <h2 class="sf-h">Pending by brand</h2>
+      ${
+        r.by_brand.length
+          ? `<div class="tscroll"><table class="list lg"><thead><tr><th>Brand</th><th class="num">We owe</th><th class="num">Owed to us</th><th class="num">Transactions</th></tr></thead><tbody>${r.by_brand
+              .map((b) => `<tr><td><b>${esc(b.brand || 'No brand')}</b></td><td class="num">${b.give || '—'}</td><td class="num">${b.get || '—'}</td><td class="num">${b.transactions}</td></tr>`)
+              .join('')}</tbody></table></div>`
+          : '<p class="sub" style="margin:4px 0 0">Nothing pending on any brand.</p>'
+      }
+    </section>`;
+  drawAccClients();
+}
+
+function drawAccClients() {
+  const r = acc.data;
+  if (!r || !$('#acc-out')) return;
+  const words = acc.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rowWords = (x) => [x.stock_no, x.reference, x.brand, ...x.items, x.watch?.bought_from?.name, x.watch?.sold_to?.name];
+  let shown = 0;
+  const html = r.by_country
+    .map((c) => {
+      const clients = c.clients
+        .map((p) => {
+          const head = [c.country, p.client?.name, p.client?.client_name];
+          const rows = p.rows.filter((x) => sfMatch(words, ...head, ...rowWords(x)));
+          return rows.length ? { p, rows } : null;
+        })
+        .filter(Boolean);
+      if (!clients.length) return '';
+      shown += clients.length;
+      const items = clients.reduce((a, x) => a + x.rows.reduce((b, y) => b + y.items.length, 0), 0);
+      return `<details class="panel acc-country" open>
+        <summary><h2 class="sf-h">${esc(c.country || 'No country')} <span class="count" style="margin:0">· ${clients.length} client${clients.length === 1 ? '' : 's'}</span></h2><span class="count" style="margin:0">${items} pending</span></summary>
+        ${clients
+          .map(
+            ({ p, rows }) => `<div class="acc-client">
+              <h3 class="hc-stop-h">${p.client ? lgPerson(p.client.name, p.client) : '<span class="blank">Client not listed in the logistics app</span>'} <span class="count" style="margin:0;font-weight:400">· we owe ${p.give} · owed to us ${p.get}</span></h3>
+              ${rows
+                .map(
+                  (x) => `<div class="ov-row" data-id="${x.id}" tabindex="0" role="link">
+                    <div class="ov-row-main">
+                      <div>${/\d/.test(x.stock_no) ? (x.watch ? `<a class="lg-stock" href="#/watch/${x.watch.id}">#${esc(x.stock_no)}</a>` : `<span class="lg-stock">#${esc(x.stock_no)}</span>`) : `<span class="lg-stock">${esc(x.stock_no || '—')}</span>`}${
+                        x.reference && x.reference !== x.stock_no ? ` <span class="count" style="margin:0">Ref ${esc(x.reference)}</span>` : ''
+                      }${x.brand ? ` <span class="count" style="margin:0">· ${esc(x.brand)}</span>` : ''}</div>
+                      <div class="lg-ov"><span class="lg-tag ${x.dir === 'give' ? 'problem' : 'warn'}">${x.dir === 'give' ? 'We give' : 'They give'}</span>${x.items.map((i) => `<span class="lg-tag">${esc(i)}</span>`).join('')}</div>
+                    </div>
+                    <div class="ov-row-side hc-ours">${coOurs(x)}</div>
+                  </div>`
+                )
+                .join('')}
+            </div>`
+          )
+          .join('')}
+      </details>`;
+    })
+    .join('');
+  const all = r.by_country.reduce((a, c) => a + c.clients.length, 0);
+  $('#acc-count').textContent = `${shown} client${shown === 1 ? '' : 's'}${words.length ? ` of ${all}` : ''} with accessories pending`;
+  $('#acc-out').innerHTML = html || `<p class="sub">${words.length ? 'Nothing pending matches.' : 'Nothing is pending with any client.'}</p>`;
+}
+
+/* One transaction on a watch's page: who, when, what is still owed either way, and what was handed over. */
+function txBlock(t) {
+  const who = t.type === 'sold' ? 'Sold to' : t.type === 'bought' ? 'Bought from' : txType(t);
+  return `<div class="tx-block">
+    <div class="tx-head"><a href="#/lg/${t.id}"><b>${esc(who)}</b></a> <b>${txClient(t)}</b>${t.client?.country ? ` <span class="count" style="margin:0">· ${esc(t.client.country)}</span>` : ''}
+      <span class="tx-side">${txStatus(t)} <span class="count" style="margin:0">${esc(sfDay(t.date))}</span></span></div>
+    ${t.reference && t.reference !== t.stock_no ? `<div class="count" style="margin:2px 0 0">Ref ${esc(t.reference)}</div>` : ''}
+    ${txItems(t) ? `<div class="lg-ov">${txItems(t)}</div>` : ''}
+    ${t.settlements
+      .map(
+        (s) =>
+          `<div class="count" style="margin:4px 0 0">${esc(s.dir === 'give' ? 'Given' : 'Received')}${s.at ? ` ${esc(sfDay(s.at))}` : ''}${s.items.length ? `: ${esc(s.items.join(', '))}` : ''}${s.notes ? ` — ${esc(s.notes)}` : ''}${
+            s.photo_count ? ` · ${s.photo_count} photo${s.photo_count === 1 ? '' : 's'}` : ''
+          }</div>`
+      )
+      .join('')}
+    ${t.notes ? `<div class="sf-notes" style="margin-top:4px">${esc(t.notes)}</div>` : ''}
+  </div>`;
 }
 
 /* ── the overview ───────────────────────────────────────────────── */
@@ -1497,8 +2317,78 @@ function renderClientLogistics(c, box, r) {
 
 const TONE_CLASS = { here: 'here', moving: 'moving', away: 'away', sold: 'sold' };
 
+/*
+ * The watch's accessories (asked 26 Oct 2026: "what is missing against that
+ * watch and what we have"), in their own panel under Logistics: what it has
+ * (Chrono Key's box / papers / service papers / accessories, what the place's
+ * stock row says came with it, what a client has since handed over), what is
+ * missing (Chrono Key's "no", the stock row's missing, what a client still
+ * owes us, the To collect list), what we owe a buyer, and what we gave. Each
+ * line says where it comes from and opens that record.
+ */
+function renderWatchAccessories() {
+  const box = $('#acc-panel');
+  const A = current?.logistics?.accessories;
+  if (!box) return;
+  if (!A) {
+    box.hidden = true;
+    return;
+  }
+  const ck = A.chrono_key || {};
+  const CK = [['box', 'Box'], ['papers', 'Papers'], ['service_papers', 'Service papers']];
+  const tag = (t, tone = '') => `<span class="lg-tag ${tone}">${esc(t)}</span>`;
+  const line = (src, tags, href) =>
+    tags.length ? `<div class="acc-src"><span class="count">${href ? `<a href="${href}">${src}</a>` : src}</span><span class="lg-ov" style="margin:0">${tags.join('')}</span></div>` : '';
+  const who = (x, dir) => (x.client ? `${dir} ${esc(x.client.name)}` : x.type === 'sold' ? 'Sold' : 'Bought');
+  const groups = [
+    [
+      'Has',
+      [
+        line('Chrono Key', [...CK.filter(([k]) => ck[k] === true).map(([, l]) => tag(l)), ...(ck.accessories ? [tag(ck.accessories)] : [])]),
+        ...A.places.map((p) => line(`With it in ${esc(p.place)}`, p.present.map((x) => tag(x)), `#/lg/${p.id}`)),
+        ...A.received.map((t) => line(`${who(t, 'Received from')}`, t.items.map((x) => tag(x)), `#/lg/${t.id}`)),
+      ],
+    ],
+    [
+      'Missing',
+      [
+        line('Chrono Key', CK.filter(([k]) => ck[k] === false).map(([, l]) => tag(`No ${l.toLowerCase()}`, 'warn'))),
+        ...A.places.map((p) => line(`Missing in ${esc(p.place)}`, p.missing.map((x) => tag(x, 'warn')), `#/lg/${p.id}`)),
+        ...A.owed_to_us.map((t) => line(`${who(t, 'To collect from')}`, t.items.map((x) => tag(x, 'warn')), `#/lg/${t.id}`)),
+        ...A.to_collect.map((c) => line(`To collect${c.who ? ` from ${esc(c.who)}` : ''}`, c.items.map((x) => tag(x, 'warn')), `#/lg/${c.id}`)),
+      ],
+    ],
+    [
+      'We owe',
+      [
+        ...A.we_owe.map((t) => line(`${who(t, 'To give')}`, t.items.map((x) => tag(x, 'problem')), `#/lg/${t.id}`)),
+        ...A.to_give.map((g) => line(`To give${g.who ? ` ${esc(g.who)}` : ''}${g.in_safe ? ' · in our safe' : ''}`, g.items.map((x) => tag(x, 'problem')), `#/lg/${g.id}`)),
+      ],
+    ],
+    ['Given', A.given.map((t) => line(`${who(t, 'Given to')}`, t.items.map((x) => tag(x)), `#/lg/${t.id}`))],
+  ]
+    .map(([title, lines]) => [title, lines.filter(Boolean)])
+    .filter(([, lines]) => lines.length);
+  if (!groups.length) {
+    box.hidden = true;
+    return;
+  }
+  // How many accessories, not how many lines: a box missing in Dubai and still owed by the client is one box.
+  const distinct = (lists) => new Set(lists.flat().map((x) => String(x).replace(/ × \d+$/, '').trim().toLowerCase()).filter(Boolean)).size;
+  const missing = distinct([...A.places.map((p) => p.missing), ...A.owed_to_us.map((t) => t.items), ...A.to_collect.map((c) => c.items), CK.filter(([k]) => ck[k] === false).map(([, l]) => l)]);
+  const owe = distinct([...A.we_owe.map((t) => t.items), ...A.to_give.map((g) => g.items)]);
+  const note = [missing && `${missing} missing`, owe && `${owe} to give`].filter(Boolean).join(' · ');
+  box.hidden = false;
+  box.innerHTML = fold(
+    'accessories',
+    `Accessories${note ? ` <span class="fold-note">· ${note}</span>` : ''}`,
+    groups.map(([title, lines]) => `<div class="lg-section"><h3>${esc(title)}</h3>${lines.join('')}</div>`).join('')
+  );
+}
+
 /** The "right now" line under the watch's status, and its logistics panel. */
 function renderWatchLogistics() {
+  renderWatchAccessories();
   const L = current?.logistics;
   const strip = $('#lg-now');
   const panel = $('#lg-panel');
@@ -1541,6 +2431,7 @@ function renderWatchLogistics() {
       : `<div class="figures" style="margin:0 0 6px">${totals.map(([cur, n]) => `<div><span>Moving it, ${esc(cur)}</span><b>${money(n, cur === '?' ? '' : cur)}</b></div>`).join('')}</div>`;
 
   /* What it cost, History and Records: a row of buttons, each opening its own section, all closed until opened. */
+  const txPending = (L.transactions || []).reduce((a, x) => a + x.pending, 0);
   const sections = [
     L.costs.lines.length && {
       key: 'lg-cost',
@@ -1549,6 +2440,12 @@ function renderWatchLogistics() {
       body: (t && totals.length > 1 ? `<p class="count" style="margin:0 0 6px">By currency: ${totals.map(([cur, n]) => money(n, cur === '?' ? '' : cur)).join(' · ')}</p>` : '') + L.costs.lines
         .map((c) => `<div class="sold-row"><span><a href="#/lg/${c.itemId}">${esc(c.source)}</a> · ${esc(c.title || '')}${c.detail ? ` <span class="count" style="margin:0">${esc(c.detail)}</span>` : ''}</span><span>${money(c.amount, c.currency || '')} <span class="count">${esc(fmtDate(c.date))}</span></span></div>`)
         .join(''),
+    },
+    // Its accessory transactions, beside what it cost (asked 26 Oct 2026: on the watch's page, not its tile).
+    L.transactions?.length && {
+      key: 'lg-tx',
+      label: `Transactions — ${L.transactions.length}${txPending ? ` · ${txPending} pending` : ''}`,
+      body: L.transactions.map(txBlock).join(''),
     },
     {
       key: 'lg-history',

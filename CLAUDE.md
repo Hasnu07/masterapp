@@ -353,6 +353,83 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   finds 11668 or a timestamp). A logistics contact is hidden only when our
   client of that name is in the same answer. Chips: the HK list by its
   section; the safe (clients' watches) only under All; moved copies never.
+- **In Safe** (asked 26 Oct 2026): a Logistics tab, the logistics app's own
+  In Safe page — clients' watches we hold, NOT our stock, never priced. Its
+  `safeStock` rows still in the safe (a row a move left behind is history),
+  each with who it is for (the row's `from`, the app's Owner), out with its
+  owner (`withClient`), polish, what is missing; and "Accessories in the safe":
+  `accGive` rows ticked `inSafe`. Cards or a list, searched and sorted in the
+  page; a card opens its record, and our watch of that number is linked
+  (`inSafe()`, `/api/logistics/in-safe`). The tab shows how many watches. On
+  the Inventory tiles a watch in the safe says "In safe · for <name>"
+  (`listWatches` → `in_safe`), and the watch page's "right now" names them.
+  The app's Give / Move / Sold buttons are not here: Give and the rest write
+  into the logistics records, so open the record and edit it. The owner (a
+  typed name) links to the logistics client of that name, and to OUR client
+  only as that one is linked — by its watches, the Clients tab's rule
+  (`linksByName`); a name no logistics client carries links nowhere.
+- **Checked out** (asked 26 Oct 2026, "same rule that each client and stock
+  should be linked"): a Logistics tab, the app's Checkout page — watches held
+  somewhere for a while, not sold (`checkoutStock`; a row with status
+  returned / moved / sold / done is history). Each linked to our watch of that
+  number and through it to OUR clients — bought from, sold to, Chrono Key's
+  ids — never from the typed reason ("Given back to Khawar"). The app lists a
+  watch again each time it is checked out without a return (1439 three
+  times): one entry here, the earlier rows under it; "-" and "xxxxxx" are no
+  number and never merged. The HK rows' description repeats the number and
+  brand ("1508 · Patek Philippe · 5396R-016"): stripped for the model. From
+  (Hong Kong / Dubai / London) as chips, days out, list or cards
+  (`checkedOut()`, `/api/logistics/checked-out`). The tab shows how many.
+  Return / delete are the record's edit and delete, not buttons here.
+- **Hand carry** (asked 26 Oct 2026, "same rules, same linking shown against
+  a watch stock on main"; "make sure the ui remains consistent" — the
+  console's look, not the app's): a Logistics tab, the app's Hand Carry /
+  Mission Plan page (`kashanPlans`). A plan = `name`, `currentCity` (the
+  start), `legs` (stops: `toCity`, `date`, `time`, `flightInfo`,
+  `flightCost` + `flightCostCurrency`) with `deliveries` (from Ready for
+  delivery: `readyId`, the buyer `clientName`), `collections` (incomings:
+  `incId`, `supplier`) and `stockMoves`; `status: 'completed'` +
+  `completedAt` = Plans History. Read from the app's own code, not guessed.
+  Every watch linked to ours and its clients by id; the typed buyer /
+  supplier via `linksByName`. Open plans, history, and "Waiting for a plan"
+  — the app's two side lists (Ready for delivery not shipped, incomings
+  pending / in transit), each saying which open plan has it (by its row id,
+  as the app assigns). On our watch: the Inventory tile ("Hand carry ·
+  Cristian · deliver in UAE, 25 Aug 2026", `listWatches` → `hand_carry`),
+  "right now" and the history (`situation.planStops`; `forWatch` passes the
+  stock number). `handCarry()`, `/api/logistics/hand-carry`. Adding stops,
+  assigning, AI flights, optimise, send to movements: the record's edit.
+- **Transactions** (asked 26 Oct 2026: "same rules, don't show this in card
+  but under the stock of a watch where logistic tab is"): a Logistics tab,
+  the app's All Transactions page (`transactions`: `type` bought / sold,
+  `date`, `clientId` — the APP's client id, `stockNumber`, `brand`,
+  `reference`, `items` [`accessory`, `qty`, `direction` give / get, `status`
+  pending / done]; `settlements` by `txId` + `itemIds`, `direction` give /
+  receive — read from the app's code). Filters as the app: type, country
+  (the logistics client's), client. "n/m pending", what we give and what
+  they give. Linked: the watch to ours and its clients; `clientId` → the
+  logistics client → ours as that one is (`linksByClientId`). On the WATCH
+  PAGE, a "Transactions" section beside What it cost / History / Records
+  (`forWatch` → `transactions`, `txViews`); not on the Inventory tile.
+  Give / settle / edit: the record's edit. An item's way is the app's own
+  rule (its Accessories page): `direction: 'give'` is ours to give,
+  anything else the client's to give us.
+- **Accessories** (asked 26 Oct 2026, "same rule show against each
+  watch"): the Logistics → Accessories tab is now the app's Accessories
+  Management page (`accessoriesSummary()`, `/api/logistics/accessories`),
+  counted as the app counts — pending items by quantity; by accessory
+  exactly as typed ("Links" / "links" two lines, as there); by brand (we
+  owe / owed to us / transactions); by client grouped by the client's
+  country, one row per transaction and direction, each row linked to our
+  watch and the client. A client the app does not list shows, not dropped.
+  Its old lists (To collect, To give, Settlements, Swaps) are at
+  `#/logistics/accessories-all`. **On the watch page**, an Accessories
+  panel under Logistics ("what is missing against that watch and what we
+  have"): Has (Chrono Key's box / papers / service papers / accessories, the
+  place row's `accessoriesPresent`, what a client handed over), Missing
+  (Chrono Key's "no", the row's `accessoriesMissing`, what a client still
+  owes us, `accCollect`), We owe (pending give, `accGive`, in our safe),
+  Given. `forWatch` → `accessories` (`accessoriesOf`).
 - **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
   tab "Clients" (was Contacts) lists every logistics client, which of OUR
   clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds

@@ -88,6 +88,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .chip.sold { background: var(--gold-soft); color: var(--gold); }
 .chip.returned, .chip.other { background: #eee; color: var(--muted); }
 .chip.deleted { background: var(--bad-soft); color: var(--bad); }
+.chip.insafe { background: var(--blue-soft); color: var(--blue); white-space: normal; }
 
 .filters { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 12px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
@@ -334,6 +335,52 @@ a.ov-tile:hover { border-color: #cdbf9f; }
   border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .lg-tabs a:hover { color: var(--ink); }
 .lg-tabs a.on { color: var(--ink); border-bottom-color: var(--gold); }
+.lg-tabs .lg-n { display: inline-block; min-width: 1.6em; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--blue-soft);
+  color: var(--blue); font-size: 12px; font-weight: 600; text-align: center; line-height: 1.6; }
+/* In Safe: the clients' watches we hold */
+.sf-view { display: flex; gap: 4px; }
+.sf-view .pill { min-height: 36px; }
+.sf-acc { margin-bottom: 14px; }
+.sf-h { font-size: 17px; margin: 0; }
+.sf-row { cursor: pointer; }
+.sf-row:hover { background: var(--paper); }
+.sf-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.sf-card .pic { aspect-ratio: 4 / 3; }
+.sf-card .t { min-height: 0; }
+.sf-for { font-size: 14px; }
+.sf-notes { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.sf-card:focus-visible, .sf-row:focus-visible, table.list.lg tr:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* Accessories: the two totals, by brand, by client; and a watch's own panel */
+.acc-two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 640px) { .acc-two { grid-template-columns: 1fr; } }
+.acc-n { font-family: 'EB Garamond', serif; font-size: 40px; line-height: 1.1; margin: 4px 0 8px; }
+.acc-break { max-height: 360px; overflow-y: auto; }
+.acc-break div { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 14px; border-bottom: 1px dashed var(--line); }
+table.list th.num, table.list td.num { text-align: right; }
+.acc-country { margin-bottom: 14px; }
+.acc-country > summary { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; cursor: pointer; list-style: none; }
+.acc-country > summary::-webkit-details-marker { display: none; }
+.acc-client { border-top: 1px solid var(--line); padding: 10px 0 2px; margin-top: 8px; }
+.acc-client .ov-row { border-top: 1px dashed var(--line); }
+.acc-client > h3 { text-transform: none; letter-spacing: 0; font-size: 16px; }
+.acc-src { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 5px 0; }
+.acc-src > .count { margin: 0; min-width: 9.5em; }
+/* Transactions: the tab's four filters, and one transaction on a watch's page */
+.lg-toolbar.tx-toolbar { grid-template-columns: 1fr auto auto auto; }
+@media (max-width: 640px) { .lg-toolbar.tx-toolbar { grid-template-columns: 1fr 1fr; } .lg-toolbar.tx-toolbar select { min-width: 0; } }
+.tx-block { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.tx-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; }
+.tx-side { margin-left: auto; display: inline-flex; gap: 8px; align-items: baseline; }
+/* Hand carry: a plan, its route and its stops */
+.hc-plan { margin-bottom: 14px; }
+.hc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hc-route { margin: 8px 0 6px; font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.hc-route span { color: var(--muted); }
+.hc-stop { border-top: 1px solid var(--line); padding: 10px 0 2px; }
+.hc-stop-h { font-size: 15px; font-weight: 600; margin: 0 0 2px; font-family: inherit; }
+.hc-stop .ov-row { border-top: 1px dashed var(--line); }
+.hc-ours { font-size: 13px; text-align: right; }
+@media (max-width: 640px) { .sf-view .pill, #co-origins .pill, #hc-show .pill { min-height: 44px; } #hc-out .ov-row-main { flex-basis: 100%; } .hc-ours { text-align: left; } }
 .lg-title { font-size: 26px; margin: 4px 0 6px; }
 .lg-subtabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
 .lg-subtabs .pill { font-size: 13px; }

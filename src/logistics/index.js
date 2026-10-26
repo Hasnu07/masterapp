@@ -3,11 +3,12 @@ import { parseMoney, realDate, displayTitle } from '../watches/fields.js';
 import { storage } from '../storage/index.js';
 import { getRates } from '../rates/index.js';
 import { listWatches } from '../watches/index.js';
-import { listClients } from '../clients/index.js';
+import { listClients, clientName } from '../clients/index.js';
 import { config } from '../config.js';
 import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics/sync.js';
-import { GROUPS, KINDS, KIND, isSecret } from './kinds.js';
+import { GROUPS, KINDS, KIND, isSecret, stockList } from './kinds.js';
 import * as situation from './situation.js';
+import { linksByName, linksByClientId } from './clients.js';
 
 /*
  * Logistics, as masterapp holds it: every record of the logistics app — and
@@ -692,16 +693,482 @@ export async function forWatch(watchId) {
     asOf(),
   ]);
   const items = rows.map((r) => ({ ...r, id: r.id }));
-  const opts = { clientName: ctx.client };
+  const opts = { clientName: ctx.client, stockNo };
   const costs = situation.costs(stockNo, items);
   costs.total = await costTotal(costs.totals, w[0].purchase_currency);
+  const transactions = await txViews(rows.filter((r) => r.kind === 'transactions' && !r.deleted_at));
   return {
     stock_no: stockNo,
     as_of: at,
     now: situation.now(items, opts),
     timeline: situation.timeline(items, opts).slice(0, 200).map((e) => ({ ...e, at: e.at ? new Date(e.at).toISOString() : null, kind_label: kindOf(e.kind).label })),
     costs,
+    // Its accessory transactions, as the Transactions tab shows them: shown with the costs on the watch's page, not on its tile.
+    transactions,
+    // What it has and what is missing, from every source that says (its own panel on the watch's page).
+    accessories: await accessoriesOf(w[0].id, rows, transactions),
     items: rows.filter((r) => !r.deleted_at).map((r) => view(r, ctx)),
+  };
+}
+
+/* ── held for a while: in the safe, checked out ──────────────────── */
+
+const text = (v) => (v === null || v === undefined || v === false ? '' : String(v).trim());
+const TICK = /^(true|✓|✔|yes|y|x|1)$/i;
+const UNTICKED = /^(false|no|n|0)$/i;
+/* A tick field that may instead say where or why: '' when unticked, 'yes' for a bare tick, else its words. */
+const ticked = (v) => (UNTICKED.test(text(v)) ? '' : TICK.test(text(v)) ? 'yes' : text(v));
+const iso = (v) => {
+  const t = situation.when(v);
+  return t ? new Date(t).toISOString() : null;
+};
+/* A day as the app wrote it (YYYY-MM-DD stays itself — no time zone moves it); milliseconds become a moment. */
+const dayOf = (v) => (/^\d{4}-\d{2}-\d{2}/.test(text(v)) ? text(v).slice(0, 10) : iso(v));
+function picturesOf(d) {
+  const prefix = photoPrefix();
+  const all = (Array.isArray(d.photos) ? d.photos : []).filter((v) => typeof v === 'string' && (/^lgfile:\d+$/.test(v) || (prefix && v.startsWith(prefix))));
+  return { picture: all[0] || null, photo_count: all.length };
+}
+
+/*
+ * Our watch of a record's stock number, and the clients Chrono Key ties it to
+ * — bought from, sold to — by id, never by a typed name: so a row on these
+ * pages links to our stock and to our client in one go.
+ */
+async function oursByStock(rows) {
+  const byNo = await oursByNumber(rows.flatMap((r) => r.stock_nos || []));
+  return (r) => (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean) || null;
+}
+async function oursByNumber(list) {
+  const nos = [...new Set(list)];
+  if (!nos.length) return new Map();
+  const person = (col) =>
+    `(SELECT jsonb_build_object('id', c.id, 'forename', c.forename, 'surname', c.surname, 'nickname', c.nickname, 'company', c.company)
+        FROM clients c WHERE c.id = w.${col} AND c.deleted_at IS NULL)`;
+  const { rows: ours } = await query(
+    `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.status,
+            (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id,
+            ${person('purchased_from_client_id')} AS bought_from, ${person('sold_to_client_id')} AS sold_to
+       FROM watches w WHERE w.stock_no = ANY($1) AND w.deleted_at IS NULL`,
+    [nos]
+  );
+  const who = (c) => (c ? { id: c.id, name: clientName(c) } : null);
+  return new Map(
+    ours.map((w) => [
+      w.stock_no,
+      { id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, photo_id: w.photo_id, bought_from: who(w.bought_from), sold_to: who(w.sold_to) },
+    ])
+  );
+}
+
+/*
+ * The logistics app's In Safe page (asked 26 Oct 2026): clients' watches we
+ * hold — never our stock, so never priced — each with who it is for (the
+ * row's "from", the app's Owner), and the accessories we owe a client that
+ * sit in the safe ("To give" ticked "in our safe"). A row a move left behind
+ * is history, not the safe now. The owner is a typed name: linked to the
+ * logistics client of that name, and to ours only as that client is
+ * (linksByName — by its watches, as on the Clients tab).
+ */
+const NOW_IN_PLACE = "COALESCE(data->>'status','') IN ('', 'current', 'consignment')";
+
+export async function inSafe() {
+  const [watchRows, accRows] = await Promise.all([
+    query(`SELECT * FROM logistics_items WHERE kind = 'safeStock' AND deleted_at IS NULL AND ${NOW_IN_PLACE}`),
+    query("SELECT * FROM logistics_items WHERE kind = 'accGive' AND deleted_at IS NULL AND lower(COALESCE(data->>'inSafe','')) NOT IN ('', 'false', 'no', 'n', '0')"),
+  ]);
+  const ourWatch = await oursByStock([...watchRows.rows, ...accRows.rows]);
+  const people = await linksByName([...watchRows.rows.map((r) => r.data?.from), ...accRows.rows.map((r) => r.data?.toClient)]);
+  const linkOf = (name) => people.get(text(name)) || null;
+
+  const watches = watchRows.rows
+    .map((r) => {
+      const d = r.data || {};
+      return {
+        id: r.id,
+        stock_no: text(d.stockNumber),
+        brand: text(d.brand),
+        model: text(d.watchModel || d.model || d.description),
+        reference: text(d.watchReference || d.reference),
+        watch_date: text(d.watchDate),
+        serial: text(d.watchSerial || d.serial),
+        owner: text(d.from),
+        owner_link: linkOf(d.from),
+        received_at: iso(d.receivedAt) || iso(d.createdAt) || new Date(r.created_at).toISOString(),
+        // Which safe or box, when it says more than a tick; whether it is out with its owner for now.
+        where: ticked(d.inSafe) === 'yes' ? '' : ticked(d.inSafe),
+        with_owner: ticked(d.withClient),
+        accessories_present: text(d.accessoriesPresent),
+        accessories_missing: text(d.accessoriesMissing),
+        need_polish: d.needPolish === true || d.needPolish === 'true',
+        polish: d.polish?.sentTo && d.polish.status !== 'done' ? text(d.polish.sentTo) : '',
+        consignment: text(d.consignment?.with),
+        notes: text(d.notes),
+        held_for_buyer: Boolean(d.heldForBuyer || d.soldId),
+        ...picturesOf(d),
+        origin: r.origin,
+        locked: (r.locked_fields || []).length > 0,
+        watch: ourWatch(r),
+      };
+    })
+    .sort((a, b) => String(b.received_at || '').localeCompare(String(a.received_at || '')) || b.id - a.id);
+
+  const accessories = accRows.rows
+    .map((r) => {
+      const d = r.data || {};
+      const w = ourWatch(r);
+      const safeRow = watches.find((x) => x.stock_no && x.stock_no === text(d.stockNumber));
+      return {
+        id: r.id,
+        stock_no: text(d.stockNumber),
+        // What the watch is, as the app shows it under the number: ours, else the safe's own row.
+        about: w ? w.title : [safeRow?.brand, safeRow?.reference].filter(Boolean).join(' · '),
+        items: text(d.items),
+        for_client: text(d.toClient),
+        for_link: linkOf(d.toClient),
+        notes: text(d.notes),
+        in_safe_at: iso(d.inSafeAt),
+        watch: w,
+      };
+    })
+    .sort((a, b) => String(b.in_safe_at || '').localeCompare(String(a.in_safe_at || '')) || b.id - a.id);
+
+  return { as_of: await asOf(), watches, accessories };
+}
+
+/*
+ * The logistics app's Checkout page (asked 26 Oct 2026): watches held
+ * somewhere for a while, not sold — a trade show, a client trying one, a
+ * driver, one given back. Each linked to our watch of that number and so to
+ * our client (who it was bought from, who it was sold to — Chrono Key's ids).
+ * The app lists a watch again each time it is checked out without a return
+ * (1439 three times): shown once here, the earlier rows under it. A number
+ * that is no number ("-", "xxxxxx") is never put together with another.
+ */
+const OUT_NOW = "COALESCE(data->>'status','') NOT IN ('returned', 'moved', 'sold', 'done')";
+const ORIGIN = { hk: 'Hong Kong', 'hong kong': 'Hong Kong', dubai: 'Dubai', london: 'London', uk: 'London', safe: 'Safe' };
+const originOf = (v) => ORIGIN[text(v).toLowerCase()] || text(v);
+/* The HK list's description repeats the number and the brand ("1508 · Patek Philippe · 5396R-016"): the model is what is left. */
+function modelOf(d, stock, brand) {
+  const parts = text(d.watchModel || d.model || d.description).split(' · ').map((s) => s.trim());
+  while (parts.length > 1 && (!parts[0] || parts[0] === '-' || parts[0] === stock || parts[0].toLowerCase() === brand.toLowerCase())) parts.shift();
+  return parts.join(' · ');
+}
+
+export async function checkedOut() {
+  const { rows } = await query(`SELECT * FROM logistics_items WHERE kind = 'checkoutStock' AND deleted_at IS NULL AND ${OUT_NOW}`);
+  const ourWatch = await oursByStock(rows);
+  const all = rows
+    .map((r) => {
+      const d = r.data || {};
+      const stock = text(d.stockNumber);
+      const brand = text(d.brand);
+      return {
+        id: r.id,
+        stock_no: stock,
+        brand,
+        model: modelOf(d, stock, brand),
+        reference: text(d.watchReference || d.reference),
+        serial: text(d.watchSerial || d.serial),
+        watch_date: text(d.watchDate),
+        origin: originOf(d.originLocation),
+        checked_out: dayOf(d.checkedOutDate) || new Date(r.created_at).toISOString(),
+        reason: text(d.checkedOutBy),
+        notes: text(d.notes),
+        ...picturesOf(d),
+        locked: (r.locked_fields || []).length > 0,
+        watch: ourWatch(r),
+      };
+    })
+    .sort((a, b) => String(b.checked_out).localeCompare(String(a.checked_out)) || b.id - a.id);
+
+  const watches = [];
+  const byStock = new Map();
+  for (const w of all) {
+    const key = /\d/.test(w.stock_no) ? w.stock_no : null;
+    const first = key && byStock.get(key);
+    if (first) {
+      first.earlier.push({ id: w.id, checked_out: w.checked_out, reason: w.reason, origin: w.origin });
+      continue;
+    }
+    const g = { ...w, earlier: [] };
+    if (key) byStock.set(key, g);
+    watches.push(g);
+  }
+  const origins = new Map();
+  for (const w of watches) origins.set(w.origin, (origins.get(w.origin) || 0) + 1);
+  return {
+    as_of: await asOf(),
+    watches,
+    rows: all.length,
+    by_origin: [...origins].map(([origin, n]) => ({ origin, n })).sort((a, b) => b.n - a.n || a.origin.localeCompare(b.origin)),
+  };
+}
+
+/*
+ * The logistics app's accessory transactions (asked 26 Oct 2026, its All
+ * Transactions page): a watch bought or sold, and the accessories that go
+ * with it — each to give (we owe the client) or to collect (they owe us),
+ * pending or done — and the settlements that handed them over. Linked as
+ * everywhere: the watch to ours and its clients; the client (the app's own
+ * id) to the logistics client and, as that one is, to ours.
+ */
+async function txViews(rows) {
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.source_id).filter(Boolean);
+  const [ourWatch, people, settled] = await Promise.all([
+    oursByStock(rows),
+    linksByClientId(rows.map((r) => r.data?.clientId)),
+    ids.length
+      ? query("SELECT * FROM logistics_items WHERE kind = 'settlements' AND deleted_at IS NULL AND data->>'txId' = ANY($1) ORDER BY id", [ids])
+      : { rows: [] },
+  ]);
+  return rows
+    .map((r) => {
+      const d = r.data || {};
+      const items = (Array.isArray(d.items) ? d.items : []).filter(Boolean).map((it) => ({
+        id: text(it.id),
+        accessory: text(it.accessory) || 'Item',
+        qty: Math.max(Number(it.qty) || 1, 1),
+        // The app's own rule, as its Accessories page counts: 'give' is ours to give, anything else theirs to give us.
+        dir: it.direction === 'give' ? 'give' : 'get',
+        done: it.status === 'done',
+      }));
+      const settlements = settled.rows
+        .filter((s) => s.data?.txId === r.source_id)
+        .map((s) => {
+          const sd = s.data || {};
+          const which = new Set((Array.isArray(sd.itemIds) ? sd.itemIds : []).map(String));
+          return {
+            id: s.id,
+            at: iso(sd.ts) || iso(sd.date),
+            dir: sd.direction === 'give' ? 'give' : 'get',
+            items: items.filter((it) => which.has(it.id)).map((it) => (it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory)),
+            notes: text(sd.notes),
+            ...picturesOf(sd),
+          };
+        })
+        .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+      return {
+        id: r.id,
+        date: dayOf(d.date) || iso(d.createdAt),
+        type: d.type === 'sold' || d.type === 'bought' ? d.type : text(d.type),
+        stock_no: text(d.stockNumber),
+        brand: text(d.brand),
+        reference: text(d.reference),
+        notes: text(d.notes),
+        client: people.get(text(d.clientId)) || null,
+        items,
+        pending: items.filter((it) => !it.done).length,
+        total: items.length,
+        settlements,
+        watch: ourWatch(r),
+      };
+    })
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || b.id - a.id);
+}
+
+/** The Transactions tab: every accessory transaction, and what its filters offer (the clients and countries in it). */
+export async function transactionsList() {
+  const { rows } = await query("SELECT * FROM logistics_items WHERE kind = 'transactions' AND deleted_at IS NULL");
+  const transactions = await txViews(rows);
+  const clients = new Map();
+  for (const t of transactions) if (t.client) clients.set(t.client.lg_client_id, { id: t.client.lg_client_id, name: t.client.name, country: t.client.country });
+  return {
+    as_of: await asOf(),
+    transactions,
+    clients: [...clients.values()].sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' })),
+    countries: [...new Set(transactions.map((t) => t.client?.country).filter(Boolean))].sort(),
+  };
+}
+
+/*
+ * The logistics app's Accessories Management page (asked 26 Oct 2026),
+ * counted as it counts: every PENDING transaction item, by its quantity —
+ * ours to give when its direction is 'give', the client's to give us
+ * otherwise; by accessory exactly as typed ("Links" and "links" are two
+ * lines there too); by brand (with how many transactions); and by client,
+ * grouped by the client's country, one row per transaction and direction.
+ * Same links as the Transactions tab. A transaction whose client the app
+ * does not list is shown under "client not listed", not dropped.
+ */
+export async function accessoriesSummary() {
+  const { rows } = await query("SELECT * FROM logistics_items WHERE kind = 'transactions' AND deleted_at IS NULL");
+  const txs = await txViews(rows);
+  const total = { give: 0, get: 0 };
+  const byAcc = { give: new Map(), get: new Map() };
+  const brands = new Map();
+  const people = new Map();
+  for (const t of txs) {
+    const open = t.items.filter((it) => !it.done);
+    if (!open.length) continue;
+    const b = brands.get(t.brand) || brands.set(t.brand, { brand: t.brand, give: 0, get: 0, transactions: 0 }).get(t.brand);
+    b.transactions += 1;
+    const key = t.client ? `c${t.client.lg_client_id}` : 'none';
+    const p = people.get(key) || people.set(key, { client: t.client, country: t.client?.country || '', give: 0, get: 0, items: 0, rows: [] }).get(key);
+    for (const dir of ['give', 'get']) {
+      const mine = open.filter((it) => it.dir === dir);
+      if (!mine.length) continue;
+      for (const it of mine) {
+        total[dir] += it.qty;
+        byAcc[dir].set(it.accessory, (byAcc[dir].get(it.accessory) || 0) + it.qty);
+        b[dir] += it.qty;
+        p[dir] += it.qty;
+        p.items += 1;
+      }
+      p.rows.push({ id: t.id, dir, stock_no: t.stock_no, reference: t.reference, brand: t.brand, date: t.date, items: mine.map((it) => (it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory)), watch: t.watch });
+    }
+  }
+  const ranked = (m) => [...m].map(([accessory, n]) => ({ accessory, n })).sort((a, b) => b.n - a.n || a.accessory.localeCompare(b.accessory));
+  const countries = new Map();
+  for (const p of people.values()) {
+    const c = countries.get(p.country) || countries.set(p.country, { country: p.country, items: 0, clients: [] }).get(p.country);
+    c.items += p.items;
+    c.clients.push(p);
+  }
+  const nameOf = (p) => p.client?.name || '';
+  return {
+    as_of: await asOf(),
+    give: { total: total.give, by_accessory: ranked(byAcc.give) },
+    get: { total: total.get, by_accessory: ranked(byAcc.get) },
+    by_brand: [...brands.values()].sort((a, b) => b.give + b.get - (a.give + a.get) || a.brand.localeCompare(b.brand)),
+    by_country: [...countries.values()]
+      .sort((a, b) => a.country.localeCompare(b.country))
+      .map((c) => ({ ...c, clients: c.clients.sort((a, b) => Number(!a.client) - Number(!b.client) || nameOf(a).localeCompare(nameOf(b), 'en', { sensitivity: 'base' })) })),
+  };
+}
+
+/* A list as the app writes it: an array, or words split on commas and new lines. */
+const listOf = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,\n]+/)).map((x) => text(typeof x === 'object' && x ? x.name || x.accessory : x)).filter(Boolean);
+const PLACE_OF = { londonStock: 'London', dubaiStock: 'Dubai', hkStock: 'Hong Kong', safeStock: 'our safe', hkSituation: 'the HK list' };
+
+/*
+ * A watch's accessories (asked 26 Oct 2026: "what is missing against that
+ * watch and what we have"), from everything that says: Chrono Key's box,
+ * papers, service papers and accessories (our record); what each place's
+ * stock row says came with it and is missing; the transactions — what a
+ * client still owes us, what we still owe a buyer, what was settled; and the
+ * logistics app's To collect / To give lists. Each line says where it comes
+ * from and opens that record.
+ */
+async function accessoriesOf(watchId, rows, transactions) {
+  const { rows: w } = await query('SELECT box, papers, service_papers, accessories FROM watches WHERE id = $1', [watchId]);
+  const live = rows.filter((r) => !r.deleted_at);
+  const places = live
+    .filter((r) => PLACE_OF[r.kind] && !['moved', 'sold'].includes(r.data?.status))
+    .map((r) => ({ id: r.id, place: PLACE_OF[r.kind], present: listOf(r.data?.accessoriesPresent), missing: listOf(r.data?.accessoriesMissing) }))
+    .filter((p) => p.present.length || p.missing.length);
+  const label = (it) => (it.qty > 1 ? `${it.accessory} × ${it.qty}` : it.accessory);
+  const fromTx = (dir, done) =>
+    transactions.flatMap((t) => {
+      const items = t.items.filter((it) => it.dir === dir && it.done === done).map(label);
+      return items.length ? [{ id: t.id, items, client: t.client, type: t.type, date: t.date }] : [];
+    });
+  const list = (kind, who) =>
+    live
+      .filter((r) => r.kind === kind)
+      .map((r) => ({ id: r.id, items: listOf(r.data?.items), who: text(r.data?.[who]), in_safe: kind === 'accGive' && ticked(r.data?.inSafe) !== '', notes: text(r.data?.notes) }));
+  return {
+    chrono_key: w[0] ? { box: w[0].box, papers: w[0].papers, service_papers: w[0].service_papers, accessories: text(w[0].accessories) } : null,
+    places,
+    owed_to_us: fromTx('get', false),
+    we_owe: fromTx('give', false),
+    received: fromTx('get', true),
+    given: fromTx('give', true),
+    to_collect: list('accCollect', 'fromClient'),
+    to_give: list('accGive', 'toClient'),
+  };
+}
+
+/*
+ * The logistics app's Hand Carry plans (asked 26 Oct 2026; its kashanPlans):
+ * a person's plan of stops, each with the watches delivered there (from Ready
+ * for delivery, to the buyer typed on it), collected (incomings, from the
+ * supplier) or moved (a place's stock). Same links as everywhere: each watch
+ * to our watch of that number and through it to our clients (Chrono Key's
+ * ids); the typed buyer or supplier to the logistics client of that name, and
+ * to ours only as that one is (linksByName). Open plans first, then the
+ * app's Plans History (completed). And what is waiting for one: Ready for
+ * delivery not shipped, incomings pending or in transit (the app's own two
+ * lists), each saying which open plan has it, if any.
+ */
+export async function handCarry() {
+  const [plansQ, readyQ, incQ] = await Promise.all([
+    query("SELECT * FROM logistics_items WHERE kind = 'kashanPlans' AND deleted_at IS NULL ORDER BY id"),
+    query("SELECT * FROM logistics_items WHERE kind = 'readyForDelivery' AND deleted_at IS NULL AND COALESCE(data->>'status','') <> 'shipped' ORDER BY happened_at DESC NULLS LAST, id DESC"),
+    query("SELECT * FROM logistics_items WHERE kind = 'incomings' AND deleted_at IS NULL AND data->>'status' IN ('pending', 'in_transit') ORDER BY happened_at DESC NULLS LAST, id DESC"),
+  ]);
+  const all = [...plansQ.rows, ...readyQ.rows, ...incQ.rows];
+  const ours = await oursByNumber(all.flatMap((r) => r.stock_nos || []));
+  const watchOf = (stock) => stockList(stock).map((s) => ours.get(s)).find(Boolean) || null;
+  const typed = [];
+  for (const p of plansQ.rows) {
+    for (const leg of Array.isArray(p.data?.legs) ? p.data.legs : []) {
+      for (const x of [...(leg?.deliveries || []), ...(leg?.collections || [])]) typed.push(x?.clientName, x?.supplier);
+    }
+  }
+  const people = await linksByName([...typed, ...readyQ.rows.map((r) => r.data?.soldToBuyer), ...incQ.rows.map((r) => r.data?.supplier)]);
+  const person = (name) => (text(name) ? { name: text(name), link: people.get(text(name)) || null } : null);
+
+  const ITEM = {
+    deliver: (x) => ({ who: person(x.clientName), place: text(x.clientCountry), source_id: text(x.readyId) }),
+    collect: (x) => ({ who: person(x.supplier), place: text(x.country), source_id: text(x.incId) }),
+    move: (x) => ({ who: null, place: text(x.fromLocation), source_id: text(x.stockId) }),
+  };
+  const plans = plansQ.rows.map((r) => {
+    const d = r.data || {};
+    const flights = new Map();
+    const stops = (Array.isArray(d.legs) ? d.legs : []).map((leg, i) => {
+      const l = leg || {};
+      const items = Object.fromEntries(
+        situation.PLAN_PARTS.map(([part, role]) => [
+          role,
+          (Array.isArray(l[part]) ? l[part] : []).map((x) => ({
+            stock_no: text(x?.stockNumber),
+            brand: text(x?.brand),
+            model: text(x?.model),
+            ...ITEM[role](x || {}),
+            watch: watchOf(x?.stockNumber),
+          })),
+        ])
+      );
+      const cost = Number(l.flightCost) || 0;
+      const currency = text(l.flightCostCurrency).toUpperCase();
+      if (cost > 0) flights.set(currency, (flights.get(currency) || 0) + cost);
+      return { n: i + 1, from: text(l.fromCity), to: text(l.toCity), date: dayOf(l.date), time: text(l.time), flight: text(l.flightInfo), cost: cost || null, currency, notes: text(l.notes), ...items };
+    });
+    const count = (role) => stops.reduce((a, s) => a + s[role].length, 0);
+    return {
+      id: r.id,
+      name: text(d.name) || 'Plan',
+      start: text(d.currentCity),
+      notes: text(d.notes),
+      completed: d.status === 'completed',
+      completed_at: d.status === 'completed' ? iso(d.completedAt) : null,
+      stops,
+      counts: { stops: stops.length, deliver: count('deliver'), collect: count('collect'), move: count('move') },
+      flights: [...flights].map(([currency, amount]) => ({ currency, amount: Math.round(amount * 100) / 100 })),
+      locked: (r.locked_fields || []).length > 0,
+    };
+  });
+
+  // Which open plan carries a waiting row: by the row's own id, as the app assigns it.
+  const onPlan = new Map();
+  for (const p of plans.filter((x) => !x.completed)) {
+    for (const s of p.stops) for (const x of [...s.deliver, ...s.collect]) if (x.source_id && !onPlan.has(x.source_id)) onPlan.set(x.source_id, { id: p.id, name: p.name, stop: s.n, to: s.to });
+  }
+  const waiting = (r, who, model, place) => {
+    const d = r.data || {};
+    return { id: r.id, stock_no: text(d.stockNumber), brand: text(d.brand), model, who: person(who), place, on_plan: onPlan.get(text(r.source_id)) || null, watch: watchOf(d.stockNumber) };
+  };
+  return {
+    as_of: await asOf(),
+    plans: plans.filter((p) => !p.completed),
+    history: plans.filter((p) => p.completed).sort((a, b) => String(b.completed_at || '').localeCompare(String(a.completed_at || '')) || b.id - a.id),
+    waiting: {
+      deliver: readyQ.rows.map((r) => waiting(r, r.data?.soldToBuyer, text(r.data?.watchModel || r.data?.watchReference), text(r.data?.soldFromLocation))),
+      collect: incQ.rows.map((r) => waiting(r, r.data?.supplier, text(r.data?.reference || r.data?.model), text(r.data?.location || r.data?.inventoryDest))),
+    },
   };
 }
 
