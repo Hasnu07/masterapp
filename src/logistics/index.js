@@ -1038,6 +1038,101 @@ export async function accessoriesSummary() {
   };
 }
 
+/*
+ * The logistics app's Incomings page (asked 26 Oct 2026: "the same tab with
+ * the same features"), its rules read from its own code: where a watch is
+ * (`location`), who has it (`supplier`), where it is going (`inventoryDest`
+ * — the firm answer — else the typed `destination`), its status, and what the
+ * owner decided (the `ownerDecisions` record it names; none = still to
+ * decide, or "not asked yet" for one picked from FOB). A row is history once
+ * arrived, cancelled, shipped or taken into stock; its day received is the
+ * stock row's `receivedAt` (the one people correct) else `arrivedAt`. Each
+ * row linked to our watch and its clients, the typed client as far as it goes.
+ * The grouping, counters and filters are the browser's, as in the app. The
+ * app's buttons that change its records wait for the switch-over (asked).
+ */
+const OD_ACTIONS = {
+  COLLECT: 'Collect', SHIP: 'Ship', HAND_CARRY: 'Hand carry', HOLD: 'Hold', SELL_LOCAL: 'Sell locally', COMBINE: 'Combine with others',
+  RETURN: 'Return', WAIT_FOR_BOX: 'Wait for box', WAIT_FOR_DOCUMENTS: 'Wait for documents', CHANGE_DESTINATION: 'Change destination',
+  REVIEW_LATER: 'Review later', OTHER: 'Other',
+};
+const INC_DEST = { london: 'London', dubai: 'Dubai', hk: 'Hong Kong' };
+/* The app's odDescribe: what was decided, in a line. */
+const decisionWords = (d) =>
+  [d.action && (OD_ACTIONS[d.action] || d.action), d.collector && `with ${d.collector}`, d.destination && `→ ${d.destination}`, d.reviewAt && `review ${d.reviewAt}`, d.holdUntil && `until ${d.holdUntil}`]
+    .filter(Boolean)
+    .join(' · ') || text(d.rawInstruction).slice(0, 60);
+
+export async function incomingPage() {
+  const [incQ, odQ, fobQ] = await Promise.all([
+    query("SELECT * FROM logistics_items WHERE kind = 'incomings' AND deleted_at IS NULL"),
+    query("SELECT source_id, data FROM logistics_items WHERE kind = 'ownerDecisions' AND deleted_at IS NULL AND source_id IS NOT NULL"),
+    query("SELECT * FROM logistics_items WHERE kind = 'fobPicked' AND deleted_at IS NULL ORDER BY id"),
+  ]);
+  const decisions = new Map(odQ.rows.map((r) => [r.source_id, r.data || {}]));
+  const nos = [...new Set([...incQ.rows, ...fobQ.rows].flatMap((r) => r.stock_nos || []))];
+  const [ours, places, people] = await Promise.all([
+    oursByNumber(nos),
+    nos.length
+      ? query("SELECT stock_nos, data->'receivedAt' AS received FROM logistics_items WHERE kind IN ('londonStock','dubaiStock','hkStock') AND deleted_at IS NULL AND stock_nos && $1::text[]", [nos])
+      : { rows: [] },
+    linksByName(incQ.rows.map((r) => r.data?.supplier)),
+  ]);
+  const receivedOf = new Map();
+  for (const p of places.rows) {
+    const t = Number(p.received);
+    if (t) for (const s of p.stock_nos || []) if (!receivedOf.has(s)) receivedOf.set(s, t);
+  }
+  const watchOf = (r) => (r.stock_nos || []).map((s) => ours.get(s)).find(Boolean) || null;
+
+  const rows = incQ.rows.map((r) => {
+    const d = r.data || {};
+    const od = d.ownerDecisionId ? decisions.get(String(d.ownerDecisionId)) : null;
+    const received = (r.stock_nos || []).map((s) => receivedOf.get(s)).find(Boolean) || Number(d.arrivedAt) || null;
+    return {
+      id: r.id,
+      stock_no: text(d.stockNumber),
+      brand: text(d.brand),
+      reference: text(d.reference),
+      serial: text(d.serial),
+      supplier: text(d.supplier),
+      supplier_link: people.get(text(d.supplier)) || null,
+      location: text(d.location),
+      destination: INC_DEST[d.inventoryDest] || text(d.destination),
+      status: text(d.status) || 'pending',
+      eta: text(d.eta),
+      notes: text(d.notes),
+      shipped: Boolean(d.shipmentId),
+      shipped_at: iso(d.shippedAt),
+      in_stock: Boolean(d.inventoryId),
+      received_at: received ? new Date(received).toISOString() : null,
+      history: d.status === 'arrived' || d.status === 'cancelled' || Boolean(d.shipmentId) || Boolean(d.inventoryId),
+      decision: od?.status ? { status: od.status, what: decisionWords(od) } : { status: d.fromFob ? 'NOT_ASKED' : 'DECISION_NEEDED', what: '' },
+      created: Number(d.createdAt) || 0,
+      ...picturesOf(d),
+      watch: watchOf(r),
+    };
+  });
+  const fob_picked = fobQ.rows.map((r) => {
+    const d = r.data || {};
+    return {
+      id: r.id,
+      stock_no: text(d.stockNumber),
+      brand: text(d.brand),
+      model: text(d.watchModel || d.model),
+      reference: text(d.reference),
+      serial: text(d.serial),
+      supplier: text(d.supplier),
+      buy_price: Number(d.buyPrice) || null,
+      buy_currency: text(d.buyCurrency),
+      destination: text(d.destination),
+      eta: text(d.eta),
+      watch: watchOf(r),
+    };
+  });
+  return { as_of: await asOf(), rows, fob_picked };
+}
+
 /* A list as the app writes it: an array, or words split on commas and new lines. */
 const listOf = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,\n]+/)).map((x) => text(typeof x === 'object' && x ? x.name || x.accessory : x)).filter(Boolean);
 const PLACE_OF = { londonStock: 'London', dubaiStock: 'Dubai', hkStock: 'Hong Kong', safeStock: 'our safe', hkSituation: 'the HK list' };

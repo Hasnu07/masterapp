@@ -796,6 +796,33 @@ test('the Inventory card carries the logistics app’s stock card: serial, recei
   assert.deepEqual([plain.bought_from, plain.received, plain.accessories], ['typed seller', null, null], 'no logistics row: nothing made up');
 });
 
+test('incoming: the app’s Incomings page — destination, history, the owner’s decision, received day, links', async () => {
+  const add = (kind, data, stock, sourceId = null) =>
+    db("INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [kind, sourceId, data, stock]);
+  const avneet = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Avneet', 'Singh', 'manual') RETURNING id")).rows[0].id;
+  const w = (await db("INSERT INTO watches(stock_no, brand, model, origin, status, purchased_from_client_id) VALUES ('3801', 'Patek Philippe', '5267/200A', 'manual', 'incoming', $1) RETURNING id", [avneet])).rows[0].id;
+  await add('clients', { name: 'Avneet Singh', country: 'United Kingdom' }, [], 'IN-LC1');
+  await add('ownerDecisions', { status: 'SENT_TO_OWNER', action: 'HAND_CARRY', destination: 'Dubai' }, [], 'IN-OD1');
+  await add('incomings', { stockNumber: '3801', brand: 'Patek Philippe', reference: '5267/200A-001', supplier: 'Avneet Singh', location: 'United Kingdom', status: 'pending', ownerDecisionId: 'IN-OD1', inventoryDest: 'dubai', destination: 'typed somewhere' }, ['3801'], 'IN-1');
+  await add('incomings', { stockNumber: '3802', brand: 'Rolex', supplier: 'Diego', location: 'Spain', status: 'in_transit', eta: '2026-10-28' }, ['3802'], 'IN-2');
+  await add('incomings', { stockNumber: '3803', brand: 'Rolex', location: 'Italy', status: 'pending', fromFob: true }, ['3803'], 'IN-3');
+  await add('incomings', { stockNumber: '3804', brand: 'Rolex', location: 'Italy', status: 'arrived', arrivedAt: 1760000000000, inventoryId: 'D9' }, ['3804'], 'IN-4');
+  await add('dubaiStock', { stockNumber: '3804', status: 'current', receivedAt: 1761000000000 }, ['3804'], 'IN-D9');
+  await add('incomings', { stockNumber: '3805', brand: 'Tudor', location: 'Spain', status: 'pending', shipmentId: 'S9', shippedAt: 1761500000000 }, ['3805'], 'IN-5');
+  await add('fobPicked', { stockNumber: '3806', brand: 'Omega', watchModel: 'Speedmaster', supplier: 'Lataj', buyPrice: '4200', buyCurrency: 'CHF' }, ['3806'], 'IN-F1');
+
+  const r = await m.lg.incomingPage();
+  const by = (no) => r.rows.find((x) => x.stock_no === no);
+  const a = by('3801');
+  assert.deepEqual([a.destination, a.history, a.decision], ['Dubai', false, { status: 'SENT_TO_OWNER', what: 'Hand carry · → Dubai' }], 'inventoryDest is the firm answer; the decision in words');
+  assert.deepEqual([a.watch.id, a.watch.bought_from?.id, a.supplier_link?.client_id], [w, avneet, avneet], 'our watch and its client; the typed client as far as it goes');
+  assert.deepEqual([by('3802').decision.status, by('3802').destination], ['DECISION_NEEDED', ''], 'no decision record: still to decide; no destination set');
+  assert.equal(by('3803').decision.status, 'NOT_ASKED', 'picked from FOB and not asked yet');
+  assert.deepEqual([by('3804').history, by('3804').in_stock, by('3804').received_at], [true, true, new Date(1761000000000).toISOString()], 'the stock row’s day received over arrivedAt');
+  assert.deepEqual([by('3805').history, by('3805').shipped], [true, true]);
+  assert.deepEqual(r.fob_picked.filter((x) => x.stock_no === '3806').map((x) => [x.model, x.supplier, x.buy_price, x.buy_currency]), [['Speedmaster', 'Lataj', 4200, 'CHF']]);
+});
+
 /* ── the API ── */
 
 function client() {
@@ -842,6 +869,9 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const txs = await viewer.call('GET', '/api/logistics/transactions');
   assert.equal(txs.status, 200);
   assert.ok(Array.isArray(txs.body.transactions) && Array.isArray(txs.body.countries));
+  const incs = await viewer.call('GET', '/api/logistics/incoming');
+  assert.equal(incs.status, 200);
+  assert.ok(Array.isArray(incs.body.rows) && Array.isArray(incs.body.fob_picked));
   const accs = await viewer.call('GET', '/api/logistics/accessories');
   assert.equal(accs.status, 200);
   assert.ok(typeof accs.body.give.total === 'number' && Array.isArray(accs.body.by_country));
