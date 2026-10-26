@@ -823,6 +823,42 @@ test('incoming: the app’s Incomings page — destination, history, the owner�
   assert.deepEqual(r.fob_picked.filter((x) => x.stock_no === '3806').map((x) => [x.model, x.supplier, x.buy_price, x.buy_currency]), [['Speedmaster', 'Lataj', 4200, 'CHF']]);
 });
 
+test('shipments: the app’s Live Shipments and Need to Give and Collect — places, cost, stage, watches, links', async () => {
+  const add = (kind, data, stock, sourceId = null) =>
+    db("INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [kind, sourceId, data, stock]);
+  const gaetano = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Gaetano', 'Russo', 'manual') RETURNING id")).rows[0].id;
+  const w = (await db("INSERT INTO watches(stock_no, brand, model, reference, origin, status, purchased_from_client_id) VALUES ('3901', 'Patek Philippe', 'Aquanaut', '5168G-001', 'manual', 'incoming', $1) RETURNING id", [gaetano])).rows[0].id;
+  await add('clients', { name: 'Gaetano Russo', country: 'Italy' }, [], 'SH-LC1');
+  await add('dubaiStock', { stockNumber: '3902', brand: 'Patek Philippe', watchReference: '5712/1R-001', status: 'current' }, ['3902'], 'SH-D1');
+  await add('shipments', { stockNumber: '3901, 3902', fromClientId: 'SH-LC1', toText: 'Dubai office', status: 'pending', cost: 'USD 1,200', items: '2 watches + 4 boxes' }, ['3901', '3902'], 'SH-S1');
+  await add('shipments', { stockNumber: '3903', fromText: 'HK', toText: 'Germany', status: 'in_transit', tracking: '123456789012', fedex: { lastStatus: { status: 'Delivery exception', location: 'HORNSEY', derivedCode: 'DE' } }, costAmount: 50, costCurrency: 'eur' }, ['3903'], 'SH-S2');
+  await add('readyForDelivery', { stockNumber: '3901', watchModel: 'Aquanaut', soldToBuyer: 'Gaetano Russo', soldDate: '2026-10-22', soldPrice: 19900, soldCurrency: 'EUR', soldPriceUsd: 21492, shipmentId: 'SH-S1', ts: 2 }, ['3901'], 'SH-R1');
+  await add('accCollect', { stockNumber: '3902', items: 'Box and pusher', fromClient: 'Gaetano Russo' }, ['3902'], 'SH-C1');
+  await add('accGive', { stockNumber: '3901', items: 'Booklet', toClient: 'Nobody Known', inSafe: true }, ['3901'], 'SH-G1');
+
+  const r = await m.lg.shippingPage();
+  const s1 = r.shipments.find((s) => s.items === '2 watches + 4 boxes');
+  assert.deepEqual([s1.from.label, s1.from.name, s1.from.link?.client_id], ['Italy', 'Gaetano Russo', gaetano], 'the app’s client by id: its name and country, linked to ours');
+  assert.deepEqual([s1.to.label, s1.to.name], ['Dubai', 'Dubai office'], 'a typed place: its country picked out of the words');
+  assert.deepEqual(s1.cost, { currency: 'USD', amount: 1200 }, 'the old typed cost read');
+  assert.equal(s1.stage.key, 'no_tracking');
+  assert.deepEqual(s1.watches.map((x) => [x.stock, x.ref, x.watch?.id || null]), [['3901', '5168G-001', w], ['3902', '5712/1R-001', null]], 'one card, every watch; ours by our record, the other described from its logistics row');
+  const s2 = r.shipments.find((s) => s.tracking === '123456789012');
+  assert.deepEqual([s2.stage.key, s2.cost, s2.from.label, s2.to.label], ['exception', { currency: 'EUR', amount: 50 }, 'HK', 'Germany']);
+  const rd = r.ready.find((x) => x.stock_no === '3901');
+  assert.deepEqual([rd.buyer.link?.client_id, rd.shipment, rd.watch.id, rd.price, rd.currency], [gaetano, 'pending', w, 19900, 'EUR'], 'the buyer linked as far as it goes; its shipment’s status');
+  const c = r.to_collect.find((x) => x.stock_no === '3902');
+  assert.deepEqual([c.ref, c.who.link?.client_id], ['5712/1R-001', gaetano]);
+  const g = r.to_give.find((x) => x.stock_no === '3901');
+  assert.deepEqual([g.in_safe, g.who.link, g.watch.id], [true, null, w]);
+  assert.ok(r.clients.some((x) => x.name === 'Gaetano Russo'));
+
+  // Leave the shared database as it was: later tests count shipments and look clients up by name.
+  await db("DELETE FROM logistics_items WHERE source_id LIKE 'SH-%'");
+  await db("DELETE FROM watches WHERE stock_no = '3901'");
+  await db('DELETE FROM clients WHERE id = $1', [gaetano]);
+});
+
 /* ── the API ── */
 
 function client() {
@@ -869,6 +905,9 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const txs = await viewer.call('GET', '/api/logistics/transactions');
   assert.equal(txs.status, 200);
   assert.ok(Array.isArray(txs.body.transactions) && Array.isArray(txs.body.countries));
+  const ships = await viewer.call('GET', '/api/logistics/shipping');
+  assert.equal(ships.status, 200);
+  assert.ok(Array.isArray(ships.body.shipments) && Array.isArray(ships.body.ready));
   const incs = await viewer.call('GET', '/api/logistics/incoming');
   assert.equal(incs.status, 200);
   assert.ok(Array.isArray(incs.body.rows) && Array.isArray(incs.body.fob_picked));

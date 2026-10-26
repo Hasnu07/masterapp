@@ -756,7 +756,18 @@ async function oursByNumber(list) {
   return new Map(
     ours.map((w) => [
       w.stock_no,
-      { id: w.id, stock_no: w.stock_no, title: displayTitle(w), status: w.status, photo_id: w.photo_id, bought_from: who(w.bought_from), sold_to: who(w.sold_to) },
+      {
+        id: w.id,
+        stock_no: w.stock_no,
+        title: displayTitle(w),
+        brand: w.brand || '',
+        model: w.model || '',
+        reference: w.reference || '',
+        status: w.status,
+        photo_id: w.photo_id,
+        bought_from: who(w.bought_from),
+        sold_to: who(w.sold_to),
+      },
     ])
   );
 }
@@ -1035,6 +1046,157 @@ export async function accessoriesSummary() {
     by_country: [...countries.values()]
       .sort((a, b) => a.country.localeCompare(b.country))
       .map((c) => ({ ...c, clients: c.clients.sort((a, b) => Number(!a.client) - Number(!b.client) || nameOf(a).localeCompare(nameOf(b), 'en', { sensitivity: 'base' })) })),
+  };
+}
+
+/*
+ * The logistics app's Shipments tab (asked 26 Oct 2026: "the same tab with the
+ * same features … make sure our rule of stock no and clients stays"), its rules
+ * read from its code. Live shipments: the stage (situation.stage — the app's
+ * shpState), one card per shipment however many watches it carries, where it
+ * is from and going (the app's client by its id — name and country — else the
+ * typed place, the country picked out of the words), its cost (amount and
+ * currency, or the old typed "USD 1,200"). Need to give and collect: Ready for
+ * delivery, Accessories to collect, Need to give to clients. Every watch linked
+ * to ours and its clients; a client id to ours as the logistics client is; a
+ * typed name as far as it goes. The app's buttons that change its records wait
+ * for the switch-over.
+ */
+const COUNTRY_WORDS = ['switzerland', 'spain', 'italy', 'dubai', 'uae', 'united arab emirates', 'abu dhabi', 'germany', 'uk', 'united kingdom', 'england', 'london', 'france', 'paris', 'usa', 'united states', 'hong kong', 'hk', 'japan', 'singapore', 'china', 'netherlands', 'belgium', 'austria', 'portugal', 'greece', 'turkey', 'qatar', 'saudi arabia', 'kuwait', 'bahrain', 'oman', 'india', 'pakistan', 'monaco', 'luxembourg', 'ireland', 'canada', 'australia'];
+/* The app's shpCountryIn: the longest country named in the words, written as a name. */
+function countryIn(words) {
+  const t = text(words).toLowerCase();
+  const best = COUNTRY_WORDS.filter((k) => new RegExp(`(^|[^a-z])${k}([^a-z]|$)`).test(t)).sort((a, b) => b.length - a.length)[0];
+  return best ? best.replace(/\b\w/g, (c) => c.toUpperCase()).replace(/^(Uk|Hk|Uae|Usa)$/, (m) => m.toUpperCase()) : '';
+}
+/* The app's shpCost: amount + currency, or the old typed "USD 1,200". */
+function shipCost(d) {
+  const amt = Number(d.costAmount);
+  if (d.costAmount !== null && d.costAmount !== undefined && d.costAmount !== '' && amt > 0) return { currency: text(d.costCurrency || 'USD').toUpperCase(), amount: amt };
+  const m = text(d.cost).match(/([A-Za-z]{3})?\s*([\d.,]+)\s*([A-Za-z]{3})?/);
+  const n = m ? Number(m[2].replace(/,/g, '')) : 0;
+  return n ? { currency: (m[1] || m[3] || d.costCurrency || 'USD').toUpperCase(), amount: n } : null;
+}
+
+export async function shippingPage() {
+  const [shipQ, readyQ, collectQ, giveQ, clientQ] = await Promise.all([
+    query("SELECT * FROM logistics_items WHERE kind = 'shipments' AND deleted_at IS NULL"),
+    query("SELECT * FROM logistics_items WHERE kind = 'readyForDelivery' AND deleted_at IS NULL"),
+    query("SELECT * FROM logistics_items WHERE kind = 'accCollect' AND deleted_at IS NULL ORDER BY id"),
+    query("SELECT * FROM logistics_items WHERE kind = 'accGive' AND deleted_at IS NULL ORDER BY id"),
+    query("SELECT id, source_id, data FROM logistics_items WHERE kind = 'clients' AND deleted_at IS NULL ORDER BY id"),
+  ]);
+  const all = [...shipQ.rows, ...readyQ.rows, ...collectQ.rows, ...giveQ.rows];
+  const nos = [...new Set(all.flatMap((r) => r.stock_nos || []))];
+  // What a stock number is when we do not hold it: the logistics row that names it (the app's lookupStockMeta).
+  const [ours, metaQ, byId, byName] = await Promise.all([
+    oursByNumber(nos),
+    nos.length
+      ? query(
+          "SELECT stock_nos, data FROM logistics_items WHERE deleted_at IS NULL AND kind IN ('londonStock','dubaiStock','hkStock','safeStock','incomings','readyForDelivery','soldStocks','hkSituation') AND stock_nos && $1::text[] ORDER BY updated_at DESC",
+          [nos]
+        )
+      : { rows: [] },
+    linksByClientId(shipQ.rows.flatMap((r) => [r.data?.fromClientId, r.data?.toClientId])),
+    linksByName([...readyQ.rows.map((r) => r.data?.soldToBuyer), ...collectQ.rows.map((r) => r.data?.fromClient), ...giveQ.rows.map((r) => r.data?.toClient)]),
+  ]);
+  const meta = new Map();
+  for (const r of metaQ.rows) {
+    const d = r.data || {};
+    for (const s of r.stock_nos || []) {
+      const m = meta.get(s) || {};
+      meta.set(s, {
+        brand: m.brand || text(d.brand),
+        ref: m.ref || text(d.watchReference || d.reference),
+        model: m.model || text(d.watchModel || d.model),
+        picture: m.picture || picturesOf(d).picture,
+      });
+    }
+  }
+  const watchOf = (stock) => stockList(stock).map((s) => ours.get(s)).find(Boolean) || null;
+  const metaOf = (stock) => {
+    const s = stockList(stock)[0];
+    const w = s && ours.get(s);
+    const m = (s && meta.get(s)) || {};
+    return { brand: w?.brand || m.brand || '', ref: w?.reference || m.ref || '', model: w?.model || m.model || '', title: w?.title || '' };
+  };
+  const person = (name) => (text(name) ? { name: text(name), link: byName.get(text(name)) || null } : null);
+
+  const place = (d, side) => {
+    const cid = text(side === 'from' ? d.fromClientId : d.toClientId);
+    const typed = text(side === 'from' ? d.fromText : d.toText);
+    const c = cid ? byId.get(cid) : null;
+    const name = c?.name || '';
+    const country = c?.country || countryIn(typed) || countryIn(name);
+    return { name: name || typed, country, label: country || name || typed || '', link: c || null };
+  };
+  const shipments = shipQ.rows.map((r) => {
+    const d = r.data || {};
+    const st = situation.stage(d);
+    const stocks = stockList(d.stockNumber);
+    const watches = stocks.length
+      ? stocks.map((s) => {
+          const w = ours.get(s);
+          const m = meta.get(s) || {};
+          // Our record first (what we call the watch), else its logistics row, else what the shipment typed.
+          return { stock: s, brand: w?.brand || m.brand || text(d.watchBrand) || '', ref: w?.reference || m.ref || text(d.watchReference) || '', model: w?.model || m.model || '', picture: m.picture || null, watch: w || null };
+        })
+      : [{ stock: '', brand: text(d.watchBrand), ref: text(d.watchReference), model: text(d.items), picture: null, watch: null }];
+    return {
+      id: r.id,
+      status: text(d.status) || 'pending',
+      stage: { key: st.key, track: st.track ? { carrier: st.track.carrier, label: st.track.label, location: st.track.location, eta: text(st.track.eta).slice(0, 10), as_of: st.track.asOf ? new Date(st.track.asOf).toISOString() : null } : null },
+      tracking: text(d.tracking),
+      watches,
+      items: text(d.items),
+      from: place(d, 'from'),
+      to: place(d, 'to'),
+      cost: shipCost(d),
+      date: text(d.date),
+      expected: text(d.deliveryDate),
+      delivered_at: iso(d.deliveredAt),
+      note: text(d.situation),
+      order: typeof d.sortOrder === 'number' ? d.sortOrder : null,
+      has_watch: Boolean(d.hasWatch),
+      created: Number(d.createdAt) || 0,
+      ...picturesOf(d),
+    };
+  });
+  const shipStatus = new Map(shipQ.rows.map((r) => [r.source_id, text(r.data?.status)]));
+
+  const ready = readyQ.rows
+    .map((r) => {
+      const d = r.data || {};
+      return {
+        id: r.id,
+        stock_no: text(d.stockNumber),
+        model: text(d.watchModel || d.watchReference),
+        reference: text(d.watchReference),
+        from: text(d.soldFromLocation || d.originLocation),
+        buyer: person(d.soldToBuyer),
+        sold_on: text(d.soldDate),
+        price: Number(d.soldPrice) || null,
+        currency: text(d.soldCurrency),
+        price_usd: Number(d.soldPriceUsd) || null,
+        // Shipped (and how far), or still waiting to be handed over — the app's badge.
+        shipment: d.shipmentId ? shipStatus.get(String(d.shipmentId)) || 'created' : null,
+        ts: Number(d.ts) || 0,
+        watch: watchOf(d.stockNumber),
+      };
+    })
+    .sort((a, b) => b.ts - a.ts || b.id - a.id);
+  const accRow = (r, who) => {
+    const d = r.data || {};
+    return { id: r.id, stock_no: text(d.stockNumber), ...metaOf(d.stockNumber), items: text(d.items), who: person(d[who]), received_from: text(d.receivedFrom), notes: text(d.notes), in_safe: ticked(d.inSafe) !== '', watch: watchOf(d.stockNumber) };
+  };
+  return {
+    as_of: await asOf(),
+    shipments,
+    ready,
+    to_collect: collectQ.rows.map((r) => accRow(r, 'fromClient')),
+    to_give: giveQ.rows.map((r) => accRow(r, 'toClient')),
+    // For the client report: every logistics client, to open its own situation page.
+    clients: clientQ.rows.map((r) => ({ id: r.id, name: text(r.data?.name) })).filter((c) => c.name),
   };
 }
 
