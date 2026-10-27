@@ -299,7 +299,12 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   does. Served only behind the sign-in (`/api/logistics/files/:id`).
 - **Its `settings` are never copied**: they hold Chrono Key's username and
   password, FedEx and AI keys, the worker's key and the vault PIN. Fields
-  that look like secrets are dropped at any depth (`isSecret`).
+  that look like secrets are dropped at any depth (`isSecret`). **One
+  exception, asked 26 Oct 2026 ("rates and salaries")**: the travel
+  allowance's part, `settings.perDiem`, by NAMED keys only (`currency`,
+  `rates`, `travelDay`, `majorityHours`, `places`, `geo`, `salaries` —
+  `perDiemOf`), kept as the one record `perDiem` / `settings`, still
+  scrubbed. Nothing else in settings is ever read.
 - Same rules as the other copies: the app wins until the switch-over except
   a field edited here; a record it drops is deleted softly and comes back
   with it; a person's deletion stands; a list losing more than 3% (and ten)
@@ -450,6 +455,27 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   shipment, Mark sold, Add cost, Ask Owner, Plan Collections, Pick from FOB
   — masterapp never writes back): a row opens its record. Old lists at
   `#/logistics/incoming-all`.
+- **Movement** (asked 26 Oct 2026, "the same tab … our rule of stock no
+  and clients stays"): the Logistics → Movement tab (key `trips`, was "Trips") is the app's Movement tab,
+  person travel cost (`movementPage()`, `/api/logistics/movement`): filters
+  (from / to, person, status, search), the trip summary (dollars at the
+  converter's rates — not the app's fixed `FX_TO_USD`, as the Overview —
+  per person, and each currency's own total), By trip (grouped by person)
+  or Combined (every cost line, by category / person / route). A trip: its
+  route chain, dates, status, purpose, the watches it carried (ours, with
+  their clients), the **travel allowance** and its expenses by leg. The
+  allowance is the app's own `tripAllowance` ported line for line into the
+  console (`pd…` in logistics.js): computed in the BROWSER by its clock, as
+  the app does, from the copied `perDiem` settings — regions and rates, a
+  place mapped by hand first, one-slip names ("Blogna"), the day to a place
+  held more than `majorityHours` else where he landed last (or the app's
+  other two rules), overrides and extras, By place, Time there, the date
+  warnings, the salary note. Checked against the app's own figures (Ben
+  London → Dubai 17 Jun: 1 day EUR 100 "over 12h in Dubai"; Boss Dubai → HK
+  → Dubai: HK 15 Jul + Dubai 16 Jul, EUR 200). Allowance rates shown
+  read-only. Add trip, complete, add allowance to expenses, edit, delete:
+  wait for the switch-over; Open shows the record, Copy details copies it.
+  Old lists at `#/logistics/trips-all`.
 - **Shipments** (asked 26 Oct 2026, "the same tab … make sure our rule of
   stock no and clients stays"): the Logistics → Shipments tab is the app's
   Live Shipments + Need to Give and Collect (`shippingPage()`,

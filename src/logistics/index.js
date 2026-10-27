@@ -1050,6 +1050,59 @@ export async function accessoriesSummary() {
 }
 
 /*
+ * The logistics app's Movement tab (asked 26 Oct 2026: "the same tab … make
+ * sure our rule of stock no and clients stays"): every person's trip, its legs
+ * (or the old from → to), its expense lines, the days the allowance is worked
+ * out from, the watches it carried (each linked to ours and its clients). The
+ * allowance itself is worked out in the browser, as the app does — by the
+ * clock of the computer showing it — from the app's own allowance settings
+ * (copied, rates and salaries, asked). Costs in dollars at the converter's
+ * rates, as the Overview counts, not the app's fixed table.
+ */
+export async function movementPage() {
+  const [tripQ, pdQ, rates] = await Promise.all([
+    query("SELECT * FROM logistics_items WHERE kind = 'personTrips' AND deleted_at IS NULL"),
+    query("SELECT data FROM logistics_items WHERE kind = 'perDiem' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1"),
+    ratesSoon(),
+  ]);
+  const ours = await oursByNumber(tripQ.rows.flatMap((r) => r.stock_nos || []));
+  const trips = tripQ.rows.map((r) => {
+    const d = r.data || {};
+    // The app's getTripLegs: the legs, else the old single from → to.
+    const legs = (Array.isArray(d.legs) && d.legs.length ? d.legs : d.fromLocation || d.toLocation ? [{ id: 'leg', from: d.fromLocation, to: d.toLocation, date: d.startDate }] : [])
+      .filter((l) => l && typeof l === 'object')
+      .map((l) => ({ id: text(l.id), from: text(l.from), to: text(l.to), date: text(l.date).slice(0, 10), time: text(l.time), arr_date: text(l.arrDate).slice(0, 10), arr_time: text(l.arrTime) }));
+    return {
+      id: r.id,
+      person: text(d.personName),
+      status: text(d.status) || 'planned',
+      start: text(d.startDate).slice(0, 10),
+      end: text(d.endDate).slice(0, 10),
+      end_time: text(d.endTime),
+      purpose: text(d.purpose),
+      notes: text(d.notes),
+      legs,
+      costs: (Array.isArray(d.costs) ? d.costs : [])
+        .filter((c) => c && typeof c === 'object')
+        .map((c) => ({ category: text(c.category) || 'Other', label: text(c.label), amount: Number(c.amount) || 0, currency: text(c.currency).toUpperCase() || 'USD', date: text(c.date).slice(0, 10), leg: text(c.legId), per_diem: Boolean(c.perDiem) })),
+      overrides: d.perDiemOverrides && typeof d.perDiemOverrides === 'object' ? d.perDiemOverrides : {},
+      extra: Array.isArray(d.perDiemExtra) ? d.perDiemExtra.map((x) => ({ label: text(x?.label || x?.note), amount: Number(x?.amount) || 0 })) : [],
+      // The watches it carried — each linked to ours, and through it to its clients.
+      stocks: (r.stock_nos || []).map((s) => ({ stock_no: s, watch: ours.get(s) || null })),
+      ...picturesOf(d),
+      photos: (Array.isArray(d.photos) ? d.photos : []).filter((v) => typeof v === 'string' && /^lgfile:\d+$/.test(v)).slice(0, 12),
+    };
+  });
+  return {
+    as_of: await asOf(),
+    trips,
+    per_diem: pdQ.rows[0]?.data || null,
+    // The converter's rates, for dollars: what one dollar is in each currency.
+    rates: rates ? { usd: rates.rates, kind: rates.kind, stale: Boolean(rates.stale) } : null,
+  };
+}
+
+/*
  * The logistics app's Shipments tab (asked 26 Oct 2026: "the same tab with the
  * same features … make sure our rule of stock no and clients stays"), its rules
  * read from its code. Live shipments: the stage (situation.stage — the app's

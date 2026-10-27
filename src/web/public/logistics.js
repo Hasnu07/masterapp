@@ -200,6 +200,9 @@ async function showLogistics(group) {
   if (group === 'incoming') return showLogisticsIncoming();
   // The Shipments tab is the app's Live Shipments and Need to Give and Collect; its lists are one link away.
   if (group === 'shipments') return showLogisticsShipments();
+  // The Trips tab is the app's Movement tab (person travel cost); its lists are one link away.
+  if (group === 'trips') return showLogisticsMovement();
+  if (group === 'trips-all') group = 'trips';
   if (group === 'shipments-all') group = 'shipments';
   if (group === 'incoming-all') group = 'incoming';
   if (group === 'accessories-all') group = 'accessories';
@@ -949,6 +952,594 @@ function drawTransactions() {
         </tr>`
       )
       .join('')}</tbody></table></div>`;
+}
+
+/* ── movement ───────────────────────────────────────────────────── */
+
+/*
+ * The logistics app's Movement tab (asked 26 Oct 2026: "the same tab, the same
+ * features … our rule of stock no and clients stays"): person travel cost.
+ * Filters, the trip summary (in dollars at the converter's rates, each
+ * currency's own total beside it), trips by person or every cost line
+ * combined. Each trip: its route, dates and status, the watches it carried
+ * (linked to ours and their clients), the travel allowance worked out day by
+ * day from the app's own rates — its rules ported line for line below, by
+ * this computer's clock as the app does — and its expenses. The app's
+ * buttons that change a trip wait for the switch-over: Open shows its record.
+ */
+const mv = { view: 'trips', from: '', to: '', person: '', status: '', q: '', rates: false, data: null };
+
+/* The allowance: the app's regions, default rates and place names (its PER_DIEM_* tables). */
+const PD_REGIONS = { uae: 'Dubai / UAE', hk: 'Hong Kong', europe: 'Europe', uk: 'United Kingdom', other: 'Anywhere else' };
+const PD_DEFAULT_RATES = { uae: 100, hk: 100, europe: 50, uk: 50, other: 0 };
+const PD_PLACES = [
+  ['uae', ['uae', 'united arab emirates', 'abu dhabi', 'dubai', 'dxb', 'auh', 'sharjah', 'ajman', 'emirates', 'deira', 'jumeirah']],
+  ['hk', ['hong kong', 'hongkong', 'hk', 'hkg', 'kowloon', 'tsim sha tsui']],
+  ['uk', ['uk', 'united kingdom', 'great britain', 'britain', 'england', 'scotland', 'wales', 'northern ireland', 'london', 'lhr', 'lgw', 'stn', 'heathrow', 'gatwick', 'stansted', 'luton', 'mayfair', 'ncl', 'newcastle', 'manchester', 'birmingham', 'leeds', 'liverpool', 'glasgow', 'edinburgh', 'bicester']],
+  ['europe', [
+    'europe', 'eu', 'italy', 'italia', 'rome', 'roma', 'fco', 'fiumicino', 'ciampino', 'milan', 'milano', 'mxp', 'lin', 'linate', 'malpensa', 'bergamo', 'orio al serio',
+    'bologna', 'blq', 'florence', 'firenze', 'venice', 'venezia', 'naples', 'napoli', 'turin', 'torino',
+    'switzerland', 'swiss', 'geneva', 'geneve', 'gva', 'cointrin', 'zurich', 'zuerich', 'zrh', 'kloten', 'basel', 'bern', 'lugano',
+    'france', 'paris', 'cdg', 'orly', 'roissy', 'charles de gaulle', 'nice', 'cannes', 'lyon', 'marseille', 'bordeaux',
+    'germany', 'deutschland', 'munich', 'muenchen', 'muc', 'frankfurt', 'fra', 'berlin', 'hamburg', 'dusseldorf', 'stuttgart', 'cologne',
+    'spain', 'madrid', 'mad', 'barajas', 'barcelona', 'bcn', 'el prat', 'valencia', 'marbella', 'malaga', 'ibiza',
+    'netherlands', 'holland', 'amsterdam', 'ams', 'schiphol', 'rotterdam', 'the hague', 'belgium', 'brussels', 'bru', 'antwerp', 'antwerpen',
+    'austria', 'vienna', 'wien', 'vie', 'salzburg', 'portugal', 'lisbon', 'lisboa', 'lis', 'porto', 'greece', 'athens', 'ath', 'mykonos', 'santorini',
+    'ireland', 'dublin', 'dub', 'denmark', 'copenhagen', 'cph', 'sweden', 'stockholm', 'arn', 'norway', 'oslo', 'finland', 'helsinki', 'iceland', 'reykjavik',
+    'poland', 'warsaw', 'waw', 'krakow', 'czech', 'czechia', 'prague', 'praha', 'prg', 'hungary', 'budapest', 'bud', 'romania', 'bucharest', 'bulgaria', 'sofia',
+    'croatia', 'zagreb', 'split', 'dubrovnik', 'slovenia', 'ljubljana', 'slovakia', 'bratislava', 'serbia', 'belgrade', 'estonia', 'tallinn', 'latvia', 'riga', 'lithuania', 'vilnius',
+    'monaco', 'montecarlo', 'monte carlo', 'luxembourg', 'malta', 'valletta', 'cyprus', 'larnaca', 'liechtenstein', 'vaduz', 'andorra', 'san marino',
+  ]],
+];
+/* The app's perDiemSettings: its copied settings over the defaults. */
+function pdSettings() {
+  const p = mv.data?.per_diem || {};
+  return {
+    currency: p.currency || 'EUR',
+    rates: { ...PD_DEFAULT_RATES, ...(p.rates || {}) },
+    travelDay: ['best', 'time'].includes(p.travelDay) ? p.travelDay : 'half',
+    majorityHours: Number(p.majorityHours) > 0 ? Number(p.majorityHours) : 12,
+    places: p.places || {},
+    salaries: Array.isArray(p.salaries) ? p.salaries : [],
+  };
+}
+/* "Blogna" is Bologna: one letter wrong, missing or swapped (the app's _oneSlipApart). */
+function pdOneSlip(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let slips = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (++slips > 1) return false;
+    if (a.length === b.length && a[i + 1] === b[j] && a[i] === b[j + 1]) {
+      i += 2;
+      j += 2;
+    } else if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else {
+      i++;
+      j++;
+    }
+  }
+  return slips + (a.length - i) + (b.length - j) <= 1;
+}
+/* What a written place is worth: a place mapped by hand first, then the names, then one slip on long names (the app's perDiemRegionOf). */
+function pdRegionOf(place) {
+  const raw = String(place || '').trim().toLowerCase();
+  if (!raw) return 'other';
+  const manual = pdSettings().places[raw];
+  if (manual) return manual;
+  const s = raw.replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return 'other';
+  const toks = new Set(s.split(' '));
+  for (const [region, keys] of PD_PLACES) for (const k of keys) if (k.includes(' ') ? s.includes(k) : toks.has(k)) return region;
+  for (const [region, keys] of PD_PLACES) {
+    for (const k of keys) {
+      if (k.length < 5 || k.includes(' ')) continue;
+      for (const tk of toks) if (tk.length >= 5 && pdOneSlip(tk, k)) return region;
+    }
+  }
+  return 'other';
+}
+/* A leg's moment, by this computer's clock; no time = midnight (the app's _legMoment). */
+const pdMoment = (date, time) => {
+  if (!date) return null;
+  const ms = new Date(`${date}T${/^\d{2}:\d{2}$/.test(time || '') ? time : '00:00'}:00`).getTime();
+  return Number.isNaN(ms) ? null : ms;
+};
+const pdNextDay = (ymd) => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+const pdDayWords = (ymd) => new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', timeZone: 'UTC' });
+const pdDayStr = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const pdStayMoment = (ms) => {
+  const d = new Date(ms);
+  const hm = d.getHours() || d.getMinutes() ? ` ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) + hm;
+};
+function pdDuration(hours) {
+  const mins = Math.round((Number(hours) || 0) * 60);
+  if (mins <= 0) return '0h';
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  return [d && `${d}d`, h && `${h}h`, m && `${m}m`].filter(Boolean).join(' ');
+}
+const pdLegs = (t) => t.legs.filter((l) => (l.from || l.to) && l.date);
+const pdDep = (l) => pdMoment(l.date, l.time);
+/* Arrival, never before its departure; none recorded = landing the moment it left. */
+function pdArr(l) {
+  const dep = pdDep(l);
+  if (!l.arr_date && !l.arr_time) return dep;
+  const ms = pdMoment(l.arr_date || l.date, l.arr_time || '00:00');
+  return ms != null && dep != null && ms >= dep ? ms : dep;
+}
+/* Where he was, minute by minute — on the ground somewhere, or in the air (the app's tripTimeline). */
+function pdTimeline(t) {
+  const legs = pdLegs(t);
+  if (!legs.length) return { segs: [], stops: [], start: '', end: '' };
+  const start = legs[0].date;
+  const lastArr = legs.reduce((mx, l) => Math.max(mx, pdArr(l) || 0), 0) || null;
+  const lastArrDay = lastArr ? pdDayStr(lastArr) : legs[legs.length - 1].date;
+  const hasEnd = Boolean(t.end && t.end >= start);
+  const end = hasEnd ? t.end : lastArrDay;
+  const endMs = t.end_time ? pdMoment(end, t.end_time) : pdMoment(end, '00:00') + 86_400_000;
+  const segs = [];
+  const stops = [];
+  const first = { place: legs[0].from || '', start: pdMoment(start, '00:00'), end: pdDep(legs[0]) };
+  segs.push({ ...first, air: false });
+  stops.push({ ...first });
+  legs.forEach((l, i) => {
+    const dep = pdDep(l);
+    const arr = pdArr(l);
+    segs.push({ place: l.to || '', start: dep, end: arr, air: true });
+    const nextDep = legs[i + 1] ? pdDep(legs[i + 1]) : endMs;
+    const ground = { place: l.to || '', start: arr, end: Math.max(arr, nextDep == null ? arr : nextDep) };
+    segs.push({ ...ground, air: false });
+    stops.push({ ...ground });
+  });
+  return { segs, stops, start, end, endAssumed: !hasEnd };
+}
+/* What is wrong with the dates, in plain words (the app's tripWarnings). */
+function pdWarnings(t) {
+  const out = t.legs.filter((l) => (l.from || l.to) && !l.date).map((l) => `${l.from || '?'} → ${l.to || '?'} has no date, so it is not counted at all.`);
+  const legs = pdLegs(t);
+  if (!legs.length) return out;
+  const { start, end } = pdTimeline(t);
+  legs.forEach((l, i) => {
+    const name = `${l.from || '?'} → ${l.to || '?'}`;
+    const dep = pdDep(l);
+    const arr = pdArr(l);
+    if (dep == null) return;
+    const rawArr = l.arr_date || l.arr_time ? pdMoment(l.arr_date || l.date, l.arr_time || '00:00') : null;
+    if (rawArr != null && rawArr < dep) out.push(`${name} lands before it leaves. The landing is being ignored.`);
+    else if (arr != null && arr - dep > 24 * 3_600_000) out.push(`${name} is recorded as ${pdDuration((arr - dep) / 3_600_000)} in the air. Check the landing date.`);
+    const prev = legs[i - 1];
+    if (prev) {
+      const prevArr = pdArr(prev);
+      if (prevArr != null && dep < prevArr) out.push(`${name} leaves before ${prev.from || '?'} → ${prev.to || '?'} lands. One of those times is wrong.`);
+    }
+    const depDay = pdDayStr(dep);
+    const arrDay = arr != null ? pdDayStr(arr) : depDay;
+    if (depDay > end || arrDay > end) out.push(`${name} happens after the trip's end date (${end}), so those days are not counted.`);
+    else if (depDay < start) out.push(`${name} happens before the trip's first flight (${start}).`);
+  });
+  return out;
+}
+/* One row per calendar day: where he was, which place the day belongs to, what it pays (the app's tripDays). */
+function pdDays(t) {
+  const { segs, start, end, endAssumed } = pdTimeline(t);
+  if (!segs.length) return { days: [], start: '', end: '', endAssumed: false };
+  const legs = pdLegs(t);
+  const pd = pdSettings();
+  const rateOf = (pl) => Number(pd.rates[pdRegionOf(pl)]) || 0;
+  const days = [];
+  let d = start;
+  let guard = 0;
+  while (d <= end && guard++ < 400) {
+    const d0 = pdMoment(d, '00:00');
+    const d1 = d0 + 86_400_000;
+    const ground = new Map();
+    const air = new Map();
+    for (const s of segs) {
+      if (s.start == null || s.end == null) continue;
+      const from = Math.max(s.start, d0);
+      const to = Math.min(s.end, d1);
+      if (to <= from) continue;
+      const m = s.air ? air : ground;
+      m.set(s.place, (m.get(s.place) || 0) + (to - from) / 3_600_000);
+    }
+    const onGround = [...ground].filter(([pl, h]) => pl && h > 0).map(([pl, h]) => ({ place: pl, hours: h, rate: rateOf(pl) })).sort((a, b) => b.hours - a.hours || b.rate - a.rate);
+    const touched = [];
+    for (const s of segs) {
+      if (s.air || !s.place || s.start == null || s.end == null || !(s.start < d1 && s.end >= d0)) continue;
+      if (!touched.some((x) => x.place === s.place)) touched.push({ place: s.place, hours: ground.get(s.place) || 0, rate: rateOf(s.place) });
+    }
+    const flying = [...air].filter(([pl, h]) => pl && h > 0).map(([pl, h]) => ({ place: pl, hours: h, rate: rateOf(pl) })).sort((a, b) => b.hours - a.hours);
+    let landed = null;
+    for (const s of segs) if (!s.air && s.place && s.start != null && s.start >= d0 && s.start < d1) landed = s.place;
+    const pool = onGround.length ? onGround : touched.length ? touched : flying;
+    let pick = pool[0];
+    let why = '';
+    if (pd.travelDay === 'best') pick = (touched.length ? touched : pool).slice().sort((a, b) => b.rate - a.rate || b.hours - a.hours)[0];
+    else if (pd.travelDay === 'time') pick = pool[0];
+    else {
+      // The owner's rule: more than half the day in one place takes the day; short of that, where he landed last.
+      const major = onGround.find((x) => x.hours > pd.majorityHours);
+      if (major) {
+        pick = major;
+        why = `over ${pdDuration(pd.majorityHours)} in ${major.place}`;
+      } else {
+        const by = (landed && (onGround.find((x) => x.place === landed) || touched.find((x) => x.place === landed))) || (pool.length ? pool[0] : null);
+        if (by) {
+          pick = by;
+          if (onGround.length) why = 'no place held half the day — counted where he landed last';
+        }
+      }
+    }
+    const place = pick ? pick.place : '';
+    const rate = rateOf(place);
+    const airH = flying.reduce((a, x) => a + x.hours, 0);
+    const ov = t.overrides[d];
+    const overridden = Boolean(ov) && ov.amount != null && ov.amount !== '';
+    const chain = [];
+    for (const l of legs) {
+      const dep = pdDep(l);
+      const arr = pdArr(l);
+      if (dep == null || !(dep < d1 && (arr == null ? dep : arr) >= d0)) continue;
+      if (!chain.length) chain.push(l.from || '?');
+      chain.push(l.to || '?');
+    }
+    days.push({
+      date: d,
+      place: place || '(not named)',
+      region: pdRegionOf(place),
+      rate,
+      amount: overridden ? Number(ov.amount) || 0 : rate,
+      overridden,
+      why,
+      where: onGround.length ? [...onGround.map((x) => `${x.place} ${pdDuration(x.hours)}`), ...(airH > 0.02 ? [`in the air ${pdDuration(airH)}`] : [])].join(' · ') : airH > 0 ? 'in the air the whole day' : '',
+      route: chain.length > 1 ? chain.join(' → ') : '',
+    });
+    d = pdNextDay(d);
+  }
+  return { days, start, end, endAssumed };
+}
+/* The allowance: days, extras, by place, time there (the app's tripAllowance). */
+function pdAllowance(t) {
+  const pd = pdSettings();
+  const { days, start, end, endAssumed } = pdDays(t);
+  const total = days.reduce((a, x) => a + x.amount, 0) + t.extra.reduce((a, x) => a + x.amount, 0);
+  const byPlace = new Map();
+  for (const x of days) {
+    const k = x.place.toLowerCase();
+    const row = byPlace.get(k) || { place: x.place, days: 0, amount: 0 };
+    row.days++;
+    row.amount += x.amount;
+    byPlace.set(k, row);
+  }
+  const stays = pdTimeline(t).stops.map((s) => ({ place: s.place || '(not named)', start: s.start, end: s.end, hours: s.start != null && s.end != null ? Math.max(0, (s.end - s.start) / 3_600_000) : 0 }));
+  return { days, start, end, endAssumed, total, currency: pd.currency, byPlace: [...byPlace.values()], stays, unpaid: days.filter((x) => x.rate <= 0).length, added: t.costs.some((c) => c.per_diem) };
+}
+
+/* Dollars at the converter's rates (what one dollar is in each currency); null when a currency has no rate. */
+const mvUsd = (amount, cur) => {
+  const r = mv.data?.rates?.usd;
+  const per = r && r[String(cur || '').toUpperCase()];
+  return per ? (Number(amount) || 0) / per : null;
+};
+const mvDollars = (n) => money(Math.round(n * 100) / 100, 'USD');
+/* A trip's cost in dollars, and the currencies that could not be counted. */
+function mvTripUsd(t) {
+  let usd = 0;
+  const missing = new Set();
+  for (const c of t.costs) {
+    const v = mvUsd(c.amount, c.currency);
+    if (v == null) missing.add(c.currency);
+    else usd += v;
+  }
+  return { usd, missing: [...missing] };
+}
+const mvRoute = (t) => {
+  if (!t.legs.length) return 'No legs';
+  const cities = [];
+  t.legs.forEach((l, i) => {
+    if (i === 0 && l.from) cities.push(l.from);
+    else if (l.from && cities[cities.length - 1] !== l.from) cities.push(l.from);
+    cities.push(l.to || '?');
+  });
+  return cities.filter(Boolean).join(' → ');
+};
+const MV_STATUS = { planned: ['Planned', 'muted'], in_progress: ['In progress', 'warn'], completed: ['Completed', 'good'], cancelled: ['Cancelled', 'bad'] };
+
+async function showLogisticsMovement() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('trips')}
+    <div class="inc-head">
+      <p class="sub" style="margin:0">Movement — couriers and what their travel costs.</p>
+      <span><button type="button" class="pill" id="mv-rates-btn" aria-expanded="false">Allowance rates</button> <a class="count" style="margin:0 0 0 8px" href="#/logistics/trips-all">See the lists</a></span>
+    </div>
+    <div id="mv-rates"></div>
+    <div class="inc-filters mv-filters">
+      <label class="mv-f"><span class="count">From</span><input type="date" id="mvf-from" value="${esc(mv.from)}"></label>
+      <label class="mv-f"><span class="count">To</span><input type="date" id="mvf-to" value="${esc(mv.to)}"></label>
+      <select id="mvf-person" aria-label="Person"><option value="">All persons</option></select>
+      <select id="mvf-status" aria-label="Status"><option value="">All statuses</option>${Object.entries(MV_STATUS).map(([k, [l]]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <input class="q" type="search" id="mvq" placeholder="Person, place, notes…" value="${esc(mv.q)}" aria-label="Search the trips">
+    </div>
+    <div id="mv-sum"></div>
+    <div class="inc-controls" role="group" aria-label="View">
+      <button type="button" class="pill" data-mv="trips">By trip</button><button type="button" class="pill" data-mv="combined">Combined — all costs together</button>
+    </div>
+    <div id="mv-out"><p class="count">Reading the trips…</p></div>`;
+  for (const [id, k] of [['#mvf-from', 'from'], ['#mvf-to', 'to'], ['#mvf-person', 'person'], ['#mvf-status', 'status']]) {
+    $(id).addEventListener('change', (e) => {
+      mv[k] = e.target.value;
+      drawMovement();
+    });
+  }
+  let timer;
+  $('#mvq').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      mv.q = e.target.value;
+      drawMovement();
+    }, 150);
+  });
+  $$('[data-mv]').forEach((b) =>
+    b.addEventListener('click', () => {
+      mv.view = b.dataset.mv;
+      drawMovement();
+    })
+  );
+  $('#mv-rates-btn').addEventListener('click', () => {
+    mv.rates = !mv.rates;
+    drawMovement();
+  });
+  $('#mv-out').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copy]');
+    if (!b) return;
+    const t = mv.data.trips.find((x) => String(x.id) === b.dataset.copy);
+    navigator.clipboard?.writeText(mvTripText(t)).then(() => (b.textContent = 'Copied'), () => (b.textContent = 'Could not copy'));
+  });
+  // A cost line in the combined list opens its trip's record.
+  lgOpenOnClick($('#mv-out'));
+  let r;
+  try {
+    r = await api('/api/logistics/movement');
+  } catch (err) {
+    if (seq === lgPage && $('#mv-out')) $('#mv-out').innerHTML = `<p class="count">Could not read the trips: ${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== lgPage || !$('#mv-out')) return;
+  mv.data = r;
+  drawMovement();
+}
+
+/* The app's copy-details: the trip in plain lines, for a message. */
+function mvTripText(t) {
+  const a = pdAllowance(t);
+  const { usd } = mvTripUsd(t);
+  return [
+    `${t.person || 'Trip'} — ${mvRoute(t)}`,
+    [t.start, t.end && t.end !== t.start && `→ ${t.end}`, (MV_STATUS[t.status] || [t.status])[0]].filter(Boolean).join(' '),
+    t.purpose && `Purpose: ${t.purpose}`,
+    t.stocks.length && `Stock: ${t.stocks.map((s) => s.stock_no).join(', ')}`,
+    ...t.costs.map((c) => `${c.category}${c.label ? ` · ${c.label}` : ''}: ${c.currency} ${c.amount.toLocaleString('en-GB')}`),
+    a.days.length && `Travel allowance: ${a.currency} ${a.total.toLocaleString('en-GB')} (${a.days.length} day${a.days.length === 1 ? '' : 's'})`,
+    `Total: $${usd.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function drawMovement() {
+  const r = mv.data;
+  if (!r || !$('#mv-out')) return;
+  $$('[data-mv]').forEach((b) => b.classList.toggle('on', b.dataset.mv === mv.view));
+  $('#mv-rates-btn').setAttribute('aria-expanded', String(mv.rates));
+  $('#mv-rates-btn').classList.toggle('on', mv.rates);
+  const persons = [...new Set(r.trips.map((t) => t.person).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (!persons.includes(mv.person)) mv.person = '';
+  $('#mvf-person').innerHTML = `<option value="">All persons</option>${persons.map((p) => `<option>${esc(p)}</option>`).join('')}`;
+  $('#mvf-person').value = mv.person;
+  $('#mvf-status').value = mv.status;
+
+  // The allowance rates, as the app's Rates screen holds them — read only here.
+  const pd = pdSettings();
+  $('#mv-rates').innerHTML = mv.rates
+    ? `<section class="panel shp-sec">
+        <h2 class="sf-h">Allowance rates</h2>
+        ${ovExplain(r.per_diem ? `Copied from the logistics app’s own rates. A day is paid in ${pd.currency}, at the rate of the place it belongs to.` : 'The logistics app has not set its own rates: these are its defaults.')}
+        <div class="tile-facts">${Object.entries(PD_REGIONS)
+          .map(([k, l]) => `<div class="f"><span class="k">${esc(l)}</span> <span class="v">${money(Number(pd.rates[k]) || 0, pd.currency)} a day</span></div>`)
+          .join('')}<div class="f"><span class="k">A day belongs to</span> <span class="v">${
+          pd.travelDay === 'best' ? 'the best-paid place he was in' : pd.travelDay === 'time' ? 'where he spent the most time' : `a place he spent more than ${pdDuration(pd.majorityHours)} in, else where he landed last`
+        }</span></div></div>
+        ${pd.salaries.length ? `<h3 class="hc-stop-h" style="margin-top:12px">Monthly salaries</h3><div class="tile-facts">${pd.salaries.map((s) => `<div class="f"><span class="k">${esc(s.name)}</span> <span class="v">${money(Number(s.amount) || 0, s.currency || 'EUR')}</span></div>`).join('')}</div>` : ''}
+      </section>`
+    : '';
+
+  const words = mv.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const trips = r.trips
+    .filter((t) => (!mv.from || t.start >= mv.from) && (!mv.to || t.start <= mv.to) && (!mv.person || t.person === mv.person) && (!mv.status || t.status === mv.status))
+    .filter((t) => sfMatch(words, t.person, mvRoute(t), t.purpose, t.notes, ...t.stocks.map((s) => s.stock_no)))
+    .sort((a, b) => b.start.localeCompare(a.start));
+
+  // The trip summary: dollars in total and per person, each currency's own total beside it.
+  const missing = new Set();
+  const usdOf = (t) => {
+    const x = mvTripUsd(t);
+    x.missing.forEach((c) => missing.add(c));
+    return x.usd;
+  };
+  const total = trips.reduce((a, t) => a + usdOf(t), 0);
+  const byPerson = new Map();
+  for (const t of trips) {
+    const p = t.person || '(no name)';
+    const x = byPerson.get(p) || { n: 0, usd: 0 };
+    x.n++;
+    x.usd += usdOf(t);
+    byPerson.set(p, x);
+  }
+  const byCur = new Map();
+  for (const t of trips) for (const c of t.costs) byCur.set(c.currency, (byCur.get(c.currency) || 0) + c.amount);
+  const rates = r.rates;
+  $('#mv-sum').innerHTML = `<section class="panel mv-sum">
+    <div class="shp-sec-h">
+      <div><h2 class="sf-h">Trip summary</h2><p class="count" style="margin:2px 0 0">The trips shown · every cost in dollars at ${rates ? `today’s ${esc(rates.kind)} rates${rates.stale ? ' (not fresh)' : ''}` : '— no rates could be read'}${missing.size ? ` · ${esc([...missing].join(', '))} left out — no rate` : ''}</p></div>
+      <div class="shp-sec-n"><div><b>${mvDollars(total)}</b><span class="ov-tile-label">${trips.length} trip${trips.length === 1 ? '' : 's'}</span></div></div>
+    </div>
+    <div class="mv-people">${[...byPerson]
+      .sort((a, b) => b[1].usd - a[1].usd)
+      .map(([p, x]) => `<span><b>${esc(p)}</b> · ${x.n} trip${x.n === 1 ? '' : 's'} · <b>${mvDollars(x.usd)}</b></span>`)
+      .join('')}</div>
+    ${byCur.size ? `<div class="mv-cur">${[...byCur].map(([c, n]) => `<span>${money(n, c)}${c !== 'USD' && mvUsd(n, c) != null ? ` <span class="count" style="margin:0">≈ ${mvDollars(mvUsd(n, c))}</span>` : ''}</span>`).join('')}</div>` : ''}
+  </section>`;
+
+  if (!trips.length) {
+    $('#mv-out').innerHTML = `<p class="sub">${r.trips.length ? 'No trip matches these filters.' : 'No trips yet.'}</p>`;
+    return;
+  }
+  if (mv.view === 'combined') return drawMovementCombined(trips);
+  const groups = new Map();
+  for (const t of trips) {
+    const p = t.person || '(no name)';
+    if (!groups.has(p)) groups.set(p, []);
+    groups.get(p).push(t);
+  }
+  $('#mv-out').innerHTML = `<h2 class="sf-h inc-sec">Trips grouped by person</h2>${[...groups]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(
+      ([p, ts]) => `<section class="panel mv-person">
+        <div class="mv-person-h"><h3>${esc(p)} <span class="count" style="margin:0;font-weight:400">· ${ts.length} trip${ts.length === 1 ? '' : 's'}</span></h3><b>${mvDollars(ts.reduce((a, t) => a + mvTripUsd(t).usd, 0))}</b></div>
+        ${ts.map(mvTripCard).join('')}
+      </section>`
+    )
+    .join('')}`;
+}
+
+function mvTripCard(t) {
+  const [label, tone] = MV_STATUS[t.status] || [t.status, 'muted'];
+  const { usd } = mvTripUsd(t);
+  const a = pdAllowance(t);
+  const pd = pdSettings();
+  const dates = [t.start && dayWords(t.start), t.end && t.end !== t.start && dayWords(t.end)].filter(Boolean).join(' → ');
+  // The route as the app chains it: each place once, an arrow between.
+  const chain = [];
+  t.legs.forEach((l, i) => {
+    if (i === 0 || t.legs[i - 1].to !== l.from) chain.push(l.from || '?');
+    chain.push(l.to || '?');
+  });
+  const stockLinks = t.stocks
+    .map((s) => (s.watch ? `<a class="lg-stock" href="#/watch/${s.watch.id}" title="${esc(s.watch.title)}">#${esc(s.stock_no)}</a>` : `<span class="lg-stock">#${esc(s.stock_no)}</span>`))
+    .join(' ');
+  const salary = pd.salaries.find((s) => String(s.name || '').trim().toLowerCase() === t.person.trim().toLowerCase());
+  const warn = pdWarnings(t);
+  const allowance = a.days.length
+    ? `<div class="mv-allow">
+        ${warn.length ? `<div class="shp-exc" style="margin:0 0 8px"><b>Check these dates — they change what he is owed.</b>${warn.map((w) => `<div>${esc(w)}</div>`).join('')}</div>` : ''}
+        <div class="mv-allow-h"><span><b>Travel allowance</b> <span class="count" style="margin:0">· ${esc(pdDayWords(a.start))} → ${esc(pdDayWords(a.end))} · ${a.days.length} day${a.days.length === 1 ? '' : 's'}${
+          a.endAssumed ? ' · counted to his last move — no end date set' : ''
+        }</span></span><b>${money(a.total, a.currency)}${mvUsd(a.total, a.currency) != null && a.currency !== 'USD' ? ` <span class="count" style="margin:0">≈ ${mvDollars(mvUsd(a.total, a.currency))}</span>` : ''}</b></div>
+        ${a.days
+          .map(
+            (d) => `<div class="mv-day"><div><div><span class="count" style="margin:0">${esc(pdDayWords(d.date))}</span> <b>${esc(d.place)}</b> <span class="count" style="margin:0">· ${esc(PD_REGIONS[d.region] || d.region)}</span></div>${
+              d.where ? `<div class="count" style="margin:0">${esc(d.where)}</div>` : ''
+            }${d.route ? `<div class="count" style="margin:0">${esc(d.route)}</div>` : ''}${d.why ? `<div class="mv-why">${esc(d.why)}</div>` : ''}</div><div>${
+              d.rate > 0 || d.overridden ? `<b>${money(d.amount, a.currency)}</b>${d.overridden ? '<div class="count" style="margin:0">set by hand</div>' : ''}` : '<span class="mv-why warn">no rate for this place</span>'
+            }</div></div>`
+          )
+          .join('')}
+        <div class="mv-line"><span class="ov-tile-label">By place</span>${a.byPlace.map((p) => `<span><b>${esc(p.place)}</b> · ${p.days} day${p.days === 1 ? '' : 's'} · ${money(p.amount, a.currency)}</span>`).join('')}</div>
+        <div class="mv-line"><span class="ov-tile-label">Time there</span>${a.stays.map((s) => `<span>${esc(s.place)} · ${esc(pdStayMoment(s.start))} → ${esc(pdStayMoment(s.end))} · <b>${esc(pdDuration(s.hours))}</b></span>`).join('')}</div>
+        ${a.unpaid ? `<div class="mv-why warn">${a.unpaid} day${a.unpaid === 1 ? '' : 's'} pay nothing — the place is not mapped to a region in the logistics app.</div>` : ''}
+        ${salary ? `<div class="count" style="margin:4px 0 0">${esc(t.person)} is also on ${money(Number(salary.amount) || 0, salary.currency || 'EUR')} a month — paid whether he travels or not, so it is not part of this trip.</div>` : ''}
+        <div class="count" style="margin:4px 0 0">${a.added ? 'Added to this trip’s expenses.' : 'Not added to this trip’s expenses yet.'}</div>
+      </div>`
+    : '';
+  // Expenses: the whole trip, then each leg, each with its dollars.
+  const legName = (l) => `${l.from || '?'} → ${l.to || '?'}${l.date ? ` · ${dayWords(l.date)}` : ''}`;
+  const blocks = [];
+  const whole = t.costs.filter((c) => !c.leg || !t.legs.some((l) => l.id === c.leg));
+  const block = (title, cs) => {
+    const sub = cs.reduce((x, c) => x + (mvUsd(c.amount, c.currency) || 0), 0);
+    return `<div class="mv-costs"><div class="mv-allow-h"><span class="ov-tile-label">${esc(title)} · ${cs.length} item${cs.length === 1 ? '' : 's'}</span><b>${mvDollars(sub)}</b></div>${cs
+      .map(
+        (c) => `<div class="mv-day"><div><b>${esc(c.category)}</b>${c.label ? ` · ${esc(c.label)}` : ''}${c.date ? `<div class="count" style="margin:0">${esc(dayWords(c.date))}</div>` : ''}</div><div><b>${money(c.amount, c.currency)}</b>${
+          c.currency !== 'USD' && mvUsd(c.amount, c.currency) != null ? `<div class="count" style="margin:0">≈ ${mvDollars(mvUsd(c.amount, c.currency))}</div>` : ''
+        }</div></div>`
+      )
+      .join('')}</div>`;
+  };
+  if (whole.length) blocks.push(block('Whole trip', whole));
+  for (const l of t.legs) {
+    const cs = t.costs.filter((c) => c.leg === l.id);
+    if (cs.length) blocks.push(block(legName(l), cs));
+  }
+  return `<article class="mv-trip mv-${tone}">
+    <div class="mv-trip-h">
+      <div>
+        <div class="shp-title">${esc(mvRoute(t))}</div>
+        <div class="count" style="margin:2px 0 0">${esc(dates)}${dates ? ' · ' : ''}<span class="chip shp-${tone === 'good' ? 'delivered' : tone === 'bad' ? 'exception' : tone === 'warn' ? 'pending' : 'no_tracking'}">${esc(label)}</span>${t.legs.length > 1 ? ` · ${t.legs.length} legs` : ''}</div>
+        ${chain.length ? `<div class="lg-ov">${chain.map((c) => `<span class="lg-tag">${esc(c)}</span>`).join('<span class="count" style="margin:0">→</span>')}</div>` : ''}
+      </div>
+      <div class="mv-trip-n"><b>${mvDollars(usd)}</b><span class="count" style="margin:0">${t.costs.length} expense${t.costs.length === 1 ? '' : 's'}</span></div>
+    </div>
+    ${t.purpose ? `<p class="sf-notes" style="margin:8px 0 0">${esc(t.purpose)}</p>` : ''}
+    ${stockLinks ? `<div class="mv-line"><span class="ov-tile-label">Stock</span>${stockLinks}${t.stocks.some((s) => s.watch) ? `<span class="count" style="margin:0">${t.stocks.filter((s) => s.watch).map((s) => [s.watch.bought_from && `#${s.stock_no} from ${s.watch.bought_from.name}`, s.watch.sold_to && `to ${s.watch.sold_to.name}`].filter(Boolean).join(' ')).filter(Boolean).join(' · ')}</span>` : ''}</div>` : ''}
+    ${allowance}
+    ${blocks.join('')}
+    ${t.costs.length ? `<div class="mv-total"><span>Trip total <span class="count" style="margin:0">· ${t.costs.length} expense${t.costs.length === 1 ? '' : 's'} in dollars</span></span><b>${mvDollars(usd)}</b></div>` : ''}
+    ${t.photos.length ? `<div class="lg-ov">${t.photos.map((p) => picture(p)).join('')}</div>` : ''}
+    <div class="mv-acts"><button type="button" class="btn" data-copy="${t.id}">Copy details</button><a class="btn primary" href="#/lg/${t.id}">Open</a></div>
+  </article>`;
+}
+
+/* Every cost line of the trips shown, together: totals by currency, category, person and route, then the lines. */
+function drawMovementCombined(trips) {
+  const rows = [];
+  for (const t of trips) {
+    for (const c of t.costs) {
+      const leg = t.legs.find((l) => l.id === c.leg);
+      rows.push({ id: t.id, person: t.person || '(no name)', category: c.category, label: c.label, amount: c.amount, currency: c.currency, date: c.date || t.start, route: leg ? `${leg.from || '?'} → ${leg.to || '?'}` : mvRoute(t), usd: mvUsd(c.amount, c.currency) });
+    }
+  }
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const sum = (key) => {
+    const m = new Map();
+    for (const x of rows) m.set(x[key], (m.get(x[key]) || 0) + (x.usd || 0));
+    return [...m].sort((a, b) => b[1] - a[1]);
+  };
+  const grand = rows.reduce((a, x) => a + (x.usd || 0), 0);
+  const mini = (title, list) => `<section class="panel"><h3 class="hc-stop-h">${title}</h3><div class="acc-break">${list.map(([k, v]) => `<div><span>${esc(k || '—')}</span><b>${mvDollars(v)}</b></div>`).join('')}</div></section>`;
+  $('#mv-out').innerHTML = `
+    <section class="panel shp-sec">
+      <div class="shp-sec-h"><div><h2 class="sf-h">All trips combined</h2><p class="count" style="margin:2px 0 0">${trips.length} trip${trips.length === 1 ? '' : 's'} · ${rows.length} cost line${rows.length === 1 ? '' : 's'}</p></div>
+        <div class="shp-sec-n"><div><b>${mvDollars(grand)}</b><span class="ov-tile-label">Total in dollars</span></div></div></div>
+    </section>
+    <div class="mv-minis">${mini('By category', sum('category'))}${mini('By person', sum('person'))}${mini('By route', sum('route'))}</div>
+    ${
+      rows.length
+        ? `<div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr><th>Date</th><th>Person</th><th>Trip · route</th><th>Category</th><th>Label</th><th class="num">Amount</th><th class="num">Dollars</th></tr></thead><tbody>${rows
+            .map(
+              (x) => `<tr data-id="${x.id}" tabindex="0"><td style="white-space:nowrap">${esc(x.date ? dayWords(x.date) : '—')}</td><td>${esc(x.person)}</td><td>${esc(x.route)}</td><td>${esc(x.category)}</td><td>${esc(x.label || '')}</td><td class="num">${money(x.amount, x.currency)}</td><td class="num">${
+                x.usd != null ? mvDollars(x.usd) : '<span class="blank">no rate</span>'
+              }</td></tr>`
+            )
+            .join('')}</tbody></table></div>`
+        : '<p class="sub">These trips have no cost lines.</p>'
+    }`;
 }
 
 /* ── shipments ──────────────────────────────────────────────────── */
