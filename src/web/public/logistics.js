@@ -202,6 +202,7 @@ async function showLogistics(group) {
   if (group === 'shipments') return showLogisticsShipments();
   // The Trips tab is the app's Movement tab (person travel cost); its lists are one link away.
   if (group === 'trips') return showLogisticsMovement();
+  if (group === 'movers') return showLogisticsMovers();
   if (group === 'trips-all') group = 'trips';
   if (group === 'shipments-all') group = 'shipments';
   if (group === 'incoming-all') group = 'incoming';
@@ -419,7 +420,8 @@ function lgPerson(name, link, blank = 'not written') {
 function lgOpenOnClick(...boxes) {
   const open = (e) => {
     const at = e.target.closest('[data-id]');
-    if (!at || e.target.closest('a')) return;
+    // A link, button or field inside the row does its own job.
+    if (!at || e.target.closest('a, button, input, select, label')) return;
     if (e.type === 'keydown') {
       if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
       e.preventDefault();
@@ -952,6 +954,341 @@ function drawTransactions() {
         </tr>`
       )
       .join('')}</tbody></table></div>`;
+}
+
+/* ── 3rd party movers ───────────────────────────────────────────── */
+
+/*
+ * The logistics app's 3rd Party Movers page (asked 27 Oct 2026: "the same
+ * tab … our rule of stock no and clients stays"): the couriers and what each
+ * carried, the summary of what we paid them and still owe, and every shipment
+ * with its filters. Our stock links to our watch and its clients; the typed
+ * "from client" as far as the match goes. Its outputs that change nothing are
+ * here — copy, export, print, the customs sheet, a mover's arrivals; adding,
+ * importing, editing, deleting, "not payable" wait for the switch-over.
+ */
+const tp = { q: '', sort: 'manual', f: { mover: '', from: '', to: '', status: '', payment: '', owner: '', since: '', until: '' }, customs: false, arrivals: null, data: null };
+const TP_STATUS = { pending: 'Pending', in_transit: 'In transit', delivered: 'Delivered', cancelled: 'Cancelled' };
+const TP_PAY = { paid: 'Paid', pending: 'Pending', partial: 'Partial' };
+const tpUsd = (amount, cur) => {
+  const per = tp.data?.rates?.usd?.[String(cur || '').toUpperCase()];
+  return per ? (Number(amount) || 0) / per : null;
+};
+/* What we pay the mover, in dollars (the app's tpmPayableUsd): nothing when it is not ours to pay. */
+const tpPayable = (s) => (s.not_payable ? 0 : tpUsd(s.amount, s.currency) || 0);
+const tpDollars = (n) => money(Math.round(n * 100) / 100, 'USD');
+
+async function showLogisticsMovers() {
+  const seq = ++lgPage;
+  $('#app').innerHTML = `${lgHeader('movers')}
+    <div class="inc-head">
+      <p class="sub" style="margin:0">3rd party movers — watches moved by outside couriers.</p>
+      <span class="tp-acts">
+        <button type="button" class="pill" data-tp="copy">Copy</button>
+        <button type="button" class="pill" data-tp="export">Export to a spreadsheet</button>
+        <button type="button" class="pill" data-tp="print">Print</button>
+        <button type="button" class="pill" data-tp="customs" aria-expanded="false">Customs sheet</button>
+        <a class="count" style="margin:0 0 0 4px" href="#/logistics/shipments-all">See the lists</a>
+      </span>
+    </div>
+    <p class="count" id="tp-msg" role="status" style="margin:0 0 8px"></p>
+    <div id="tp-out"><p class="count">Reading the movers…</p></div>`;
+  const out = $('#tp-out');
+  out.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
+    const b = e.target.closest('[data-arrivals]');
+    if (b) {
+      tp.arrivals = tp.arrivals === b.dataset.arrivals ? null : b.dataset.arrivals;
+      drawMovers();
+      $('#tp-arrivals')?.scrollIntoView({ block: 'start' });
+    }
+    if (e.target.closest('[data-tp-print]')) window.print();
+  });
+  out.addEventListener('change', (e) => {
+    const k = e.target.dataset.tpf;
+    if (!k) return;
+    if (k === 'sort') tp.sort = e.target.value;
+    else tp.f[k] = e.target.value;
+    drawMovers();
+  });
+  out.addEventListener('input', (e) => {
+    if (e.target.id !== 'tpq') return;
+    clearTimeout(tp.timer);
+    tp.timer = setTimeout(() => {
+      tp.q = e.target.value;
+      drawMovers();
+    }, 150);
+  });
+  lgOpenOnClick(out);
+  $$('[data-tp]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const act = b.dataset.tp;
+      if (!tp.data) return;
+      if (act === 'print') window.print();
+      if (act === 'customs') {
+        tp.customs = !tp.customs;
+        b.setAttribute('aria-expanded', String(tp.customs));
+        b.classList.toggle('on', tp.customs);
+        drawMovers();
+        if (tp.customs) $('#tp-customs')?.scrollIntoView({ block: 'start' });
+      }
+      if (act === 'copy') navigator.clipboard?.writeText(tpText()).then(() => ($('#tp-msg').textContent = 'Copied the shipments shown.'), () => ($('#tp-msg').textContent = 'Could not copy.'));
+      if (act === 'export') tpExport();
+    })
+  );
+  let r;
+  try {
+    r = await api('/api/logistics/movers');
+  } catch (err) {
+    if (seq === lgPage && $('#tp-out')) $('#tp-out').innerHTML = `<p class="count">Could not read the movers: ${esc(err.message)}</p>`;
+    return;
+  }
+  if (seq !== lgPage || !$('#tp-out')) return;
+  tp.data = r;
+  drawMovers();
+}
+
+/* The app's getFilteredTpmShipments: the filters, then the chosen order. */
+function tpRows() {
+  const f = tp.f;
+  const words = tp.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = tp.data.shipments.filter(
+    (s) =>
+      (!f.mover || s.mover === f.mover) &&
+      (!f.from || s.from === f.from) &&
+      (!f.to || s.to === f.to) &&
+      (!f.status || s.status === f.status) &&
+      (!f.payment || s.payment === f.payment) &&
+      (f.owner !== 'ours' || s.ours) &&
+      (f.owner !== 'friend' || !s.ours) &&
+      (!f.since || s.date >= f.since) &&
+      (!f.until || s.date <= f.until) &&
+      sfMatch(words, s.stock_no, s.description, s.from_client?.name, s.from, s.to, s.tracking, s.items, s.mover, s.brand, s.reference)
+  );
+  const byDate = (a, b) => b.date.localeCompare(a.date);
+  const cmp = {
+    manual: (a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || byDate(a, b),
+    date_desc: byDate,
+    date_asc: (a, b) => a.date.localeCompare(b.date),
+    to_asc: (a, b) => a.to.localeCompare(b.to) || byDate(a, b),
+    from_asc: (a, b) => a.from.localeCompare(b.from) || byDate(a, b),
+    mover_asc: (a, b) => a.mover.localeCompare(b.mover) || byDate(a, b),
+  }[tp.sort];
+  return rows.sort(cmp || byDate);
+}
+const tpWhat = (s) => (s.ours ? `#${s.stock_no || '—'}` : s.description || 'Not our stock');
+/* The shipments shown, as lines for a message (the app's Copy). */
+function tpText() {
+  const rows = tpRows();
+  return [
+    `3rd party shipments — ${rows.length}`,
+    ...rows.map((s) => [s.date, s.mover, tpWhat(s), s.from_client?.name, `${s.from || '?'} → ${s.to || '?'}`, s.items, s.not_payable ? 'not payable by us' : s.amount ? `${s.currency} ${s.amount}` : 'TBC', TP_PAY[s.payment] || s.payment, TP_STATUS[s.status] || s.status, s.tracking].filter(Boolean).join(' · ')),
+    `Total mover cost: $${rows.reduce((a, s) => a + tpPayable(s), 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}`,
+  ].join('\n');
+}
+/* The shipments shown, as a spreadsheet file (comma-separated — Excel opens it). */
+function tpExport() {
+  const cell = (v) => {
+    const s = String(v ?? '');
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const head = ['Date', 'Mover', 'Value of watch (USD)', 'Brand', 'Reference', 'Stock #', 'Description', 'From client', 'From', 'To', 'Items', 'Amount', 'Currency', 'USD', 'Payment', 'Status', 'Tracking', 'Customs (USD)', 'Customs (AED)'];
+  const lines = tpRows().map((s) => [s.date, s.mover, s.value_usd || '', s.brand, s.reference, s.ours ? s.stock_no : '', s.description, s.from_client?.name || '', s.from, s.to, s.items, s.not_payable ? '' : s.amount || '', s.currency, s.not_payable ? 0 : tpUsd(s.amount, s.currency)?.toFixed(2) ?? '', s.not_payable ? 'Not payable by us' : TP_PAY[s.payment] || s.payment, TP_STATUS[s.status] || s.status, s.tracking, s.customs_usd || '', s.customs_aed || ''].map(cell).join(','));
+  const blob = new Blob([`﻿${[head.join(','), ...lines].join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `3rd-party-shipments-${localDay()}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  $('#tp-msg').textContent = 'Saved the shipments shown as a spreadsheet file.';
+}
+
+function drawMovers() {
+  const r = tp.data;
+  if (!r || !$('#tp-out')) return;
+  const typing = document.activeElement?.id === 'tpq' ? document.activeElement.selectionStart : null;
+  const all = r.shipments;
+  const of = (m) => all.filter((s) => (m.id ? s.mover_id === m.id : false) || (!s.mover_id && s.mover === m.name));
+  // The movers: what each carried, its customs and what it cost us (the app's renderTpmMovers).
+  let gv = 0;
+  let gcu = 0;
+  let gca = 0;
+  let gc = 0;
+  const moverRows = r.movers
+    .map((m) => {
+      const ships = of(m);
+      const v = ships.reduce((a, s) => a + s.value_usd, 0);
+      const cu = ships.reduce((a, s) => a + s.customs_usd, 0);
+      const ca = ships.reduce((a, s) => a + s.customs_aed, 0);
+      const cost = ships.reduce((a, s) => a + tpPayable(s), 0);
+      gv += v;
+      gcu += cu;
+      gca += ca;
+      gc += cost;
+      const customsN = ships.filter((s) => s.value_usd > 0).length;
+      return `<tr data-id="${m.id}" tabindex="0">
+        <td><b>${esc(m.name)}</b></td><td>${esc(m.country || '—')}</td><td>${esc(m.contact)}</td><td>${esc(m.notes)}</td>
+        <td class="num">${ships.length}${customsN ? `<div class="count" style="margin:0">${customsN} customs</div>` : ''}</td>
+        <td class="num">${v ? tpDollars(v) : '—'}</td><td class="num">${cu ? tpDollars(cu) : '—'}</td><td class="num">${ca ? money(ca, 'AED') : '—'}</td><td class="num">${tpDollars(cost)}</td>
+        <td class="num"><button type="button" class="btn small" data-arrivals="${m.id}" aria-pressed="${tp.arrivals === String(m.id)}">Coming to them</button></td>
+      </tr>`;
+    })
+    .join('');
+
+  const rows = tpRows();
+  const total = rows.reduce((a, s) => a + tpPayable(s), 0);
+  const value = rows.reduce((a, s) => a + s.value_usd, 0);
+  const valued = rows.filter((s) => s.value_usd > 0).length;
+  const pay = (st) => rows.filter((s) => s.payment === st && !s.not_payable);
+  const paidUsd = pay('paid').reduce((a, s) => a + (tpUsd(s.amount, s.currency) || 0), 0);
+  const owed = [...pay('pending'), ...pay('partial')];
+  const owedUsd = owed.reduce((a, s) => a + (tpUsd(s.amount, s.currency) || 0), 0);
+  // The app counts every shipment marked paid / pending / partial; only the dollars leave out what is not ours to pay.
+  const counted = (st) => rows.filter((s) => s.payment === st).length;
+  const byCur = new Map();
+  for (const s of rows) if (s.amount > 0) byCur.set(s.currency, (byCur.get(s.currency) || 0) + s.amount);
+  const missing = [...byCur.keys()].filter((c) => tpUsd(1, c) == null);
+  const uniq = (fn) => [...new Set(all.map(fn).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const sel = (k, values, label, labels = {}) => {
+    if (values.length && !values.includes(tp.f[k])) tp.f[k] = '';
+    return `<select data-tpf="${k}" aria-label="${label}" class="${tp.f[k] ? 'on' : ''}"><option value="">${label}</option>${values
+      .map((v) => `<option value="${esc(v)}"${tp.f[k] === v ? ' selected' : ''}>${esc(labels[v] || v)}</option>`)
+      .join('')}</select>`;
+  };
+
+  // The customs sheet: the valued shipments shown, by mover (the app's printCustomsSheet), ready to print and send.
+  const customsRows = rows.filter((s) => s.value_usd > 0);
+  const byMover = new Map();
+  for (const s of customsRows) {
+    const k = s.mover || '(unnamed)';
+    if (!byMover.has(k)) byMover.set(k, []);
+    byMover.get(k).push(s);
+  }
+  const customs = tp.customs
+    ? `<section class="panel shp-sec tp-print" id="tp-customs">
+        <div class="shp-sec-h"><div><h2 class="sf-h">Customs sheet — ${esc(dayWords(localDay()))}</h2><p class="count" style="margin:2px 0 0">The valued shipments shown, by mover — to share with the mover.</p></div><button type="button" class="btn" data-tp-print>Print or save as PDF</button></div>
+        ${
+          customsRows.length
+            ? [...byMover]
+                .map(
+                  ([name, items]) => `<h3 class="hc-stop-h" style="margin-top:12px">${esc(name)} — ${items.length} shipment${items.length === 1 ? '' : 's'}</h3>
+                  <div class="tscroll"><table class="list lg tp-table"><thead><tr><th>Ship date</th><th>Delivery date</th><th>Stock</th><th>Status</th><th>Brand</th><th>Ref</th><th>From</th><th>To</th><th class="num">Value of watch</th><th class="num">Customs paid · ${items[0].customs_pct}%</th><th class="num">AED</th></tr></thead><tbody>${items
+                    .map(
+                      (s) => `<tr><td>${esc(s.date)}</td><td>${esc(s.delivered)}</td><td><b>${esc(s.stock_no)}</b></td><td>${esc(TP_STATUS[s.status] || s.status)}</td><td>${esc(s.brand)}</td><td>${esc(s.reference)}</td><td>${esc(s.from)}</td><td>${esc(s.to || 'DXB')}</td><td class="num">${money(s.value_usd, 'USD')}</td><td class="num">${money(s.customs_usd, 'USD')}</td><td class="num">${money(s.customs_aed, 'AED')}</td></tr>`
+                    )
+                    .join('')}<tr class="tp-total"><td colspan="8">Total</td><td class="num">${money(items.reduce((a, s) => a + s.value_usd, 0), 'USD')}</td><td class="num">${money(
+                    items.reduce((a, s) => a + s.customs_usd, 0),
+                    'USD'
+                  )}</td><td class="num">${money(items.reduce((a, s) => a + s.customs_aed, 0), 'AED')}</td></tr></tbody></table></div>`
+                )
+                .join('')
+            : '<p class="sub" style="margin:6px 0 0">No shipment shown has a watch value — the customs sheet only lists valued ones.</p>'
+        }
+      </section>`
+    : '';
+  // A mover's arrivals: everything it is carrying that has not landed, with its documents (the app's mover report).
+  const am = tp.arrivals && r.movers.find((m) => String(m.id) === tp.arrivals);
+  const coming = am ? of(am).filter((s) => s.status !== 'delivered' && s.status !== 'cancelled') : [];
+  const arrivals = am
+    ? `<section class="panel shp-sec tp-print" id="tp-arrivals">
+        <div class="shp-sec-h"><div><h2 class="sf-h">Coming to ${esc(am.name)}</h2><p class="count" style="margin:2px 0 0">${coming.length} shipment${coming.length === 1 ? '' : 's'} not landed yet, with their documents.</p></div><button type="button" class="btn" data-tp-print>Print or save as PDF</button></div>
+        ${
+          coming.length
+            ? coming
+                .map(
+                  (s) => `<div class="ov-row" data-id="${s.id}" tabindex="0" role="link"><div class="ov-row-main"><div><b>${esc(tpWhat(s))}</b>${s.brand || s.reference ? ` <span class="count" style="margin:0">${esc([s.brand, s.reference].filter(Boolean).join(' · '))}</span>` : ''}</div>
+                    <div class="count" style="margin:2px 0 0">${esc([s.date, `${s.from || '?'} → ${s.to || '?'}`, s.items, TP_STATUS[s.status] || s.status, s.tracking && `tracking ${s.tracking}`].filter(Boolean).join(' · '))}</div>
+                    ${s.docs.length ? `<div class="lg-ov">${s.docs.map((d, i) => `<a class="lg-tag" href="${esc(fileUrl(d))}" target="_blank" rel="noopener">Document ${i + 1}</a>`).join('')}</div>` : ''}</div>
+                    <div class="ov-row-side hc-ours">${s.watch ? coOurs(s) : ''}</div></div>`
+                )
+                .join('')
+            : '<p class="sub" style="margin:6px 0 0">Nothing on its way to this mover.</p>'
+        }
+      </section>`
+    : '';
+
+  const pill = (st, map) => `<span class="tp-${esc(st)}">${esc(map[st] || st)}</span>`;
+  $('#tp-out').innerHTML = `
+    <section class="panel shp-sec">
+      <h2 class="sf-h">Movers</h2>
+      ${
+        r.movers.length
+          ? `<div class="tscroll"><table class="list lg tp-table"><thead><tr><th>Name</th><th>Country</th><th>Contact</th><th>Notes</th><th class="num">Shipments</th><th class="num">Value of watches (USD)</th><th class="num">Customs paid (USD)</th><th class="num">Customs paid (AED)</th><th class="num">Mover cost (USD)</th><th></th></tr></thead><tbody>${moverRows}${
+              r.movers.length > 1
+                ? `<tr class="tp-total"><td colspan="5">Total across all movers</td><td class="num">${tpDollars(gv)}</td><td class="num">${tpDollars(gcu)}</td><td class="num">${money(gca, 'AED')}</td><td class="num">${tpDollars(gc)}</td><td></td></tr>`
+                : ''
+            }</tbody></table></div>`
+          : '<p class="sub" style="margin:6px 0 0">No movers yet.</p>'
+      }
+    </section>
+    ${arrivals}
+    <section class="panel shp-sec mv-sum">
+      <div class="shp-sec-h"><div><h2 class="sf-h">Shipments summary</h2><p class="count" style="margin:2px 0 0">The shipments shown · in dollars at ${r.rates ? `today’s ${esc(r.rates.kind)} rates${r.rates.stale ? ' (not fresh)' : ''}` : '— no rates could be read'}${
+        missing.length ? ` · ${esc(missing.join(', '))} left out — no rate` : ''
+      } · the value of watches is each shipment’s own figure</p></div>
+        <div class="shp-sec-n"><div><b>${tpDollars(total)}</b><span class="ov-tile-label">${rows.length} shipment${rows.length === 1 ? '' : 's'} · mover cost</span></div></div></div>
+      <div class="tp-sums">
+        <div class="tp-sum"><span class="ov-tile-label">Value of watches moved</span><b>${money(value, 'USD')}</b><small>${valued} with a value</small></div>
+        <div class="tp-sum good"><span class="ov-tile-label">Paid to movers</span><b>${tpDollars(paidUsd)}</b><small>${counted('paid')} shipment${counted('paid') === 1 ? '' : 's'} paid</small></div>
+        <div class="tp-sum warn"><span class="ov-tile-label">Still to pay (pending and partial)</span><b>${tpDollars(owedUsd)}</b><small>${counted('pending')} pending${counted('partial') ? ` · ${counted('partial')} partial` : ''}${valued ? ` · ${valued} watches valued ${money(Math.round(value), 'USD')}` : ''}</small></div>
+      </div>
+      ${byCur.size ? `<div class="mv-cur">${[...byCur].map(([c, n]) => `<span>${money(n, c)}${c !== 'USD' && tpUsd(n, c) != null ? ` <span class="count" style="margin:0">≈ ${tpDollars(tpUsd(n, c))}</span>` : ''}</span>`).join('')}</div>` : ''}
+    </section>
+    ${customs}
+    <section class="panel shp-sec">
+      <h2 class="sf-h">Shipments</h2>
+      <div class="tp-filters">
+        <input class="q" type="search" id="tpq" placeholder="Stock number, client, tracking, items…" value="${esc(tp.q)}" aria-label="Search the shipments">
+        <select data-tpf="sort" aria-label="Order">${[
+          ['manual', 'Custom order (the app’s)'],
+          ['date_desc', 'Newest first'],
+          ['date_asc', 'Oldest first'],
+          ['to_asc', 'To country A–Z'],
+          ['from_asc', 'From country A–Z'],
+          ['mover_asc', 'Mover A–Z'],
+        ]
+          .map(([k, l]) => `<option value="${k}"${tp.sort === k ? ' selected' : ''}>${l}</option>`)
+          .join('')}</select>
+        ${sel('mover', uniq((s) => s.mover), 'All movers')}
+        ${sel('from', uniq((s) => s.from), 'All from-countries')}
+        ${sel('to', uniq((s) => s.to), 'All to-countries')}
+        ${sel('status', Object.keys(TP_STATUS), 'All statuses', TP_STATUS)}
+        ${sel('payment', Object.keys(TP_PAY), 'All payments', TP_PAY)}
+        ${sel('owner', ['ours', 'friend'], 'All ownership', { ours: 'Our stock', friend: 'A friend’s' })}
+        <label class="mv-f"><span class="count">From</span><input type="date" data-tpf="since" value="${esc(tp.f.since)}"></label>
+        <label class="mv-f"><span class="count">To</span><input type="date" data-tpf="until" value="${esc(tp.f.until)}"></label>
+      </div>
+      ${
+        rows.length
+          ? `<div class="tscroll"><table class="list lg tp-table"><thead><tr><th>Date</th><th>Mover</th><th>Value of watch (USD)</th><th>Stock / description</th><th>From client</th><th>From</th><th>To</th><th>Items</th><th class="num">Amount</th><th class="num">USD</th><th>Payment</th><th>Status</th><th>Tracking</th><th>Docs</th></tr></thead><tbody>${rows
+              .map(
+                (s) => `<tr data-id="${s.id}" tabindex="0" class="${s.not_payable ? 'tp-free' : ''}">
+                  <td style="white-space:nowrap">${esc(s.date)}</td><td><b>${esc(s.mover)}</b></td>
+                  <td>${s.value_usd ? `<b>${money(s.value_usd, 'USD')}</b>${s.brand || s.reference ? `<div class="count" style="margin:0">${esc([s.brand, s.reference].filter(Boolean).join(' · '))}</div>` : ''}` : '—'}</td>
+                  <td>${s.ours ? (s.watch ? `<a class="lg-stock" href="#/watch/${s.watch.id}" title="Our watch">#${esc(s.stock_no || '—')}</a>` : `<span class="lg-stock">#${esc(s.stock_no || '—')}</span>`) : `<span class="count" style="margin:0">${esc((s.description || '—').slice(0, 40))}</span>`}${
+                  s.watch && (s.watch.bought_from || s.watch.sold_to) ? `<div class="count" style="margin:0">${esc([s.watch.bought_from && `from ${s.watch.bought_from.name}`, s.watch.sold_to && `to ${s.watch.sold_to.name}`].filter(Boolean).join(' · '))}</div>` : ''
+                }</td>
+                  <td>${s.from_client ? lgPerson(s.from_client.name, s.from_client.link) : '—'}</td><td>${esc(s.from || '—')}</td><td>${esc(s.to || '—')}</td>
+                  <td>${esc((s.items || '').slice(0, 40))}</td>
+                  <td class="num" style="white-space:nowrap">${s.not_payable ? '—' : s.amount ? money(s.amount, s.currency) : '<span class="blank">TBC</span>'}</td>
+                  <td class="num">${s.not_payable ? tpDollars(0) : s.amount ? (tpUsd(s.amount, s.currency) != null ? tpDollars(tpUsd(s.amount, s.currency)) : '<span class="blank">no rate</span>') : '—'}</td>
+                  <td>${s.not_payable ? '<span class="tp-paid">Not payable by us</span>' : pill(s.payment, TP_PAY)}</td>
+                  <td>${pill(s.status, TP_STATUS)}</td>
+                  <td>${s.tracking ? `<a href="https://t.17track.net/en#nums=${encodeURIComponent(s.tracking)}" target="_blank" rel="noopener">${esc(s.tracking)}</a>` : '—'}</td>
+                  <td style="white-space:nowrap">${[s.photo_count && `${s.photo_count} photo${s.photo_count === 1 ? '' : 's'}`, ...s.docs.map((d, i) => `<a href="${esc(fileUrl(d))}" target="_blank" rel="noopener">Doc ${i + 1}</a>`)].filter(Boolean).join(' · ') || '—'}</td>
+                </tr>`
+              )
+              .join('')}</tbody></table></div>`
+          : `<p class="sub" style="margin:6px 0 0">${all.length ? 'No shipment matches these filters.' : 'No 3rd party shipments yet.'}</p>`
+      }
+    </section>`;
+  if (typing !== null) {
+    const q = $('#tpq');
+    q.focus();
+    q.setSelectionRange(typing, typing);
+  }
 }
 
 /* ── movement ───────────────────────────────────────────────────── */

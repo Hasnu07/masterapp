@@ -895,6 +895,29 @@ test('movement: each trip’s legs, costs and watches (ours and their clients), 
   await db('DELETE FROM clients WHERE id = $1', [khawar]);
 });
 
+test('3rd party movers: each mover’s shipments, value, customs and what we owe; our stock linked, a friend’s only described', async () => {
+  const add = (kind, data, stock, sourceId = null) =>
+    db("INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [kind, sourceId, data, stock]);
+  const robin = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Robin', 'Casanova', 'manual') RETURNING id")).rows[0].id;
+  const w = (await db("INSERT INTO watches(stock_no, brand, model, origin, status, purchased_from_client_id) VALUES ('4101', 'Tudor', '79000B', 'manual', 'in_stock', $1) RETURNING id", [robin])).rows[0].id;
+  await add('clients', { name: 'Robin Casanova', country: 'Switzerland' }, [], 'TP-LC1');
+  const ferrari = (await add('thirdPartyMovers', { name: 'Ferrari', country: 'Dubai' }, [], 'TP-M1')).rows[0].id;
+  await add('thirdPartyShipments', { moverId: 'TP-M1', moverName: 'Ferrari', shipmentDate: '2026-06-26', valueUsd: 2400, watchBrand: 'Tudor', watchReference: '79000B', isOurStock: true, stockNumber: '4101', fromClientName: 'Robin Casanova', fromCountry: 'Switzerland', toCountry: 'Dubai', amount: 26.424, currency: 'aed', paymentStatus: 'pending', status: 'delivered', trackingNumber: '873550484216', customsUsd: 7.2, customsAed: 26.42, shippingDocuments: ['lgfile:1'] }, ['4101'], 'TP-S1');
+  await add('thirdPartyShipments', { moverName: 'Willie', shipmentDate: '2026-05-18', isOurStock: false, stockNumber: '4102', description: '26240ST Watch Only', fromClientName: 'Diego', fromCountry: 'Spain', toCountry: 'Belfast', amount: 175, currency: 'GBP', paymentStatus: 'paid', status: 'delivered', notPayable: true }, ['4102'], 'TP-S2');
+
+  const r = await m.lg.moversPage();
+  assert.ok(r.movers.some((x) => x.id === ferrari && x.name === 'Ferrari' && x.country === 'Dubai'));
+  const s1 = r.shipments.find((s) => s.tracking === '873550484216');
+  assert.deepEqual([s1.mover_id, s1.mover, s1.value_usd, s1.currency, s1.customs_aed, s1.docs], [ferrari, 'Ferrari', 2400, 'AED', 26.42, ['lgfile:1']], 'its mover by the app’s id');
+  assert.deepEqual([s1.watch?.id, s1.watch?.bought_from?.id, s1.from_client.link?.client_id], [w, robin, robin], 'our stock: our watch and its client; the typed client as far as it goes');
+  const s2 = r.shipments.find((s) => s.description === '26240ST Watch Only');
+  assert.deepEqual([s2.mover_id, s2.mover, s2.ours, s2.watch, s2.not_payable], [null, 'Willie', false, null, true], 'a friend’s watch is only its description, never linked by its number');
+
+  await db("DELETE FROM logistics_items WHERE source_id LIKE 'TP-%'");
+  await db("DELETE FROM watches WHERE stock_no = '4101'");
+  await db('DELETE FROM clients WHERE id = $1', [robin]);
+});
+
 /* ── the API ── */
 
 function client() {
@@ -941,6 +964,9 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const txs = await viewer.call('GET', '/api/logistics/transactions');
   assert.equal(txs.status, 200);
   assert.ok(Array.isArray(txs.body.transactions) && Array.isArray(txs.body.countries));
+  const movers = await viewer.call('GET', '/api/logistics/movers');
+  assert.equal(movers.status, 200);
+  assert.ok(Array.isArray(movers.body.movers) && Array.isArray(movers.body.shipments));
   const moves = await viewer.call('GET', '/api/logistics/movement');
   assert.equal(moves.status, 200);
   assert.ok(Array.isArray(moves.body.trips));
