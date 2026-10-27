@@ -395,6 +395,24 @@ function distinctIds(pairs) {
   });
 }
 
+/*
+ * The travel allowance's own settings, out of the app's settings (asked 26 Oct
+ * 2026, "rates and salaries"): the rates per region and their currency, which
+ * place a day belongs to, the hours that make "half a day", the places mapped
+ * by hand (and looked up), and the monthly salaries shown beside a person's
+ * trips. Named keys only — nothing else in settings is ever read (it holds
+ * Chrono Key's password, the carriers' and AI keys, the worker's key, the
+ * vault PIN), and the record still goes through the secret scrub.
+ */
+const PER_DIEM_KEYS = ['currency', 'rates', 'travelDay', 'majorityHours', 'places', 'geo', 'salaries'];
+export function perDiemOf(settings) {
+  const pd = settings && typeof settings === 'object' ? settings.perDiem : null;
+  if (!pd || typeof pd !== 'object' || Array.isArray(pd)) return null;
+  const out = {};
+  for (const k of PER_DIEM_KEYS) if (pd[k] !== undefined) out[k] = pd[k];
+  return Object.keys(out).length ? out : null;
+}
+
 /** The document's lists: [kind, [[sourceId, record]]]. A map (vaultTracking) is a list keyed by its keys. */
 function listsOf(state) {
   const out = [];
@@ -409,6 +427,8 @@ function listsOf(state) {
       out.push([kind, Object.entries(v).filter(([, r]) => r && typeof r === 'object').map(([k, r]) => [String(k), r])]);
     }
   }
+  const pd = perDiemOf(state?.settings);
+  if (pd) out.push(['perDiem', [['settings', pd]]]);
   return out;
 }
 

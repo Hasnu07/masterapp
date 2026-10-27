@@ -23,7 +23,11 @@ const jpeg = (w, h, color) => sharp({ create: { width: w, height: h, channels: 3
 async function fixture() {
   const inline = (await jpeg(40, 30, '#c33')).toString('base64');
   return {
-    settings: { fobPassword: 'secret-fob', workerToken: 'tok-in-settings', claudeKey: 'k-claude' },
+    settings: {
+      fobPassword: 'secret-fob', workerToken: 'tok-in-settings', claudeKey: 'k-claude',
+      // The travel allowance's part is copied (rates and salaries, asked) — named keys only, scrubbed.
+      perDiem: { currency: 'EUR', rates: { uae: 120, europe: 60 }, majorityHours: 12, places: { blogna: 'europe' }, salaries: [{ name: 'Kashan', amount: 3000, currency: 'GBP' }], apiKey: 'pd-secret-key', note: 'pd-unlisted' },
+    },
     notepad: 'a private note',
     clients: [
       { id: 'c1', name: 'Dealer One', country: 'UAE' },
@@ -194,13 +198,15 @@ test('a shipment’s stage: the carrier knows better than a status set by hand',
 test('every list is copied — its settings, passwords and notes never are', async () => {
   const s = await m.sync.syncLogistics();
   // 2 clients, 3 places' rows, 2 incomings, 2 shipments, 3 costs, 1 trip, 15 tasks, 1 activity line, 1 new list,
-  // 1 checked out, 1 vault holder, 1 shipping document.
-  assert.equal(s.created, 33, JSON.stringify(s));
+  // 1 checked out, 1 vault holder, 1 shipping document, the travel allowance's settings.
+  assert.equal(s.created, 34, JSON.stringify(s));
+  const pd = (await item('perDiem', 'settings')).data;
+  assert.deepEqual(pd, { currency: 'EUR', rates: { uae: 120, europe: 60 }, majorityHours: 12, places: { blogna: 'europe' }, salaries: [{ name: 'Kashan', amount: 3000, currency: 'GBP' }] }, 'the allowance’s named keys only');
   const kinds = (await db('SELECT DISTINCT kind FROM logistics_items')).rows.map((r) => r.kind);
   assert.ok(!kinds.includes('settings') && !kinds.includes('notepad'));
   assert.ok(kinds.includes('someNewList'), 'a list the catalog does not know yet is kept too');
   const everything = JSON.stringify((await db('SELECT data FROM logistics_items UNION ALL SELECT data FROM logistics_records')).rows);
-  for (const secret of ['secret-fob', 'tok-in-settings', 'k-claude', '9911', 'a private note']) {
+  for (const secret of ['secret-fob', 'tok-in-settings', 'k-claude', '9911', 'a private note', 'pd-secret-key', 'pd-unlisted']) {
     assert.ok(!everything.includes(secret), `${secret} is not copied`);
   }
 });
@@ -859,6 +865,36 @@ test('shipments: the app’s Live Shipments and Need to Give and Collect — pla
   await db('DELETE FROM clients WHERE id = $1', [gaetano]);
 });
 
+test('movement: each trip’s legs, costs and watches (ours and their clients), and the allowance’s own settings', async () => {
+  const add = (kind, data, stock, sourceId = null) =>
+    db("INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [kind, sourceId, data, stock]);
+  const khawar = (await db("INSERT INTO clients(forename, surname, origin) VALUES ('Khawar', 'Mv', 'manual') RETURNING id")).rows[0].id;
+  const w = (await db("INSERT INTO watches(stock_no, brand, model, origin, status, purchased_from_client_id) VALUES ('4001', 'Rolex', 'Day-Date', 'manual', 'in_stock', $1) RETURNING id", [khawar])).rows[0].id;
+  await add('personTrips', {
+    personName: 'Ben', status: 'completed', startDate: '2026-06-17', endDate: '2026-06-16',
+    legs: [{ id: 'l1', from: 'London', to: 'Dubai', date: '2026-06-17', time: '08:00' }],
+    costs: [{ category: 'Flight / Ticket', amount: 450, currency: 'gbp', legId: 'l1' }, { category: 'Taxi / Car', amount: 120, currency: 'AED' }],
+    perDiemOverrides: { '2026-06-17': { amount: 80 } },
+  }, ['4001'], 'MV-T1');
+  await add('personTrips', { personName: 'Boss', status: 'planned', fromLocation: 'Dubai', toLocation: 'HK', startDate: '2026-07-15' }, [], 'MV-T2');
+
+  const r = await m.lg.movementPage();
+  const ben = r.trips.find((t) => t.person === 'Ben');
+  assert.deepEqual(ben.legs, [{ id: 'l1', from: 'London', to: 'Dubai', date: '2026-06-17', time: '08:00', arr_date: '', arr_time: '' }]);
+  assert.deepEqual(ben.costs.map((c) => [c.category, c.amount, c.currency, c.leg]), [['Flight / Ticket', 450, 'GBP', 'l1'], ['Taxi / Car', 120, 'AED', '']]);
+  assert.deepEqual([ben.end, ben.overrides['2026-06-17'].amount], ['2026-06-16', 80], 'kept as the app has it: the browser works out the days');
+  assert.deepEqual(ben.stocks.map((s) => [s.stock_no, s.watch?.id, s.watch?.bought_from?.id]), [['4001', w, khawar]], 'the watch it carried: ours, and its client');
+  const boss = r.trips.find((t) => t.person === 'Boss');
+  assert.deepEqual(boss.legs.map((l) => [l.from, l.to, l.date]), [['Dubai', 'HK', '2026-07-15']], 'an old trip’s from → to is its one leg');
+  // The allowance's settings, copied by the sync from the app's settings (rates and salaries).
+  assert.equal(r.per_diem.currency, 'EUR');
+  assert.equal(r.per_diem.salaries[0].name, 'Kashan');
+
+  await db("DELETE FROM logistics_items WHERE source_id LIKE 'MV-%'");
+  await db("DELETE FROM watches WHERE stock_no = '4001'");
+  await db('DELETE FROM clients WHERE id = $1', [khawar]);
+});
+
 /* ── the API ── */
 
 function client() {
@@ -905,6 +941,9 @@ test('the API: read by anyone signed in, changed by editors, from our own page o
   const txs = await viewer.call('GET', '/api/logistics/transactions');
   assert.equal(txs.status, 200);
   assert.ok(Array.isArray(txs.body.transactions) && Array.isArray(txs.body.countries));
+  const moves = await viewer.call('GET', '/api/logistics/movement');
+  assert.equal(moves.status, 200);
+  assert.ok(Array.isArray(moves.body.trips));
   const ships = await viewer.call('GET', '/api/logistics/shipping');
   assert.equal(ships.status, 200);
   assert.ok(Array.isArray(ships.body.shipments) && Array.isArray(ships.body.ready));

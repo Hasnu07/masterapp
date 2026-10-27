@@ -25,7 +25,8 @@ export const GROUPS = [
   // A person's plan of stops — deliver, collect, move — as the app's Hand Carry page (asked 26 Oct 2026). handCarry() reads it.
   { key: 'handcarry', label: 'Hand carry' },
   { key: 'sales', label: 'Sales & delivery' },
-  { key: 'trips', label: 'Trips' },
+  // The app's Movement tab: person travel cost (asked 26 Oct 2026). The key stays, so old links still open it.
+  { key: 'trips', label: 'Movement' },
   // Accessory transactions with their clients and what is pending, as the app's All Transactions page (asked 26 Oct 2026). transactionsList() reads it.
   { key: 'transactions', label: 'Transactions' },
   { key: 'accessories', label: 'Accessories' },
@@ -385,6 +386,13 @@ export const KINDS = [
       f('notes', 'Notes', 'longtext'),
     ],
     summary: (d) => ({ title: join(d.personName, [d.fromLocation, d.toLocation].filter(Boolean).join(' → ')) || 'Trip', sub: d.purpose, status: d.status, date: d.startDate }),
+  },
+  {
+    // The travel allowance's settings, out of the app's settings (rates and salaries, asked 26 Oct 2026) — one record.
+    key: 'perDiem',
+    label: 'Travel allowance rates',
+    group: 'trips',
+    summary: (d) => ({ title: `Allowance rates in ${d.currency || 'EUR'}`, sub: Object.entries(d.rates || {}).map(([k, v]) => `${k} ${v}`).join(' · ') }),
   },
   {
     key: 'kashanPlans',
