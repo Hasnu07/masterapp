@@ -24,7 +24,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.94); backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line); }
-.bar-in { max-width: 1320px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.bar-in { padding: 10px 20px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .brand { font: 600 21px/1 var(--serif); letter-spacing: .2px; margin-right: 6px; white-space: nowrap; }
 .brand small { font: 500 11px var(--sans); color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; margin-left: 6px; }
 /* The menu: a ☰ in the bar, the pages in a drawer from the left. */
@@ -52,7 +52,9 @@ nav a.on { color: var(--ink); background: var(--gold-soft); }
 .who span { min-width: 0; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
 
-main { max-width: 1320px; margin: 0 auto; padding: 18px 16px 60px; }
+/* The console fills the screen (asked 27 Oct 2026: "wide screen the whole app instead of aligned at middle"). */
+main { width: 100%; padding: 18px 20px 60px; }
+@media (max-width: 640px) { main { padding: 14px 16px 60px; } .bar-in { padding: 10px 16px; } }
 h1 { font: 600 30px/1.15 var(--serif); margin: 0 0 4px; }
 h2 { font: 600 21px/1.2 var(--serif); margin: 0 0 10px; }
 h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
@@ -413,7 +415,7 @@ td .lg-rowacts { margin-top: 0; }
 .lg-actbar { gap: 8px; align-items: center; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
 .watch-head > .row { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 /* A record in a window over the tab, not a page of its own (asked 27 Oct 2026). */
-.lg-rec { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; padding: 0; }
+.lg-rec { width: min(1560px, calc(100vw - 48px)); max-height: calc(100vh - 40px); overflow: auto; padding: 0; }
 .lg-rec-body { padding: 18px 20px 24px; }
 .lg-rec-body .watch-head { margin-top: 0; }
 .lg-rec-body .watch-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
