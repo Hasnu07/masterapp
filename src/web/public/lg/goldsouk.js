@@ -6,8 +6,10 @@
  * on top. A stock number typed into a task ("Stock # 1229", or a bare number
  * that is our watch) is OUR watch with its clients; the shop and the person
  * link as far as their names go. "Copy" copies every task as the app's own
- * text. Adding, editing, marking done, the WhatsApp message and deleting
- * wait for the switch-over: a row opens its record.
+ * text. A new task, edit, done (with its result), the photos and delete
+ * are the app's own workflows done here (actions gs-…); the WhatsApp
+ * message is built as the app builds it, to copy — its bridge is not here.
+ * A row opens its record.
  */
 'use strict';
 const gs = { q: '', who: '', shop: '', data: null };
@@ -18,6 +20,7 @@ LG_PAGES.goldsouk = async function () {
   $('#app').innerHTML = `${lgHeader('goldsouk')}
     <p class="sub" style="margin:0 0 12px">Shop and person visits in the gold souk: who goes, what they take, what came of it. A stock number in a task is our watch.</p>
     <div class="ov-tiles gs-tiles" id="gs-tiles" aria-live="polite"></div>
+    ${lgActionBar('goldsouk')}
     <div class="lg-toolbar gs-toolbar">
       <input class="q" type="search" id="gsq" placeholder="Shop, person, what they take, notes, stock number…" value="${esc(gs.q)}" aria-label="Search gold souk tasks">
       <select id="gs-shop" aria-label="Shop or person visited"><option value="">Every shop</option></select>
@@ -26,7 +29,7 @@ LG_PAGES.goldsouk = async function () {
     <div class="lg-subtabs" id="gs-who" role="group" aria-label="Who is going"></div>
     <div class="count" id="gs-count">Reading the gold souk tasks…</div>
     <div id="gs-out"></div>
-    <p class="count gs-wait">A new task, editing, marking done, the WhatsApp message and deleting change the logistics app's records: they wait for the switch-over. Open a row to edit its record here. <a href="#/logistics/goldsouk-all">The records, as lists</a>.</p>`;
+    <p class="count gs-wait">WhatsApp is not sent from here: "Copy WhatsApp text" gives the message as the app would send it. Open a row to edit its record. <a href="#/logistics/goldsouk-all">The records, as lists</a>.</p>`;
   let timer;
   $('#gsq').addEventListener('input', (e) => {
     clearTimeout(timer);
@@ -136,8 +139,11 @@ function drawGoldSouk() {
 
   const who = (t) => `<span class="lg-tag">${lgPerson(t.who, t.who_link, '—')}</span>`;
   const shop = (t) => `<b>${lgPerson(t.shop, t.shop_link, '—')}</b>`;
+  // The app's row buttons: ✅ Done, ✏️, 🗑️ — the photos its dialogs take, the message it sends.
+  const openActs = (t) => `<div class="lg-rowacts">${lgActBtn('gs-done', t.id, { cls: 'primary' })}${lgActBtn('gs-edit', t.id)}${lgFilesBtn(t.id, 'photos', 'Add photos')}${lgCopyBtn(gsWhatsAppText(t))}${lgActBtn('gs-delete', t.id)}</div>`;
+  const doneActs = (t) => `<div class="lg-rowacts">${lgFilesBtn(t.id, 'resultPhotos', 'Add result photos')}${lgCopyBtn(gsWhatsAppText(t))}${lgActBtn('gs-edit', t.id)}${lgActBtn('gs-delete', t.id)}</div>`;
   const openRows = open.length
-    ? `<div class="tscroll"><table class="list lg gs-table"><thead><tr><th>Date</th><th>Shop / person</th><th>Who is going</th><th>Taking</th><th>Notes</th><th>Photos</th></tr></thead><tbody>${open
+    ? `<div class="tscroll"><table class="list lg gs-table"><thead><tr><th>Date</th><th>Shop / person</th><th>Who is going</th><th>Taking</th><th>Notes</th><th>Photos</th><th></th></tr></thead><tbody>${open
         .map(
           (t) => `<tr data-id="${t.id}" tabindex="0">
             <td style="white-space:nowrap">${esc(sfDay(t.date) || '—')}</td>
@@ -146,12 +152,13 @@ function drawGoldSouk() {
             <td class="gs-taking">${esc(t.taking || '—')}${gsStocks(t)}</td>
             <td class="gs-notes">${esc(t.notes)}</td>
             <td>${gsPhotos(t.photos, '') || '<span class="blank">—</span>'}</td>
+            <td class="gs-acts">${openActs(t)}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`
     : `<p class="sub" style="margin:0">${narrowed ? 'No open task matches.' : 'No open task.'}</p>`;
   const doneRows = done.length
-    ? `<div class="tscroll"><table class="list lg gs-table"><thead><tr><th>Date</th><th>Shop / person</th><th>Who went</th><th>Took</th><th>Result</th><th>Photos</th></tr></thead><tbody>${done
+    ? `<div class="tscroll"><table class="list lg gs-table"><thead><tr><th>Date</th><th>Shop / person</th><th>Who went</th><th>Took</th><th>Result</th><th>Photos</th><th></th></tr></thead><tbody>${done
         .map(
           (t) => `<tr data-id="${t.id}" tabindex="0">
             <td style="white-space:nowrap">${esc(sfDay(t.date) || '—')}${t.completed_at ? `<div class="count" style="margin:2px 0 0">done ${esc(sfDay(t.completed_at))}</div>` : ''}</td>
@@ -160,6 +167,7 @@ function drawGoldSouk() {
             <td class="gs-taking">${esc(t.taking || '—')}${gsStocks(t)}${t.notes ? `<div class="count gs-notes" style="margin:4px 0 0">${esc(t.notes)}</div>` : ''}</td>
             <td class="gs-notes">${esc(t.result_notes)}</td>
             <td>${gsPhotos(t.photos, t.result_photos.length ? 'before' : '')}${gsPhotos(t.result_photos, t.photos.length ? 'result' : '')}${!t.photos.length && !t.result_photos.length ? '<span class="blank">—</span>' : ''}</td>
+            <td class="gs-acts">${doneActs(t)}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`

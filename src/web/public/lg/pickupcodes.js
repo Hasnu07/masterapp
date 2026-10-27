@@ -5,9 +5,11 @@
  * lays it out: the code, pickup or delivery, its status, the message for
  * Person A with the address, the message for Person B, the day and time, who
  * each person is and whether their message went. The two messages, built
- * word for word as the app sends them, can be copied. Generating a code,
- * assigning a chat, sending, marking done and deleting wait for the
- * switch-over: a card opens its record.
+ * word for word as the app sends them, can be copied. A new code, its
+ * people, marking a message sent, done, edit and delete are the app's own
+ * workflows done here (actions pc-…); sending by WhatsApp is not — its
+ * bridge is not here, so a message is copied and marked as sent. A card
+ * opens its record.
  */
 'use strict';
 const pc = { q: '', status: '', data: null };
@@ -18,13 +20,14 @@ LG_PAGES.pickupcodes = async function () {
   $('#app').innerHTML = `${lgHeader('pickupcodes')}
     <p class="sub" style="margin:0 0 12px">A secret code for a handover: Person A (the collector or sender) gets the address and the code, Person B (the holder or receiver) gets the same code — the collector shows it to receive the item.</p>
     <div class="ov-tiles pc-tiles" id="pc-tiles" aria-live="polite"></div>
+    ${lgActionBar('pickupcodes')}
     <div class="lg-toolbar pc-toolbar">
       <input class="q" type="search" id="pcq" placeholder="Code, message, address, person, stock number…" value="${esc(pc.q)}" aria-label="Search pickup codes">
     </div>
     <div class="lg-subtabs" id="pc-status" role="group" aria-label="Status"></div>
     <div class="count" id="pc-count">Reading the pickup codes…</div>
     <div id="pc-out"></div>
-    <p class="count pc-wait">A new code, the person it goes to, sending it by WhatsApp, marking it done and deleting change the logistics app's records: they wait for the switch-over. Open a card to edit its record here. <a href="#/logistics/pickupcodes-all">The records, as lists</a>.</p>`;
+    <p class="count pc-wait">WhatsApp is not sent from here: copy a message, send it yourself, then "Mark sent" records it as the app would. A person is a name here — the app's chat list is not available. Open a card to edit its record. <a href="#/logistics/pickupcodes-all">The records, as lists</a>.</p>`;
   let timer;
   $('#pcq').addEventListener('input', (e) => {
     clearTimeout(timer);
@@ -120,12 +123,12 @@ function drawPickupCodes() {
             <div class="pc-who">Person A — collector / sender · ${pcPerson(c.person_a)} · ${pcSent(c.sent_a)}</div>
             <div class="pc-body">${c.message_a ? esc(c.message_a) : '<span class="blank">no message written</span>'}</div>
             ${c.address ? `<div class="pc-addr">${c.address.name ? `<b>${esc(c.address.name)}</b><br>` : ''}${esc(c.address.address)}${c.address.saved ? '' : ' <span class="count" style="margin:0">(as the code kept it — not a saved address)</span>'}</div>` : ''}
-            <button type="button" class="btn small" data-copy="A" data-id="${c.id}">Copy message for A</button>
+            <div class="lg-rowacts"><button type="button" class="btn small" data-copy="A" data-id="${c.id}">Copy message for A</button>${lgActBtn('pc-sent', c.id, { label: c.sent_a ? 'Sent again to A' : 'Mark sent to A', extra: { who: 'A' } })}${lgActBtn('pc-person', c.id, { label: c.person_a ? 'Change A' : 'Set person A', extra: { who: 'A' } })}</div>
           </div>
           <div class="pc-msg b">
             <div class="pc-who">Person B — holder / receiver · ${pcPerson(c.person_b)} · ${pcSent(c.sent_b)}</div>
             <div class="pc-body">${c.message_b ? esc(c.message_b) : '<span class="blank">no message written</span>'}</div>
-            <button type="button" class="btn small" data-copy="B" data-id="${c.id}">Copy message for B</button>
+            <div class="lg-rowacts"><button type="button" class="btn small" data-copy="B" data-id="${c.id}">Copy message for B</button>${lgActBtn('pc-sent', c.id, { label: c.sent_b ? 'Sent again to B' : 'Mark sent to B', extra: { who: 'B' } })}${lgActBtn('pc-person', c.id, { label: c.person_b ? 'Change B' : 'Set person B', extra: { who: 'B' } })}</div>
           </div>
         </div>
         <div class="pc-meta">${esc([c.date ? sfDay(c.date) : 'no date', c.time_from && (c.time_to ? `${c.time_from} – ${c.time_to}` : c.time_from)].filter(Boolean).join(' · '))}${
@@ -133,6 +136,7 @@ function drawPickupCodes() {
         }${c.created_at ? ` · made ${esc(sfDay(c.created_at))}` : ''}</div>
         ${c.notes ? `<div class="pc-notes">${esc(c.notes)}</div>` : ''}
         ${pcStocks(c)}
+        <div class="lg-rowacts pc-acts">${c.status === 'pending' ? lgActBtn('pc-done', c.id, { cls: 'primary' }) : ''}${lgActBtn('pc-edit', c.id)}${lgActBtn('pc-delete', c.id)}</div>
       </article>`
     )
     .join('');

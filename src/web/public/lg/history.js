@@ -4,8 +4,10 @@
  * settlement timeline: what was given, what was collected, when, and the
  * proof photos. Filtered by client as the app, searched too. The stock
  * number is our watch with its clients; the client as the logistics app's
- * id, linked to ours as that client is. Edit, settle, undo and delete
- * change the app's records: the record page, after the switch-over.
+ * id, linked to ours as that client is. Settle, add / change / remove an
+ * accessory, edit, delete and undo a settlement are the app's own buttons,
+ * done here (actions/accessories.js); proof photos go on a settlement
+ * through the upload control.
  */
 'use strict';
 (() => {
@@ -30,6 +32,7 @@
     const seq = ++lgPage;
     $('#app').innerHTML = `${lgHeader('history')}
       <p class="sub" style="margin:0 0 12px">Every accessory transaction with its full settlement timeline — what was given, what was collected, when, and the proof photos. Each is linked to our watch and its clients.</p>
+      ${can('editor') ? `<div class="lg-actbar">${lgActBtn('tx-new')}${lgActBtn('swap-new')}</div>` : ''}
       <div class="lg-toolbar hi-toolbar">
         <input class="q" type="search" id="hi-q" placeholder="Stock number, reference, brand, client, accessory…" value="${esc(hi.q)}" aria-label="Search">
         <select id="hi-client" aria-label="Client"><option value="">All clients</option></select>
@@ -96,7 +99,7 @@
       </summary>
       <div class="hi-body">
         <div class="hi-ours">${ours(t)}</div>
-        <div class="count hi-open"><a href="#/lg/${t.id}">Open the record</a> — editing, settling and deleting wait for the switch-over.</div>
+        <div class="lg-rowacts hi-open">${pending.length ? lgActBtn('tx-settle', t.id) : ''}${lgActBtn('tx-item-add', t.id)}${pending.length ? lgActBtn('tx-item-edit', t.id) + lgActBtn('tx-item-remove', t.id) : ''}${lgActBtn('tx-edit', t.id)}${lgActBtn('tx-delete', t.id)}<a class="btn small" href="#/lg/${t.id}">Open the record</a></div>
         ${
           pending.length
             ? `<div class="hi-pending"><b>${owe} (pending)</b><span class="lg-ov" style="margin:0">${pending.map((it) => `<span class="lg-tag warn">${itemWords(it)}</span>`).join('')}</span></div>`
@@ -110,6 +113,7 @@
                     <div class="hi-settle-head"><b>${s.direction === 'give' ? 'Delivered' : 'Received'}</b><span class="count" style="margin:0">${esc(fmtWhen(s.at) || '—')}</span></div>
                     <span class="lg-ov" style="margin:0">${s.items.map((x) => `<span class="lg-tag">${esc(x)}</span>`).join('') || '<span class="blank">items no longer on the transaction</span>'}</span>
                     ${s.notes ? `<div class="count" style="margin:6px 0 0">${esc(s.notes)}</div>` : ''}
+                    <div class="lg-rowacts">${lgUploadCtl(s.id, 'photos', s.direction === 'give' ? 'Add delivery photos' : 'Add receiving photos')}${lgActBtn('tx-settle-undo', s.id, { label: 'Undo' })}</div>
                     ${
                       s.pictures.length
                         ? `<div class="hi-photos">${s.pictures.map((p) => `<a href="${esc(fileUrl(p, false))}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(fileUrl(p, true))}" alt="Proof photo"></a>`).join('')}</div>`

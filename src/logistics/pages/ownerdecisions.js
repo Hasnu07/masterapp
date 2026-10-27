@@ -151,8 +151,9 @@ export async function page() {
     query("SELECT * FROM logistics_items WHERE kind = 'ownerDecisions' AND deleted_at IS NULL ORDER BY id"),
     query("SELECT * FROM logistics_items WHERE kind = 'ownerBriefs' AND deleted_at IS NULL ORDER BY id"),
   ]);
-  const decisions = new Map(odQ.rows.filter((r) => r.source_id).map((r) => [r.source_id, r]));
-  const incBySource = new Map(incQ.rows.filter((r) => r.source_id).map((r) => [r.source_id, r]));
+  // A decision made here has no source_id, only its own data.id: both name it.
+  const decisions = new Map(odQ.rows.map((r) => [(r.source_id || String(r.data?.id || '')), r]).filter(([k]) => k));
+  const incBySource = new Map(incQ.rows.map((r) => [(r.source_id || String(r.data?.id || '')), r]).filter(([k]) => k));
   const live = incQ.rows.filter((r) => !historic(r.data || {}));
   const [ours, people] = await Promise.all([
     oursByNumber([...live, ...odQ.rows].flatMap((r) => r.stock_nos || [])),
@@ -266,7 +267,7 @@ export async function page() {
     consolidations,
     records,
     briefs,
-    waits: 'Sending a brief on WhatsApp, the owner’s voice notes and their AI reading need the logistics app’s own keys, which masterapp does not hold — they wait for the switch-over. A decision, a collector or a status is written on the record’s page.',
+    waits: 'Sending a brief on WhatsApp, the owner’s voice notes and their AI reading need the logistics app’s own keys, which masterapp does not hold — they wait for the switch-over. Copy the brief, paste it to him, then Mark as sent; a decision, a collector or a status is set from the card.',
   };
 }
 
@@ -294,14 +295,14 @@ export function forStock(stockNo, rows) {
   };
   for (const r of live) {
     const d = r.data || {};
-    const odRow = d.ownerDecisionId ? ods.find((o) => o.source_id === String(d.ownerDecisionId)) : null;
+    const odRow = d.ownerDecisionId ? ods.find((o) => (o.source_id || String(o.data?.id || '')) === String(d.ownerDecisionId)) : null;
     if (odRow) seen.add(odRow.id);
     line(d, odRow ? odRow.data || {} : null);
   }
   // A decision with no live incoming behind it (the incoming arrived, or is gone): its last word, once it has one.
   if (!live.length) {
     for (const o of ods) {
-      if (seen.has(o.id) || incs.some((r) => r.data?.ownerDecisionId === o.source_id && historic(r.data || {}))) continue;
+      if (seen.has(o.id) || incs.some((r) => String(r.data?.ownerDecisionId || '') === (o.source_id || String(o.data?.id || '')) && historic(r.data || {}))) continue;
       line(null, o.data || {});
     }
   }

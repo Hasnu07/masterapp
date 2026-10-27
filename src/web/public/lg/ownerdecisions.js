@@ -39,7 +39,14 @@ function odGroups(rows, key, unknown) {
   return [...m.entries()].sort((a, b) => (a[0] === unknown ? 1 : b[0] === unknown ? -1 : b[1].length - a[1].length || a[0].localeCompare(b[0])));
 }
 /* The app's flags in the brief it sends — the message as the owner reads it on WhatsApp. */
-const OD_FLAGS = { switzerland: '🇨🇭', spain: '🇪🇸', italy: '🇮🇹', dubai: '🇦🇪', uae: '🇦🇪', 'united arab emirates': '🇦🇪', 'abu dhabi': '🇦🇪', germany: '🇩🇪', uk: '🇬🇧', 'united kingdom': '🇬🇧', england: '🇬🇧', london: '🇬🇧', 'hong kong': '🇭🇰', hk: '🇭🇰', france: '🇫🇷', usa: '🇺🇸', japan: '🇯🇵', singapore: '🇸🇬', belgium: '🇧🇪', netherlands: '🇳🇱', austria: '🇦🇹', portugal: '🇵🇹', qatar: '🇶🇦', 'saudi arabia': '🇸🇦', kuwait: '🇰🇼', bahrain: '🇧🇭', oman: '🇴🇲', pakistan: '🇵🇰', india: '🇮🇳', turkey: '🇹🇷', greece: '🇬🇷', monaco: '🇲🇨' };
+const OD_FLAGS = {
+  switzerland: '🇨🇭', spain: '🇪🇸', italy: '🇮🇹', dubai: '🇦🇪', uae: '🇦🇪', 'united arab emirates': '🇦🇪', 'abu dhabi': '🇦🇪', germany: '🇩🇪', uk: '🇬🇧', 'united kingdom': '🇬🇧', england: '🇬🇧', london: '🇬🇧',
+  france: '🇫🇷', paris: '🇫🇷', usa: '🇺🇸', 'united states': '🇺🇸', america: '🇺🇸', 'hong kong': '🇭🇰', hk: '🇭🇰', japan: '🇯🇵', singapore: '🇸🇬', china: '🇨🇳', netherlands: '🇳🇱', holland: '🇳🇱', belgium: '🇧🇪',
+  austria: '🇦🇹', portugal: '🇵🇹', greece: '🇬🇷', turkey: '🇹🇷', qatar: '🇶🇦', 'saudi arabia': '🇸🇦', kuwait: '🇰🇼', bahrain: '🇧🇭', oman: '🇴🇲', india: '🇮🇳', pakistan: '🇵🇰', thailand: '🇹🇭',
+  malaysia: '🇲🇾', australia: '🇦🇺', canada: '🇨🇦', poland: '🇵🇱', sweden: '🇸🇪', denmark: '🇩🇰', norway: '🇳🇴', finland: '🇫🇮', 'czech republic': '🇨🇿', romania: '🇷🇴', russia: '🇷🇺', monaco: '🇲🇨',
+  luxembourg: '🇱🇺', ireland: '🇮🇪', israel: '🇮🇱', lebanon: '🇱🇧', egypt: '🇪🇬', morocco: '🇲🇦', 'south africa': '🇿🇦', brazil: '🇧🇷', mexico: '🇲🇽', korea: '🇰🇷', 'south korea': '🇰🇷', taiwan: '🇹🇼',
+  vietnam: '🇻🇳', indonesia: '🇮🇩', philippines: '🇵🇭', 'new zealand': '🇳🇿', argentina: '🇦🇷', chile: '🇨🇱',
+};
 const odFlag = (name) => OD_FLAGS[String(name || '').trim().toLowerCase()] || '📍';
 
 LG_PAGES.ownerdecisions = async function () {
@@ -180,7 +187,7 @@ function odDrawCenter() {
             ${odGroups(items, (i) => i.supplier, OD_NO_SUP)
               .map(([sup, list]) => `<div class="od-route-sup">${lgPerson(sup, list[0].supplier_link)}</div>${list.map((i) => `<div class="od-route-w"><span>${odTitle(i)} <span class="lg-stock">#${esc(i.stock_no || '—')}</span></span><span class="count" style="margin:0">${odOurs(i)}</span>${i.decision?.instruction ? `<div class="od-quote">“${esc(i.decision.instruction.slice(0, 120))}”</div>` : ''}</div>`).join('')}`)
               .join('')}
-            <p class="count" style="margin:8px 0 0">Create a collection, assign or change the collector, mark arranged: on each decision's record page until the switch-over.</p>
+            ${lgOdGroupActs(g) || '<p class="count" style="margin:8px 0 0">Create a collection, assign a collector, mark arranged: an editor can, from here.</p>'}
           </section>`;
         })
         .join('')
@@ -249,7 +256,7 @@ function odCard(i) {
         ${odPrice(i) ? `<div class="od-price">${odPrice(i)}</div>` : ''}
         ${i.changed ? `<div class="od-warn">${esc(i.changed)}</div>` : ''}
       </div>
-      <div class="od-acts"><a class="btn small" href="#/lg/${d ? d.id : i.id}">${d ? 'Open decision' : 'Open incoming'}</a></div>
+      <div class="od-acts">${lgOdCardActs(i)}<a class="btn small" href="#/lg/${d ? d.id : i.id}">${d ? 'Open decision' : 'Open incoming'}</a></div>
     </div>
     ${open ? odPanel(i) : ''}
   </article>`;
@@ -258,7 +265,7 @@ function odCard(i) {
 /* The app's OwnerInstructionPanel: the instruction in the owner's words, how it was read, and everything since. */
 function odPanel(i) {
   const d = i.decision;
-  if (!d) return `<div class="od-body"><p class="count" style="margin:0">No decision has been recorded for this watch yet. ${i.status === 'DECISION_NEEDED' ? 'It goes in the next brief to the owner.' : ''} A decision is written on the incoming's record until the switch-over.</p></div>`;
+  if (!d) return `<div class="od-body"><p class="count" style="margin:0">No decision has been recorded for this watch yet. ${i.status === 'DECISION_NEEDED' ? 'It goes in the next brief to the owner.' : ''} ${can('editor') ? 'Decision writes one.' : ''}</p></div>`;
   return `<div class="od-body">
     ${d.instruction ? `<div class="od-l">Owner instruction</div><p class="od-quote">${esc(d.instruction)}</p>${d.has_voice ? '<p class="count" style="margin:0 0 8px">A voice note is on the record; it plays in the logistics app.</p>' : ''}` : ''}
     ${d.reading ? `<div class="od-l">How it was read</div><p class="count" style="margin:0 0 8px">${esc(d.reading)}</p>` : ''}
@@ -269,7 +276,7 @@ function odPanel(i) {
     <div class="od-l" style="margin-top:10px">History</div>
     <div class="od-tl">${d.events.length ? d.events.map((e) => `<div class="od-ev"><b>${esc(e.label)}</b><span class="count" style="margin:0">${esc([e.by, e.source, e.at && fmtWhen(e.at)].filter(Boolean).join(' · '))}</span></div>`).join('') : '<p class="count" style="margin:0">Nothing recorded yet.</p>'}</div>
     ${d.confirmed_at ? `<p class="count" style="margin:8px 0 0">Confirmed ${esc(fmtWhen(d.confirmed_at))}${d.confirmed_by ? ` by ${esc(d.confirmed_by)}` : ''}${d.source ? ` · ${esc(d.source)}` : ''}</p>` : ''}
-    <p class="count" style="margin:8px 0 0">Start, Done, changing the status or the decision: on <a href="#/lg/${d.id}">the decision's record</a>.</p>
+    <p class="count" style="margin:8px 0 0">Start, Done, the status and the decision: the card's buttons. <a href="#/lg/${d.id}">The decision's record</a> has its fields and history.</p>
   </div>`;
 }
 
@@ -312,7 +319,7 @@ function odDrawBrief() {
   const field = (key, label) => `<label class="od-check"><input type="checkbox" data-field="${key}"${b.fields[key] ? ' checked' : ''}> ${label}</label>`;
   $('#od-brief-n').textContent = chosen.length ? `${chosen.length} watch${chosen.length === 1 ? '' : 'es'} in this brief` : 'Nothing to ask about';
   box.innerHTML = `
-    <p class="count" style="margin:0 0 8px">The owner is not sent the whole book: what is new, what changed under a decision he made, and what he asked to be reminded about — grouped as he thinks about them. Sending it on WhatsApp waits for the switch-over; copy it and paste it yourself.</p>
+    <p class="count" style="margin:0 0 8px">The owner is not sent the whole book: what is new, what changed under a decision he made, and what he asked to be reminded about — grouped as he thinks about them. Sending it on WhatsApp waits for the switch-over (the app's bot and its keys are not here): copy it, paste it to him yourself, then mark it sent — the brief is recorded and every watch in it goes to Sent to Owner, as the app's send does.</p>
     <div class="od-l">Who needs a decision</div>
     <div class="lg-subtabs" role="group" aria-label="Pick by"><button type="button" class="pill${bySupplier ? '' : ' on'}" data-pick="location" aria-pressed="${!bySupplier}">By country</button><button type="button" class="pill${bySupplier ? ' on' : ''}" data-pick="supplier" aria-pressed="${bySupplier}">By supplier</button></div>
     ${sent.length ? `<label class="od-check od-resend"><input type="checkbox" id="od-sent"${b.includeSent ? ' checked' : ''}> Ask again about the ${sent.length} already with him</label>` : ''}
@@ -331,7 +338,7 @@ function odDrawBrief() {
     <div class="od-fields">${field('stock', 'Stock number')}${field('ref', 'Reference')}${field('price', 'Buy price')}${field('dest', 'Destination')}${field('notes', 'Current notes')}${field('serial', 'Serial')}</div>
     <div class="od-l">This is exactly what he will get</div>
     <pre class="od-pre" id="od-preview" data-nofx>${esc(odBriefText(chosen))}</pre>
-    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><button type="button" class="btn gold" id="od-copy"${chosen.length ? '' : ' disabled'}>Copy the brief</button><span class="count" style="margin:0">Send on WhatsApp: waits for the switch-over.</span></div>`;
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><button type="button" class="btn gold" id="od-copy"${chosen.length ? '' : ' disabled'}>Copy the brief</button>${lgOdBriefSentBtn(b, chosen.length)}<span class="count" style="margin:0">Send on WhatsApp: waits for the switch-over.</span></div>`;
 }
 
 /* The app's odBriefText, line for line. */

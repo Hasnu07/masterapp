@@ -6,7 +6,10 @@
  * the printable sheet. Summed in the browser from the rows the server
  * reads, exactly as the app sums (by row, by brand, by canonical accessory).
  * Every stock number is our watch with its clients; Chrono Key's own box /
- * papers stand beside the app's list.
+ * papers stand beside the app's list. What a row says is missing is edited
+ * as the app's own checkbox grid edits it ("Edit what is missing", on the
+ * drill-down's rows and the row's record); a client's pending items are
+ * settled from the owes table.
  */
 'use strict';
 (() => {
@@ -174,7 +177,7 @@
                 <td style="white-space:nowrap">${t.reference && t.reference !== t.stock_no ? `<a href="#/lg/${t.id}">${esc(t.reference)}</a>` : '<span class="blank">—</span>'}</td>
                 <td>${esc(t.brand || '—')}</td>
                 <td><span class="lg-ov" style="margin:0">${t.items.map((it) => `<span class="lg-tag warn">${esc(tokenWords(it))}</span>`).join('')}</span></td>
-                <td>${ours(t)}</td>
+                <td>${ours(t)}${lgActBtn('tx-settle', t.id) ? `<div class="lg-rowacts">${lgActBtn('tx-settle', t.id)}${lgActBtn('tx-item-edit', t.id, { label: 'Change' })}</div>` : ''}</td>
               </tr>`
             )
             .join('')}</tbody></table></div>
@@ -253,7 +256,7 @@
                   <td><a href="#/lg/${r.id}">${esc(r.model.slice(0, 60) || 'Watch')}</a></td>
                   <td>${esc(r.reference || '—')}</td>
                   <td>${ckSays(r)}</td>
-                  <td>${ours(r)}</td>
+                  <td>${ours(r)}${lgActBtn('acc-missing', r.id) ? `<div class="lg-rowacts">${lgActBtn('acc-missing', r.id)}</div>` : ''}</td>
                   <td class="num"><b class="ma-qty">${qtyOf(r)}</b></td>
                 </tr>`
               )

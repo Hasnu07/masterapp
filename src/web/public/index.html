@@ -377,6 +377,17 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .lg-tabs .lg-n { display: inline-block; min-width: 1.6em; margin-left: 2px; padding: 0 6px; border-radius: 999px; background: var(--blue-soft);
   color: var(--blue); font-size: 12px; font-weight: 600; text-align: center; line-height: 1.6; }
 .lg-tabs-toggle { display: none; }
+/* An action's form (the app's workflows done here): a dialog in the console's look; a page's actions in a bar. */
+.lg-dlg { border: 1px solid var(--line); border-radius: var(--radius); padding: 0; width: min(720px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0,0,0,.18); background: var(--card); color: var(--ink); }
+.lg-dlg::backdrop { background: rgba(29,27,24,.35); }
+.lg-dlg-form { padding: 18px 18px 14px; }
+.lg-dlg-form h2 { margin-bottom: 12px; }
+.lg-dlg-acts { margin-top: 14px; gap: 8px; }
+.lg-actbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.lg-actbar .btn, .lg-rowacts .btn { min-height: 36px; }
+.lg-rowacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.btn.off { opacity: .5; cursor: not-allowed; }
+@media (max-width: 640px) { .lg-actbar .btn, .lg-rowacts .btn { min-height: 44px; } }
 @media (min-width: 1024px) {
   #app.lg-page { display: grid; grid-template-columns: 222px minmax(0, 1fr); column-gap: 28px; align-items: start; }
   #app.lg-page > * { grid-column: 2; min-width: 0; }
@@ -797,5 +808,16 @@ table.list.lg a { text-decoration: none; color: var(--ink); }
 <script src="/lg/shipmentdocs.js"></script>
 <script src="/lg/swaps.js"></script>
 <script src="/lg/log.js"></script>
+<script src="/lg/act-stock.js"></script>
+<script src="/lg/act-sales.js"></script>
+<script src="/lg/act-incoming.js"></script>
+<script src="/lg/act-shipping.js"></script>
+<script src="/lg/act-movers.js"></script>
+<script src="/lg/act-plans.js"></script>
+<script src="/lg/act-decisions.js"></script>
+<script src="/lg/act-accessories.js"></script>
+<script src="/lg/act-dubai.js"></script>
+<script src="/lg/act-records.js"></script>
+<script src="/lg/act-costs.js"></script>
 </body>
 </html>

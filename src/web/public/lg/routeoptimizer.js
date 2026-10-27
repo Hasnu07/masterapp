@@ -5,12 +5,14 @@
  * each cost to buy and what moving it has cost so far, the cargo summary,
  * and the historical costs on that route (every recorded move between the
  * two places, by method / carrier, and the most recent). Dollars at the
- * converter's rates. The market prices and the AI recommendation are asked
- * of Claude with the app's own key, which masterapp does not hold: they
- * wait for the switch-over. Every watch is ours, with its clients.
+ * converter's rates. The app's two AI buttons — "Fetch Market Prices" and
+ * "Get AI Recommendation" — run the route-prices / route-advice actions
+ * (src/logistics/actions/shipping.js: the app's prompts verbatim, asked
+ * with masterapp's own key); without ANTHROPIC_API_KEY they are greyed.
+ * Every watch is ours, with its clients.
  */
 'use strict';
-const roState = { from: '', to: '', custom: '', q: '', picked: new Set(), data: null };
+const roState = { from: '', to: '', custom: '', q: '', picked: new Set(), data: null, prices: {}, advice: null, busy: '' };
 
 /* The app's normalizeRouteLoc, as written. */
 function roPlace(s) {
@@ -43,6 +45,7 @@ LG_PAGES.routeoptimizer = async function () {
       <div id="ro-available"></div>
       <div id="ro-picked"></div>
       <div id="ro-summary"></div>
+      <div id="ro-ai" class="ro-ai"></div>
     </section>
     <section class="panel ro-hist">
       <h2 class="sf-h" style="margin-bottom:8px">Historical costs on this route</h2>
@@ -52,7 +55,13 @@ LG_PAGES.routeoptimizer = async function () {
     roDrawAvailable();
     roDrawPicked();
     roDrawHistory();
+    roDrawAi();
   };
+  // The app's two AI buttons: the action is posted straight from here (its input is the page's state, not a form).
+  $('#ro-ai').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ro-ai]');
+    if (b && !b.disabled) roRunAi(b.dataset.roAi);
+  });
   $('#ro-from').addEventListener('change', (e) => {
     // The app's routeFromChanged: a new origin clears the picked watches.
     roState.from = e.target.value;
@@ -131,7 +140,10 @@ LG_PAGES.routeoptimizer = async function () {
   }
   if (seq !== lgPage || !$('#ro-history')) return;
   roState.data = r;
-  $('#ro-waits').textContent = r.waits;
+  const ai = lgAction('route-prices');
+  $('#ro-waits').textContent = ai?.ai_ready
+    ? 'Market prices and the AI route recommendation are asked of Claude with masterapp’s own key.'
+    : 'Market prices and the AI route recommendation need the AI key (ANTHROPIC_API_KEY): the two buttons are greyed until it is set.';
   redraw();
 };
 
@@ -207,6 +219,7 @@ function roDrawPicked() {
           <div class="count" style="margin:2px 0 0">${roOurs(w)}${w.from?.name ? ` · bought from (the app) ${lgPerson(w.from.name, w.from.link)}` : ''}</div></div>
         ${w.buy ? `<span class="ro-fig good" title="What it cost to buy, as the app's row says">Cost ${money(w.buy.amount, w.buy.currency)}${w.buy_usd != null && w.buy.currency !== 'USD' ? ` <small>≈ ${roDollars(w.buy_usd)}</small>` : ''}</span>` : '<span class="ro-fig warn">No cost price</span>'}
         ${w.log_usd > 0 ? `<span class="ro-fig bad" title="What moving it has cost so far, in dollars">Logistics ${roDollars(w.log_usd)}${w.log_missing.length ? ` <small>· ${esc(w.log_missing.join(', '))} left out</small>` : ''}</span>` : ''}
+        ${roPriceFig(w)}
         <button type="button" class="btn small" data-drop="${w.id}" aria-label="Remove #${esc(w.stock_no)} from the move">✕</button>
       </div>`
     )
@@ -215,11 +228,19 @@ function roDrawPicked() {
   const buy = picked.reduce((a, w) => a + (w.buy_usd || 0), 0);
   const noBuy = picked.filter((w) => !w.buy_usd).length;
   const log = picked.reduce((a, w) => a + (w.log_usd || 0), 0);
+  // The app's cargo summary: market value and profit once the prices are fetched.
+  const priced = picked.filter((w) => roState.prices[w.stock_no]?.usd);
+  const mkt = priced.reduce((a, w) => a + roState.prices[w.stock_no].usd, 0);
+  const profitBase = priced.reduce((a, w) => a + (w.buy_usd || 0), 0);
   $('#ro-summary').innerHTML = `<div class="ro-sum">
       <div><span class="count" style="margin:0">Watches selected</span><b>${picked.length}</b></div>
       <div><span class="count" style="margin:0">Total cost price</span><b class="good">${rates ? roDollars(buy) : '—'}</b>${noBuy ? `<small>${noBuy} with no cost price</small>` : ''}</div>
       <div><span class="count" style="margin:0">Existing logistic cost</span><b class="bad">${rates ? roDollars(log) : '—'}</b></div>
-      <div><span class="count" style="margin:0">Market value · profit</span><b>—</b><small>waits for the switch-over (AI)</small></div>
+      <div><span class="count" style="margin:0">Market value · profit</span>${
+        priced.length
+          ? `<b>${roDollars(mkt)}</b><small class="${mkt - profitBase >= 0 ? 'good' : 'bad'}">${mkt - profitBase >= 0 ? '↑' : '↓'} ${roDollars(Math.abs(mkt - profitBase))} ${mkt - profitBase >= 0 ? 'profit' : 'loss'}${priced.length < picked.length ? ` · ${picked.length - priced.length} not priced` : ''}</small>`
+          : '<b>—</b><small>fetch the market prices below</small>'
+      }</div>
     </div><p class="count" style="margin:8px 0 0">Dollars ${rates ? `at today’s ${esc(rates.kind)} rates${rates.stale ? ' (not fresh)' : ''}` : '— no rates could be read'}. The purchase price is not counted as a logistic cost.</p>`;
 }
 
@@ -272,4 +293,120 @@ function roDrawHistory() {
         </tr>`
       )
       .join('')}</tbody></table></div>`;
+}
+
+/* ── the AI (the app's fetchRouteMarketPrices / runRouteOptimizerAI) ─────── */
+
+/* The market price and the profit on a selected row, once fetched. */
+function roPriceFig(w) {
+  const p = roState.prices[w.stock_no];
+  if (!p?.usd) return '';
+  const profit = w.buy_usd ? p.usd - w.buy_usd : null;
+  return `<span class="ro-fig good" title="Market price, an AI estimate (${esc(p.confidence)})">Market ${roDollars(p.usd)} <small class="ro-conf ${esc(p.confidence)}">${esc(p.confidence)}</small></span>${
+    profit !== null ? `<span class="ro-fig ${profit >= 0 ? 'good' : 'bad'}">${profit >= 0 ? '↑' : '↓'} ${roDollars(Math.abs(profit))} ${profit >= 0 ? 'profit' : 'loss'}</span>` : ''
+  }`;
+}
+
+/* One of the two buttons: nothing for a viewer; greyed, with the reason, without the AI key. */
+function roAiBtn(key, which, label) {
+  const a = lgAction(key);
+  if (!a || !can('editor')) return '';
+  const off = a.ai && !a.ai_ready;
+  const busy = roState.busy === which;
+  return `<button type="button" class="btn${which === 'advice' ? ' primary' : ''}${off ? ' off' : ''}" data-ro-ai="${which}"${off || busy ? ' disabled' : ''}${off ? ' title="Needs the AI key (ANTHROPIC_API_KEY)"' : ''}>${esc(busy ? (which === 'prices' ? 'Fetching…' : 'Claude is analysing route and historical costs…') : label)}</button>`;
+}
+
+function roDrawAi() {
+  const box = $('#ro-ai');
+  if (!box || !roState.data) return;
+  const picked = roPickedList();
+  const buttons = roAiBtn('route-prices', 'prices', 'Fetch market prices') + roAiBtn('route-advice', 'advice', 'Get AI recommendation');
+  if (!buttons) {
+    box.innerHTML = '';
+    return;
+  }
+  const prices = picked.map((w) => roState.prices[w.stock_no]).filter(Boolean);
+  const adv = roState.advice;
+  box.innerHTML = `<h3 class="ro-h">Ask the AI</h3>
+    <div class="ro-ai-acts">${buttons}<span class="count ro-ai-msg" style="margin:0" id="ro-ai-msg">${picked.length ? '' : 'Tick the watches to move first.'}</span></div>
+    ${
+      prices.length
+        ? `<div class="ro-prices"><div class="ro-prices-h">Current market prices (AI estimate)</div>${prices
+            .map(
+              (p) => `<div class="ro-price-row"><span class="lg-stock">#${esc(p.stockNumber)}</span><span class="ro-price-l">${esc(p.label || '')}</span><b class="good">${p.usd ? roDollars(p.usd) : '—'}</b>${
+                p.buyUsd ? `<span class="count" style="margin:0">Buy ${roDollars(p.buyUsd)}</span>` : ''
+              }${p.profit !== null && p.profit !== undefined ? `<span class="ro-fig ${p.profit >= 0 ? 'good' : 'bad'}">${p.profit >= 0 ? '↑' : '↓'} ${roDollars(Math.abs(p.profit))} ${p.profit >= 0 ? 'profit' : 'loss'}</span>` : ''}<span class="ro-conf ${esc(p.confidence)}">${esc(p.confidence)}</span>${
+                p.note ? `<span class="count ro-price-note" style="margin:0">${esc(p.note)}</span>` : ''
+              }</div>`
+            )
+            .join('')}</div>`
+        : ''
+    }
+    ${
+      adv
+        ? `<div class="ro-advice">${roMdToHtml(adv.text)}</div>
+           <p class="count ro-note" style="margin:8px 0 0">Flight prices and carrier rates are Claude AI estimates — always verify live prices on Google Flights or airline sites before booking. Historical costs shown above come directly from your own records and are accurate.</p>`
+        : ''
+    }`;
+}
+
+/* The app's _routeMdToHtml, over escaped text: "## " headings, bold, italics, "- " bullets, line breaks. */
+function roMdToHtml(md) {
+  return esc(md)
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\n]+?)\*/g, '$1<em>$2</em>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+}
+
+/* The answer the action gives back: its data, else the message it packed it in. */
+function roAnswer(r) {
+  if (r.data) return r.data;
+  try {
+    return JSON.parse(r.message);
+  } catch {
+    return { text: r.message };
+  }
+}
+
+async function roRunAi(which) {
+  const picked = roPickedList();
+  const msg = (t) => {
+    const el = $('#ro-ai-msg');
+    if (el) el.textContent = t;
+  };
+  if (!picked.length) return msg(which === 'prices' ? 'Select watches first' : 'Add at least one watch to the move');
+  const ids = picked.map((w) => w.id).join(',');
+  roState.busy = which;
+  roDrawAi();
+  try {
+    if (which === 'prices') {
+      const r = await api('/api/logistics/act/route-prices', { method: 'POST', body: { ids } });
+      const out = roAnswer(r);
+      for (const p of out.prices || []) if (p.stockNumber) roState.prices[p.stockNumber] = p;
+      roState.busy = '';
+      roDrawPicked();
+      roDrawAi();
+      msg(`${(out.prices || []).length} price${(out.prices || []).length === 1 ? '' : 's'} fetched`);
+    } else {
+      if (!roState.from || !roState.to) {
+        roState.busy = '';
+        roDrawAi();
+        return msg('Select From and To locations first');
+      }
+      const prices = Object.fromEntries(picked.filter((w) => roState.prices[w.stock_no]?.usd).map((w) => [w.stock_no, { usd: roState.prices[w.stock_no].usd, confidence: roState.prices[w.stock_no].confidence }]));
+      const r = await api('/api/logistics/act/route-advice', { method: 'POST', body: { ids, from: roState.from, to: roState.to, custom: roState.custom, prices: JSON.stringify(prices) } });
+      roState.advice = roAnswer(r);
+      roState.busy = '';
+      roDrawAi();
+      $('.ro-advice')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  } catch (err) {
+    roState.busy = '';
+    roDrawAi();
+    msg(err.message);
+  }
 }

@@ -14,6 +14,126 @@
 const lgState = { q: '', kind: '', deleted: false };
 /* The logistics app's pages, one script each under lg/ (loaded after this file): each registers its tab here, by the tab's key. */
 const LG_PAGES = Object.create(null);
+/*
+ * The logistics app's workflows, done here (asked 27 Oct 2026): a button
+ * [data-act="<key>"] (with data-id for a record's action) anywhere in the
+ * console opens the action's form from the server and runs it. The actions
+ * come from the catalog (meta.logistics.actions); each page draws its own
+ * buttons with lgActBtn(); the record page draws every action for its kind.
+ * LG_ACTION_BARS[tab] = (data) => html adds a toolbar to one of the older
+ * tabs drawn in this file; LG_ROW_ACTIONS[tab] = (row) => html adds a row's.
+ */
+const LG_ACTION_BARS = Object.create(null);
+const LG_ROW_ACTIONS = Object.create(null);
+const lgActions = () => state.meta?.logistics?.actions || [];
+const lgAction = (key) => lgActions().find((a) => a.key === key);
+/* A button for an action — on a record (id) or on a page. Nothing for a viewer. */
+function lgActBtn(key, id = null, { label = '', cls = '', extra = {} } = {}) {
+  const a = lgAction(key);
+  if (!a || !can('editor')) return '';
+  const off = a.ai && !a.ai_ready;
+  const q = Object.entries(extra)
+    .map(([k, v]) => ` data-q-${esc(k)}="${esc(v)}"`)
+    .join('');
+  return `<button type="button" class="btn ${a.danger ? 'danger' : cls}${off ? ' off' : ''}" data-act="${esc(key)}"${id ? ` data-id="${esc(id)}"` : ''}${q}${
+    off ? ' title="Needs the AI key (ANTHROPIC_API_KEY)"' : ''
+  }>${esc(label || a.label)}</button>`;
+}
+/* Every action that applies to a kind, as buttons for one record. */
+const lgActBtnsFor = (kind, id) =>
+  lgActions()
+    .filter((a) => a.kinds && a.kinds.includes(kind))
+    .map((a) => lgActBtn(a.key, id))
+    .join(' ');
+/* The page-level actions of a tab (Add Row, Import CSV, Template …), as a toolbar. */
+const lgPageActs = (page) =>
+  lgActions()
+    .filter((a) => !a.kinds && a.page === page)
+    .map((a) => lgActBtn(a.key) + (a.has_template && can('editor') ? ` <a class="btn small" href="/api/logistics/act/${esc(a.key)}/template" download>Template (CSV)</a>` : ''))
+    .join(' ');
+const lgActionBar = (page, data) => {
+  const own = LG_ACTION_BARS[page] ? LG_ACTION_BARS[page](data) : '';
+  const acts = lgPageActs(page);
+  return own || acts ? `<div class="lg-actbar">${own}${acts}</div>` : '';
+};
+const lgRowActs = (page, row) => (LG_ROW_ACTIONS[page] ? LG_ROW_ACTIONS[page](row) : '');
+
+/* Opens the form and runs the action; the page is drawn again after. */
+async function lgRunAction(key, id = null, q = {}) {
+  const a = lgAction(key);
+  if (!a) return;
+  const qs = new URLSearchParams(q).toString();
+  const url = `/api/logistics${id ? `/items/${id}` : ''}/act/${encodeURIComponent(key)}${qs ? `?${qs}` : ''}`;
+  let d;
+  try {
+    d = await api(url);
+  } catch (err) {
+    return flash(err.message, 'err');
+  }
+  const submit = async (input, dlg) => {
+    try {
+      const r = await api(url, { method: 'POST', body: input });
+      dlg?.close();
+      flash(r.message || `${a.label}: done`);
+      if (r.open) location.hash = r.open;
+      else route();
+    } catch (err) {
+      const e = dlg?.querySelector('.err');
+      if (e) e.textContent = err.message;
+      else flash(err.message, 'err');
+    }
+  };
+  if (!d.form.length) {
+    if (!a.danger) return submit({}, null);
+    return lgDialog({ ...d, form: [], confirm: `${a.label} — this cannot be undone here. Sure?` }, submit);
+  }
+  lgDialog(d, submit);
+}
+/* The action's form in a dialog: the console's fields (lgForm), a CSV field reads a file. */
+function lgDialog(d, submit) {
+  document.getElementById('lg-dialog')?.remove();
+  const fields = d.form.map((f) => (f.type === 'choice' ? { ...f, type: 'enum', options: f.options.map((o) => (typeof o === 'string' ? o : o.value)), labels: Object.fromEntries(f.options.map((o) => (typeof o === 'string' ? [o, o] : [o.value, o.label]))) } : f));
+  const dlg = document.createElement('dialog');
+  dlg.id = 'lg-dialog';
+  dlg.className = 'lg-dlg';
+  dlg.innerHTML = `<form method="dialog" class="lg-dlg-form"><h2>${esc(d.label)}</h2>
+    ${d.ai && !d.ai_ready ? '<p class="note">Needs the AI key (ANTHROPIC_API_KEY).</p>' : ''}
+    ${d.confirm ? `<p class="sub">${esc(d.confirm)}</p>` : ''}
+    ${lgForm(fields.filter((f) => f.type !== 'csv' && f.type !== 'photos'), d.values || {})}
+    ${fields.filter((f) => f.type === 'csv').map((f) => `<label class="wide">${esc(f.label)}<input type="file" name="${esc(f.key)}" accept=".csv,text/csv">${f.hint ? `<small class="count">${esc(f.hint)}</small>` : ''}</label>`).join('')}
+    ${fields.filter((f) => f.type === 'photos').map((f) => `<label class="wide">${esc(f.label)}<input type="file" name="${esc(f.key)}" accept="image/*" multiple>${f.hint ? `<small class="count">${esc(f.hint)}</small>` : ''}</label>`).join('')}
+    ${fields.some((f) => f.hint && f.type !== 'csv') ? `<p class="count">${fields.filter((f) => f.hint && f.type !== 'csv').map((f) => `${esc(f.label)}: ${esc(f.hint)}`).join(' · ')}</p>` : ''}
+    <div class="err"></div>
+    <div class="row lg-dlg-acts"><button type="button" class="btn primary" id="lg-dlg-ok">${esc(d.label)}</button><button type="button" class="btn" id="lg-dlg-x">Cancel</button></div></form>`;
+  document.body.appendChild(dlg);
+  const form = dlg.querySelector('form');
+  for (const f of fields) if (f.labels) for (const o of form.elements[f.key]?.options || []) o.textContent = f.labels[o.value] || o.textContent;
+  fillLogisticsClients(form);
+  dlg.querySelector('#lg-dlg-x').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.querySelector('#lg-dlg-ok').addEventListener('click', async () => {
+    const input = {};
+    for (const f of fields) {
+      const el = form.elements[f.key];
+      if (!el) continue;
+      if (f.type === 'csv') input[f.key] = el.files?.[0] ? await el.files[0].text() : '';
+      else if (f.type === 'photos') input[f.key] = await Promise.all([...(el.files || [])].slice(0, 12).map((file) => new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => ok(''); r.readAsDataURL(file); }))).then((a) => a.filter(Boolean));
+      else if (f.type === 'bool') input[f.key] = el.value === 'true';
+      else input[f.key] = el.value;
+    }
+    await submit(input, dlg);
+  });
+  dlg.showModal();
+  form.querySelector('input:not([type=hidden]), select, textarea')?.focus();
+}
+document.getElementById('app').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-act]');
+  if (!b || b.classList.contains('off')) return;
+  e.preventDefault();
+  const q = {};
+  for (const [k, v] of Object.entries(b.dataset)) if (k.startsWith('q') && k.length > 1 && k[1] === k[1].toUpperCase()) q[k[1].toLowerCase() + k.slice(2)] = v;
+  lgRunAction(b.dataset.act, b.dataset.id ? Number(b.dataset.id) : null, q);
+});
 /* Each logistics page drawn bumps this: an answer for a page no longer shown is dropped, not drawn over the new one. */
 let lgPage = 0;
 
@@ -247,6 +367,7 @@ async function showLogistics(group) {
       <label class="count" style="cursor:pointer;margin:0;white-space:nowrap"><input type="checkbox" id="lgdel" ${lgState.deleted ? 'checked' : ''}> Show deleted</label>
       ${can('editor') ? '<button class="btn gold" id="lg-add" style="white-space:nowrap">+ Add</button>' : ''}
     </div>
+    ${lgActionBar(group)}
     <div class="count" id="lg-count"></div>
     <div class="panel tscroll" style="padding:0"><table class="list lg"><thead><tr>
       <th>Stock</th><th>What</th><th>Status</th><th>When</th><th>List</th>
@@ -347,6 +468,7 @@ try {
 async function showLogisticsSafe() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('safe')}
+    ${lgActionBar('safe')}
     <p class="sub" style="margin:0 0 12px">Clients’ watches we are holding — not our stock. Each one says who it is for.</p>
     <div class="lg-toolbar">
       <input class="q" type="search" id="sfq" placeholder="Stock number, reference, serial, brand, model, client…" value="${esc(sf.q)}">
@@ -444,7 +566,7 @@ function lgOpenOnClick(...boxes) {
   const open = (e) => {
     const at = e.target.closest('[data-id]');
     // A link, button or field inside the row does its own job.
-    if (!at || e.target.closest('a, button, input, select, label')) return;
+    if (!at || e.target.closest('a, button, input, select, label, summary')) return;
     if (e.type === 'keydown') {
       if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
       e.preventDefault();
@@ -485,7 +607,7 @@ function drawSafe() {
                <div>${a.stock_no ? `<span class="lg-stock">#${esc(a.stock_no)}</span> ` : ''}<b>${esc(a.items || 'Accessories')}</b></div>
                <div class="count" style="margin:2px 0 0">${[a.for_client && `For <b>${lgPerson(a.for_client, a.for_link)}</b>`, a.about && esc(a.about), a.notes && esc(a.notes), a.in_safe_at && `in the safe since ${esc(sfDay(a.in_safe_at))}`].filter(Boolean).join(' · ')}</div>
              </div>
-             <div class="ov-row-side">${a.watch ? `<a href="#/watch/${a.watch.id}">Our watch</a>` : ''}</div>
+             <div class="ov-row-side">${a.watch ? `<a href="#/watch/${a.watch.id}">Our watch</a>` : ''}${lgRowActs('safe', { ...a, kind: 'accGive' })}</div>
            </div>`
          )
          .join('')}`
@@ -510,7 +632,7 @@ function drawSafe() {
             <td><b>${lgPerson(w.owner, w.owner_link, '—')}</b></td>
             <td style="white-space:nowrap">${esc(sfDay(w.received_at))}</td>
             <td>${esc(w.accessories_present || '')}</td>
-            <td>${esc(w.notes || '')}${w.watch ? `<div>${sfOurs(w)}</div>` : ''}</td>
+            <td>${esc(w.notes || '')}${w.watch ? `<div>${sfOurs(w)}</div>` : ''}${lgRowActs('safe', { ...w, kind: 'safeStock' })}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`;
@@ -530,6 +652,7 @@ function drawSafe() {
           ${sfTags(w) ? `<div class="lg-ov">${sfTags(w)}</div>` : ''}
           ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
           ${w.watch ? `<div class="m">${sfOurs(w)}</div>` : ''}
+          ${lgRowActs('safe', { ...w, kind: 'safeStock' })}
         </div>
       </article>`
     )
@@ -556,6 +679,7 @@ try {
 async function showLogisticsCheckout() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('checkout')}
+    ${lgActionBar('checkout')}
     <p class="sub" style="margin:0 0 12px">Watches held somewhere for a while — not sold. Each is linked to our stock and to the client it came from or went to.</p>
     <div class="lg-toolbar">
       <input class="q" type="search" id="coq" placeholder="Stock number, brand, model, reference, serial, client, reason…" value="${esc(co.q)}">
@@ -695,7 +819,7 @@ function drawCheckout() {
             <td style="white-space:nowrap">${esc(coWhen(w))}</td>
             <td>${esc(w.reason || '—')}</td>
             <td>${coOurs(w)}</td>
-            <td>${esc(w.notes || '')}${w.photo_count ? `<div class="count" style="margin:2px 0 0">${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}</div>` : ''}</td>
+            <td>${esc(w.notes || '')}${w.photo_count ? `<div class="count" style="margin:2px 0 0">${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}</div>` : ''}${lgRowActs('checkout', { ...w, kind: 'checkoutStock' })}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`;
@@ -714,6 +838,7 @@ function drawCheckout() {
           ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
           <div class="m">${coOurs(w)}</div>
           ${coEarlier(w)}
+          ${lgRowActs('checkout', { ...w, kind: 'checkoutStock' })}
         </div>
       </article>`
     )
@@ -736,6 +861,7 @@ const hc = { q: '', show: 'open', data: null };
 async function showLogisticsHandCarry() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('handcarry')}
+    ${lgActionBar('handcarry')}
     <p class="sub" style="margin:0 0 12px">Plans for carrying watches by hand — each stop and what is delivered, collected or moved there. Every watch is linked to our stock and its client.</p>
     <div class="lg-toolbar" style="grid-template-columns:1fr">
       <input class="q" type="search" id="hcq" placeholder="Plan, city, stock number, brand, model, client…" value="${esc(hc.q)}">
@@ -767,6 +893,9 @@ async function showLogisticsHandCarry() {
   }
   if (seq !== lgPage || !$('#hc-out')) return;
   hc.data = r;
+  // The tab's action bar again, now with the plans (each open plan's own row of buttons).
+  const hcBar = $('#app > .lg-actbar');
+  if (hcBar) hcBar.outerHTML = lgActionBar('handcarry', r);
   lgSetCount('handcarry', r.plans.length);
   drawHandCarry();
 }
@@ -782,6 +911,7 @@ const hcRow = (x, role, extra = '') => {
       <div class="count" style="margin:2px 0 0">${[who, x.place && esc(x.place), extra].filter(Boolean).join(' · ') || '&nbsp;'}</div>
     </div>
     <div class="ov-row-side hc-ours">${coOurs(x)}</div>
+    ${lgRowActs('handcarry', x)}
   </div>`;
 };
 const hcWords = (p) =>
@@ -899,6 +1029,7 @@ const txType = (t) => (t.type === 'sold' ? 'Sold' : t.type === 'bought' ? 'Bough
 async function showLogisticsTransactions() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('transactions')}
+    ${lgActionBar('transactions')}
     <p class="sub" style="margin:0 0 12px">Accessory transactions — each watch bought or sold, and the accessories still to give or collect. Every row is linked to our stock and its client.</p>
     <div class="lg-toolbar tx-toolbar">
       <input class="q" type="search" id="txq" placeholder="Stock number, reference, client, accessory…" value="${esc(tx.q)}">
@@ -973,7 +1104,7 @@ function drawTransactions() {
           <td>${esc(t.client?.country || '—')}</td>
           <td>${txItems(t) ? `<div class="lg-ov" style="margin:0">${txItems(t)}</div>` : ''}</td>
           <td style="white-space:nowrap">${txStatus(t)}</td>
-          <td>${coOurs(t)}</td>
+          <td>${coOurs(t)}${lgRowActs('transactions', { ...t, kind: 'transactions' })}</td>
         </tr>`
       )
       .join('')}</tbody></table></div>`;
@@ -1004,6 +1135,7 @@ const tpDollars = (n) => money(Math.round(n * 100) / 100, 'USD');
 async function showLogisticsMovers() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('movers')}
+    ${lgActionBar('movers')}
     <div class="inc-head">
       <p class="sub" style="margin:0">3rd party movers — watches moved by outside couriers.</p>
       <span class="tp-acts">
@@ -1155,7 +1287,7 @@ function drawMovers() {
         <td><b>${esc(m.name)}</b></td><td>${esc(m.country || '—')}</td><td>${esc(m.contact)}</td><td>${esc(m.notes)}</td>
         <td class="num">${ships.length}${customsN ? `<div class="count" style="margin:0">${customsN} customs</div>` : ''}</td>
         <td class="num">${v ? tpDollars(v) : '—'}</td><td class="num">${cu ? tpDollars(cu) : '—'}</td><td class="num">${ca ? money(ca, 'AED') : '—'}</td><td class="num">${tpDollars(cost)}</td>
-        <td class="num"><button type="button" class="btn small" data-arrivals="${m.id}" aria-pressed="${tp.arrivals === String(m.id)}">Coming to them</button></td>
+        <td class="num"><button type="button" class="btn small" data-arrivals="${m.id}" aria-pressed="${tp.arrivals === String(m.id)}">Coming to them</button>${lgRowActs('movers', { ...m, kind: 'thirdPartyMovers' })}</td>
       </tr>`;
     })
     .join('');
@@ -1300,7 +1432,7 @@ function drawMovers() {
                   <td>${s.not_payable ? '<span class="tp-paid">Not payable by us</span>' : pill(s.payment, TP_PAY)}</td>
                   <td>${pill(s.status, TP_STATUS)}</td>
                   <td>${s.tracking ? `<a href="https://t.17track.net/en#nums=${encodeURIComponent(s.tracking)}" target="_blank" rel="noopener">${esc(s.tracking)}</a>` : '—'}</td>
-                  <td style="white-space:nowrap">${[s.photo_count && `${s.photo_count} photo${s.photo_count === 1 ? '' : 's'}`, ...s.docs.map((d, i) => `<a href="${esc(fileUrl(d))}" target="_blank" rel="noopener">Doc ${i + 1}</a>`)].filter(Boolean).join(' · ') || '—'}</td>
+                  <td style="white-space:nowrap">${[s.photo_count && `${s.photo_count} photo${s.photo_count === 1 ? '' : 's'}`, ...s.docs.map((d, i) => `<a href="${esc(fileUrl(d))}" target="_blank" rel="noopener">Doc ${i + 1}</a>`)].filter(Boolean).join(' · ') || '—'}${lgRowActs('movers', { ...s, kind: 'thirdPartyShipments' })}</td>
                 </tr>`
               )
               .join('')}</tbody></table></div>`
@@ -1625,6 +1757,7 @@ const MV_STATUS = { planned: ['Planned', 'muted'], in_progress: ['In progress', 
 async function showLogisticsMovement() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('trips')}
+    ${lgActionBar('trips')}
     <div class="inc-head">
       <p class="sub" style="margin:0">Movement — couriers and what their travel costs.</p>
       <span><button type="button" class="pill" id="mv-rates-btn" aria-expanded="false">Allowance rates</button> <a class="count" style="margin:0 0 0 8px" href="#/logistics/trips-all">See the lists</a></span>
@@ -1862,7 +1995,7 @@ function mvTripCard(t) {
     ${blocks.join('')}
     ${t.costs.length ? `<div class="mv-total"><span>Trip total <span class="count" style="margin:0">· ${t.costs.length} expense${t.costs.length === 1 ? '' : 's'} in dollars</span></span><b>${mvDollars(usd)}</b></div>` : ''}
     ${t.photos.length ? `<div class="lg-ov">${t.photos.map((p) => picture(p)).join('')}</div>` : ''}
-    <div class="mv-acts"><button type="button" class="btn" data-copy="${t.id}">Copy details</button><a class="btn primary" href="#/lg/${t.id}">Open</a></div>
+    <div class="mv-acts"><button type="button" class="btn" data-copy="${t.id}">Copy details</button><a class="btn primary" href="#/lg/${t.id}">Open</a>${lgRowActs('trips', { ...t, kind: 'personTrips' })}</div>
   </article>`;
 }
 
@@ -1946,6 +2079,7 @@ const shpTitle = (s) => {
 async function showLogisticsShipments() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('shipments')}
+    ${lgActionBar('shipments')}
     <div class="inc-controls shp-switch" role="group" aria-label="Show">
       <button type="button" class="pill" data-view="live">Live shipments</button>
       <button type="button" class="pill" data-view="give">Need to give and collect <b id="shp-ready-n"></b></button>
@@ -2191,6 +2325,7 @@ function shpCard(s) {
           </div>`
         : ''
     }
+    ${lgRowActs('shipments', { ...s, kind: 'shipments' })}
   </article>`;
 }
 
@@ -2235,6 +2370,7 @@ function drawGiveCollect() {
           ['Price', (x) => (x.price ? `${money(x.price, x.currency || '')}${x.price_usd && x.currency !== 'USD' ? `<div class="count" style="margin:2px 0 0">≈ ${money(Math.round(x.price_usd), 'USD')}</div>` : ''}` : '—')],
           ['Status', handover],
           ['Ours · client', (x) => coOurs(x)],
+          ['', (x) => lgRowActs('ready', { ...x, kind: 'readyForDelivery' }) + lgRowActs('shipments', { ...x, kind: 'readyForDelivery' })],
         ],
         'Nothing is waiting for delivery.'
       )}
@@ -2251,6 +2387,7 @@ function drawGiveCollect() {
           ['From client', (x) => who(x.who)],
           ['Received from', (x) => esc(x.received_from || '—')],
           ['Notes', (x) => esc(x.notes || '')],
+          ['', (x) => lgRowActs('shipments-collect', { ...x, kind: 'accCollect' })],
         ],
         'Nothing to collect.'
       )}
@@ -2276,6 +2413,7 @@ function drawGiveCollect() {
           ['Items', (x) => `<b>${esc(x.items || '—')}</b>${x.in_safe ? ' <span class="lg-tag">In our safe</span>' : ''}`],
           ['To client', (x) => who(x.who)],
           ['Notes', (x) => esc(x.notes || '')],
+          ['', (x) => lgRowActs('shipments-give', { ...x, kind: 'accGive' })],
         ],
         'Nothing to give.'
       )}
@@ -2369,6 +2507,7 @@ function incOdLine(rows) {
 async function showLogisticsIncoming() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('incoming')}
+    ${lgActionBar('incoming')}
     <div class="inc-head">
       <p class="sub" id="inc-sub" style="margin:0">Watches on their way to us.</p>
       <a class="count" style="margin:0" href="#/logistics/incoming-all">See the lists</a>
@@ -2516,7 +2655,7 @@ function drawIncoming() {
         ${ovExplain('Read from Chrono Key and held in the logistics app. They are not in Incoming until someone sends them there in the logistics app.')}
         ${fob
           .map(
-            (x) => `<div class="ov-row" data-id="${x.id}" tabindex="0" role="link"><div class="ov-row-main">
+            (x) => `<div class="ov-row" data-id="${x.id}" tabindex="0" role="link"><div class="ov-row-main">${lgRowActs('incoming-fob', { ...x, kind: 'fobPicked' })}
               <div>${x.stock_no ? `<span class="lg-stock">#${esc(x.stock_no)}</span> ` : ''}<b>${esc([x.brand, x.model].filter(Boolean).join(' ') || 'Watch')}</b>${x.reference ? ` <span class="count" style="margin:0">${esc(x.reference)}</span>` : ''}</div>
               <div class="count" style="margin:2px 0 0">${[x.supplier && `From ${esc(x.supplier)}`, x.buy_price && `Cost ${money(x.buy_price, x.buy_currency || '')}`, x.destination && `to ${esc(x.destination)}`, x.eta && `ETA ${esc(dayWords(x.eta))}`].filter(Boolean).join(' · ') || '&nbsp;'}</div>
             </div><div class="ov-row-side hc-ours">${coOurs(x)}</div></div>`
@@ -2595,7 +2734,7 @@ function incRow(i, kind) {
     <td>${i.supplier ? lgPerson(i.supplier, i.supplier_link) : '<span class="blank">No client</span>'}</td>
     <td>${esc(incLoc(i))}${i.destination ? ` <span class="count" style="margin:0">→ ${esc(i.destination)}</span>` : ''}</td>
     <td>${incStatus(i, kind)}</td>
-    <td style="white-space:nowrap">${esc(when)}</td>
+    <td style="white-space:nowrap">${esc(when)}${lgRowActs('incoming', { ...i, kind: 'incomings', list: kind })}</td>
   </tr>`;
 }
 const incTable = (rows, kind) => `<div class="tscroll"><table class="list lg inc-table"><thead><tr>
@@ -2740,6 +2879,7 @@ const acc = { q: '', data: null };
 async function showLogisticsAccessories() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('accessories')}
+    ${lgActionBar('accessories')}
     <p class="sub" style="margin:0 0 12px">Everything we owe and are owed, by accessory, brand and client — from the accessory transactions. <a href="#/logistics/accessories-all">See the lists</a> (to collect, to give, settlements, swaps).</p>
     <div id="acc-top" class="acc-two"></div>
     <div id="acc-brand"></div>
@@ -2819,6 +2959,7 @@ function drawAccClients() {
                       <div class="lg-ov"><span class="lg-tag ${x.dir === 'give' ? 'problem' : 'warn'}">${x.dir === 'give' ? 'We give' : 'They give'}</span>${x.items.map((i) => `<span class="lg-tag">${esc(i)}</span>`).join('')}</div>
                     </div>
                     <div class="ov-row-side hc-ours">${coOurs(x)}</div>
+                    ${lgRowActs('accessories', { ...x, kind: 'transactions' })}
                   </div>`
                 )
                 .join('')}
@@ -3454,7 +3595,8 @@ async function showLogisticsItem(id, { editing = false } = {}) {
       </div>
       <div class="row">
         ${editor && !editing ? '<button class="btn primary" id="lg-edit">Edit</button>' : ''}
-        ${can('editor') ? (it.deleted_at ? '<button class="btn" id="lg-restore">Restore</button>' : '<button class="btn danger" id="lg-del">Delete</button>') : ''}
+        ${editor && !editing ? lgActBtnsFor(it.kind, it.id) : ''}
+        ${can('editor') ? (it.deleted_at ? '<button class="btn" id="lg-restore">Restore</button>' : lgActions().some((a) => a.kinds?.includes(it.kind) && a.danger && /delete/i.test(a.label)) ? '' : '<button class="btn danger" id="lg-del">Delete</button>') : ''}
       </div>
     </div>
     ${
@@ -3709,6 +3851,7 @@ function lcFinder(input, out, ask, render) {
 async function showLogisticsClients() {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('contacts')}
+    ${lgActionBar('contacts')}
     <section class="panel ov-panel">
       ${ovHead('Clients', null, '#/logistics/contacts-all', 'See the client records')}
       ${ovExplain('Every client in the logistics app, and which of our clients it is. Open one to see what is happening with them.')}
@@ -3746,7 +3889,7 @@ async function showLogisticsClients() {
                       : '<span class="ov-warn-text">not linked to our clients yet</span>',
                   c.watches ? esc(`${c.watches} watch${c.watches === 1 ? '' : 'es'}`) : '',
                 ],
-                lcOpenWords(c) ? `<span class="chip lg-warn">${esc(lcOpenWords(c))}</span>` : ''
+                (lcOpenWords(c) ? `<span class="chip lg-warn">${esc(lcOpenWords(c))}</span>` : '') + lgRowActs('contacts', { ...c, kind: 'clients' })
               ),
             '',
             40

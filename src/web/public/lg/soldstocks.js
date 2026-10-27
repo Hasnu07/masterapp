@@ -10,9 +10,12 @@
  * client it was sold to (by id) sit beside the app's typed buyer, who links
  * as far as the name goes. A row opened in place shows what the app's
  * detail modal shows; the full watch history is the watch's own page. Ready
- * for delivery is the Shipments tab's. Set the delivery date, send to polish,
- * hold in the safe, cancel the sale, delete: in the app until the
- * switch-over — a row opens its record.
+ * for delivery is the Shipments tab's. Each row carries the app's buttons,
+ * done here (src/logistics/actions/sales.js): set the delivery date, send to
+ * polish (POST …/polish, the Refinement page's endpoint), hold in the safe,
+ * cancel the sale (the watch back into the list it came from), delete; a
+ * sale opened takes delivery / sale photos (POST …/files). The app's
+ * "fetch image" (a web search for a reference picture) is not possible here.
  */
 'use strict';
 const ss = { q: '', brand: '', source: '', from: '', to: '', open: null, data: null };
@@ -41,7 +44,7 @@ LG_PAGES.soldstocks = async function () {
     <div class="count" id="ss-count">Reading the sales…</div>
     <div id="ss-out"></div>
     <p class="count" id="ss-ready"></p>
-    <p class="count">Setting the delivery date, sending to polish, holding in the safe, cancelling or deleting a sale is done in the logistics app until the switch-over — a row opens its sale; the record is one link further.</p>`;
+    <p class="count">${can('editor') ? 'Each sale has its buttons: delivery date, polish, hold in the safe, cancel (the watch goes back where it was sold from), delete. A sale opened takes photos. ' : ''}The app’s “fetch image” (a web search for a picture of the reference) is not possible here.</p>`;
   $('#ss-source').value = ss.source;
   let timer;
   $('#ss-q').addEventListener('input', (e) => {
@@ -66,7 +69,7 @@ LG_PAGES.soldstocks = async function () {
   // A row opens its sale in place; a link inside goes where it says.
   const toggle = (e) => {
     const at = e.target.closest('tr[data-sale]');
-    if (!at || e.target.closest('a, button')) return;
+    if (!at || e.target.closest('a, button, input, select, label, form')) return;
     if (e.type === 'keydown') {
       if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
       e.preventDefault();
@@ -76,6 +79,11 @@ LG_PAGES.soldstocks = async function () {
   };
   $('#ss-out').addEventListener('click', toggle);
   $('#ss-out').addEventListener('keydown', toggle);
+  $('#ss-out').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-polish]');
+    if (b) ssPolishForm(Number(b.dataset.polish));
+  });
+  $('#ss-out').addEventListener('submit', ssAddPhotos);
   let r;
   try {
     r = await api('/api/logistics/page/soldstocks');
@@ -200,10 +208,11 @@ function drawSold() {
       <td class="num">${f.cost ? ssDollars(f.cost) : '<span class="blank">—</span>'}</td>
       <td class="num ss-pl ${f.profit >= 0 ? 'good' : 'bad'}">${ssDollars(f.profit)}</td>
       <td class="ss-pl ${f.profit >= 0 ? 'good' : 'bad'}">${f.margin.toFixed(1)}%</td>
-    </tr>${open ? `<tr class="ss-detail"><td colspan="11">${ssDetail(s, f)}</td></tr>` : ''}`;
+      <td class="ss-acts">${ssActs(s)}</td>
+    </tr>${open ? `<tr class="ss-detail"><td colspan="12">${ssDetail(s, f)}</td></tr>` : ''}`;
   };
   $('#ss-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg ss-table"><thead><tr>
-      <th></th><th>Sold</th><th>Delivered</th><th>Stock</th><th>Watch</th><th>From</th><th>Buyer</th><th class="num">Sold for</th><th class="num">Cost (USD)</th><th class="num">P&amp;L (USD)</th><th>Margin</th>
+      <th></th><th>Sold</th><th>Delivered</th><th>Stock</th><th>Watch</th><th>From</th><th>Buyer</th><th class="num">Sold for</th><th class="num">Cost (USD)</th><th class="num">P&amp;L (USD)</th><th>Margin</th><th></th>
     </tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>`;
   // The table scrolls sideways; a sale opened under its row stays as wide as the window, not the table.
   const box = $('#ss-out .tscroll');
@@ -276,7 +285,87 @@ function ssDetail(s, f) {
       ${s.watch ? `<a href="#/watch/${s.watch.id}">Full watch history — its page</a>` : ''}
       <a href="#/lg/${s.id}">Open the sale record</a>
     </div>
+    ${
+      can('editor')
+        ? `<form class="ss-photos" data-id="${s.id}"><span class="count" style="margin:0">Add photos</span>
+            <select name="field" aria-label="Which photos"><option value="deliveryPhotos">at delivery (proof)</option><option value="photos">at the sale</option></select>
+            <input type="file" name="files" accept="image/*,.pdf" multiple aria-label="Pictures or PDFs">
+            <button class="btn small">Add photos</button><span class="err"></span></form>`
+        : ''
+    }
   </div>`;
+}
+
+/* The app's buttons on a sold row, done here; Send to polish posts to the Refinement page's endpoint. */
+function ssActs(s) {
+  if (!can('editor')) return '';
+  return `<div class="lg-rowacts">${[
+    lgActBtn('sale-deliver', s.id, { label: s.delivered_at ? 'Delivery date' : 'Set delivery date', cls: 'small' }),
+    `<button type="button" class="btn small" data-polish="${s.id}">Send to polish</button>`,
+    lgActBtn('sale-safe', s.id, { cls: 'small' }),
+    lgActBtn('sale-cancel', s.id, { cls: 'small' }),
+    lgActBtn('sale-delete', s.id, { cls: 'small' }),
+  ].join('')}</div>`;
+}
+
+/* Send to polish: the app's polishSendModal, posted to POST /api/logistics/items/:id/polish (not rebuilt). */
+function ssPolishForm(id) {
+  const s = ss.data?.rows.find((x) => x.id === id);
+  if (!s) return;
+  const items = ['Full Watch', 'Links', 'Bracelet', 'Case', 'Clasp', 'Bezel', 'Other'];
+  lgDialog(
+    {
+      label: `Send to polish: ${ssStock(s)} · ${[s.brand, s.model].filter(Boolean).join(' ') || 'Watch'}`,
+      form: [
+        { key: 'sentTo', label: 'Polisher', type: 'text' },
+        { key: 'takenBy', label: 'Taken by', type: 'text' },
+        { key: 'itemDescription', label: 'What goes', type: 'enum', options: items },
+        { key: 'sentDate', label: 'Sent on', type: 'date' },
+        { key: 'expectedBack', label: 'Expected back', type: 'date' },
+        { key: 'costAmount', label: 'Cost', type: 'money' },
+        { key: 'costCurrency', label: 'Cost currency', type: 'currency' },
+        { key: 'notes', label: 'Notes', type: 'longtext' },
+      ],
+      values: { itemDescription: 'Full Watch', sentDate: localDay(), costCurrency: 'AED' },
+    },
+    async (input, dlg) => {
+      try {
+        const r = await api(`/api/logistics/items/${id}/polish`, { method: 'POST', body: { action: 'send', ...input } });
+        dlg?.close();
+        flash(`Sent to polish${r.cost ? ' — its cost is in Logistic Cost' : ''}`);
+        route();
+      } catch (err) {
+        const e = dlg?.querySelector('.err');
+        if (e) e.textContent = err.message;
+        else flash(err.message, 'err');
+      }
+    }
+  );
+}
+
+/* Delivery / sale photos added to a sale: POST …/files?field= (multipart), the record's list grows. */
+async function ssAddPhotos(e) {
+  const form = e.target.closest('form.ss-photos');
+  if (!form) return;
+  e.preventDefault();
+  const files = form.elements.files.files;
+  const err = form.querySelector('.err');
+  if (!files?.length) {
+    err.textContent = 'Pick the pictures first';
+    return;
+  }
+  const body = new FormData();
+  for (const f of files) body.append('files', f);
+  const button = form.querySelector('button');
+  button.disabled = true;
+  try {
+    const r = await api(`/api/logistics/items/${form.dataset.id}/files?field=${encodeURIComponent(form.elements.field.value)}`, { method: 'POST', body });
+    flash(`${r.added} photo${r.added === 1 ? '' : 's'} added`);
+    route();
+  } catch (x) {
+    button.disabled = false;
+    err.textContent = x.message;
+  }
 }
 
 /* The sales shown, as a spreadsheet file (comma-separated — Excel opens it). */

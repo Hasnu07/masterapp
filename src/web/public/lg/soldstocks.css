@@ -33,6 +33,10 @@
 .ss-d-src-head .count { color: #cfc6b6; }
 .ss-costs { min-width: 560px; }
 .ss-d-foot { display: flex; gap: 8px 20px; flex-wrap: wrap; align-items: center; }
+.ss-acts { white-space: nowrap; }
+.ss-table .lg-rowacts { margin-top: 0; flex-wrap: nowrap; }
+.ss-photos { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ss-photos select, .ss-photos input { min-height: 36px; }
 @media (max-width: 900px) {
   .ss-filters { grid-template-columns: 1fr 1fr 1fr; }
   .ss-filters .q { grid-column: 1 / -1; }
@@ -43,4 +47,6 @@
   .ss-filters { grid-template-columns: 1fr 1fr; }
   .ss-filters .btn, .ss-filters select, .ss-date input { min-height: 44px; }
   .ss-d-foot a { display: inline-flex; align-items: center; min-height: 44px; }
+  .ss-table .lg-rowacts { flex-wrap: wrap; }
+  .ss-photos select, .ss-photos input, .ss-photos .btn { min-height: 44px; }
 }

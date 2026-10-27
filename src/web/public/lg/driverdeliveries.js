@@ -4,9 +4,10 @@
  * with drivers, delivered, money collected in dollars), then Out with driver
  * and Delivered history, as the app lays them out. Every stock number is OUR
  * watch, with the client it was sold to; the driver and the person it went
- * to link as far as their names go. Giving to a driver, marking delivered,
- * the WhatsApp message and deleting wait for the switch-over: a row opens
- * its record.
+ * to link as far as their names go. Giving to a driver, marking delivered
+ * (and returned), the photos and deleting are the app's own workflows done
+ * here (actions dd-…); the WhatsApp message is built as the app builds it,
+ * to copy — its bridge is not here. A row opens its record.
  */
 'use strict';
 const dd = { q: '', data: null };
@@ -17,12 +18,13 @@ LG_PAGES.driverdeliveries = async function () {
   $('#app').innerHTML = `${lgHeader('driverdeliveries')}
     <p class="sub" style="margin:0 0 12px">Watches handed to a driver to deliver and to collect money. Each stock number is our watch, linked to the client it was sold to.</p>
     <div class="ov-tiles dd-tiles" id="dd-tiles" aria-live="polite"></div>
+    ${lgActionBar('driverdeliveries')}
     <div class="lg-toolbar dd-toolbar">
       <input class="q" type="search" id="ddq" placeholder="Stock number, driver, destination, notes…" value="${esc(dd.q)}" aria-label="Search driver deliveries">
     </div>
     <div class="count" id="dd-count">Reading the driver deliveries…</div>
     <div id="dd-out"></div>
-    <p class="count dd-wait">Giving to a driver, marking delivered, the WhatsApp message and deleting change the logistics app's records: they wait for the switch-over. Open a row to edit its record here. <a href="#/logistics/driverdeliveries-all">The records, as lists</a>.</p>`;
+    <p class="count dd-wait">WhatsApp is not sent from here: "Copy WhatsApp text" gives the message as the app would send it. Open a row to edit its record. <a href="#/logistics/driverdeliveries-all">The records, as lists</a>.</p>`;
   let timer;
   $('#ddq').addEventListener('input', (e) => {
     clearTimeout(timer);
@@ -96,8 +98,11 @@ function drawDriverDeliveries() {
   $('#dd-count').textContent = words.length ? `${out.length + done.length} of ${r.out.length + r.delivered.length} deliveries match` : `${r.out.length} out with a driver · ${r.delivered.length} delivered`;
 
   const driver = (x) => `<span class="lg-tag">${lgPerson(x.driver, x.driver_link, '—')}</span>`;
+  // The app's row buttons: ✅ Delivered, 📱 (the message), 🗑️ — and the photos, which its dialogs take.
+  const outActs = (x) => `<div class="lg-rowacts">${lgActBtn('dd-deliver', x.id)}${lgActBtn('dd-return', x.id)}${lgFilesBtn(x.id, 'givenPhotos', 'Add handover photos')}${lgCopyBtn(ddWhatsAppText(x))}${lgActBtn('dd-delete', x.id)}</div>`;
+  const doneActs = (x) => `<div class="lg-rowacts">${lgFilesBtn(x.id, 'deliveryPhotos', 'Add proof photos')}${lgCopyBtn(ddWhatsAppText(x))}${lgActBtn('dd-delete', x.id)}</div>`;
   const outRows = out.length
-    ? `<div class="tscroll"><table class="list lg dd-table"><thead><tr><th>Stock</th><th>Driver</th><th>Given</th><th>Destination</th><th>Notes</th><th>Photos</th></tr></thead><tbody>${out
+    ? `<div class="tscroll"><table class="list lg dd-table"><thead><tr><th>Stock</th><th>Driver</th><th>Given</th><th>Destination</th><th>Notes</th><th>Photos</th><th></th></tr></thead><tbody>${out
         .map(
           (x) => `<tr data-id="${x.id}" tabindex="0">
             <td>${ddStocks(x)}</td>
@@ -106,12 +111,13 @@ function drawDriverDeliveries() {
             <td>${lgPerson(x.destination, x.destination_link, '—')}</td>
             <td class="dd-notes">${esc(x.notes)}</td>
             <td>${ddPhotos(x.given_photos)}</td>
+            <td class="dd-acts">${outActs(x)}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`
     : `<p class="sub" style="margin:0">${words.length ? 'Nothing out with a driver matches.' : 'Nothing is out with a driver.'}</p>`;
   const doneRows = done.length
-    ? `<div class="tscroll"><table class="list lg dd-table"><thead><tr><th>Stock</th><th>Driver</th><th>Delivered to</th><th>Where</th><th>Delivered</th><th>Money collected</th><th>Photos</th></tr></thead><tbody>${done
+    ? `<div class="tscroll"><table class="list lg dd-table"><thead><tr><th>Stock</th><th>Driver</th><th>Delivered to</th><th>Where</th><th>Delivered</th><th>Money collected</th><th>Photos</th><th></th></tr></thead><tbody>${done
         .map(
           (x) => `<tr data-id="${x.id}" tabindex="0">
             <td>${ddStocks(x)}${x.notes ? `<div class="count dd-notes" style="margin:4px 0 0">${esc(x.notes)}</div>` : ''}</td>
@@ -121,6 +127,7 @@ function drawDriverDeliveries() {
             <td style="white-space:nowrap">${esc(sfDay(x.delivered_date) || '—')}${x.date_given ? `<div class="count" style="margin:2px 0 0">given ${esc(sfDay(x.date_given))}</div>` : ''}</td>
             <td style="white-space:nowrap">${ddMoney(x.money)}${x.delivery_notes ? `<div class="count dd-notes" style="margin:2px 0 0;white-space:normal">${esc(x.delivery_notes)}</div>` : ''}</td>
             <td>${ddPhotos(x.delivery_photos)}${x.given_photos.length ? `<div class="count" style="margin:4px 0 0">at the handover</div>${ddPhotos(x.given_photos)}` : ''}</td>
+            <td class="dd-acts">${doneActs(x)}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`

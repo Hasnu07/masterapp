@@ -5,8 +5,9 @@
  * app shows them: the client, the day, the notes, the first four pictures
  * and "+n more"; a picture opens full size here, and can be downloaded. The
  * typed client links as far as the name goes; a stock number in the entry
- * is our watch. Add / edit / delete wait for the switch-over: a card opens
- * its record.
+ * is our watch. Add / edit / delete are the app's own buttons, done here
+ * (actions/records.js); the pictures go on the entry through the upload
+ * control.
  */
 'use strict';
 const orp = { q: '', sort: 'new', open: new Set(), data: null };
@@ -14,7 +15,8 @@ const orp = { q: '', sort: 'new', open: new Set(), data: null };
 LG_PAGES.otherreceiving = async function () {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('otherreceiving')}
-    <p class="sub" style="margin:0 0 12px">Pictures taken on receiving something that is not a stock watch's own photo — a passport, parts, a client's piece. To add or change an entry, open its record.</p>
+    <p class="sub" style="margin:0 0 12px">Pictures taken on receiving something that is not a stock watch's own photo — a passport, parts, a client's piece. Add the entry, then its pictures.</p>
+    ${lgActionBar('otherreceiving')}
     <div class="lg-toolbar orp-toolbar">
       <input class="q" type="search" id="orpq" placeholder="Client, notes, stock number…" value="${esc(orp.q)}" aria-label="Search the entries">
       <select id="orp-sort" aria-label="Order"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="name">By client</option></select>
@@ -98,7 +100,7 @@ function drawReceivingPics() {
         <div class="orp-head">
           <div><div class="orp-who">${x.client_name ? lgPerson(x.client_name, x.link) : '<span class="blank">No name written</span>'}${x.locked ? ' <span class="lock" title="Edited here">✎</span>' : ''}</div>
             <div class="count" style="margin:2px 0 0">${esc(sfDay(x.created_at))}</div></div>
-          <a class="btn small" href="#/lg/${x.id}">Open record</a>
+          <div class="lg-rowacts" style="margin:0">${lgUploadCtl(x.id, 'photos', 'Add pictures', { accept: 'image/*' })}${lgActBtn('pic-edit', x.id, { cls: 'small' })}${lgActBtn('pic-delete', x.id, { cls: 'small' })}<a class="btn small" href="#/lg/${x.id}">Open record</a></div>
         </div>
         ${x.notes ? `<div class="orp-notes">${esc(x.notes)}</div>` : ''}
         ${

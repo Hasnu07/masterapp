@@ -5,8 +5,8 @@
  * each the shipment documents issued through it (every stock number our
  * watch, every client linked as far as the name goes). The app's "Company ·
  * Dubai" client rows — our own places as a shipment's from / to — are listed
- * apart. Add / edit / delete wait for the switch-over: a company's record
- * opens for that. Copy details is the app's own button, kept.
+ * apart. Add / edit / delete are the app's own buttons, done here
+ * (actions/records.js). Copy details is the app's own button, kept.
  */
 'use strict';
 const cp = { q: '', data: null };
@@ -14,7 +14,8 @@ const cp = { q: '', data: null };
 LG_PAGES.companies = async function () {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('companies')}
-    <p class="sub" style="margin:0 0 12px">The companies we buy and sell through — their details for invoices and labels, and the shipment documents issued through each. To add or change one, open its record.</p>
+    <p class="sub" style="margin:0 0 12px">The companies we buy and sell through — their details for invoices and labels, and the shipment documents issued through each.</p>
+    ${lgActionBar('companies')}
     <div class="lg-toolbar cp-toolbar">
       <input class="q" type="search" id="cpq" placeholder="Company name, address, TRN, bank, contact…" value="${esc(cp.q)}" aria-label="Search companies">
       <a class="btn" href="#/logistics/companies-all">All records</a>
@@ -68,7 +69,7 @@ function drawCompanies() {
   const n = list.length;
   $('#cp-count').textContent = `${n} compan${n === 1 ? 'y' : 'ies'}${words.length ? ` of ${r.companies.length}` : ''} · ${r.documents} shipment document${r.documents === 1 ? '' : 's'} issued through them`;
   if (!n) {
-    $('#cp-out').innerHTML = `<p class="sub">${words.length ? 'No company matches.' : 'No companies yet. Add one in the logistics app, or as a record here.'}</p>`;
+    $('#cp-out').innerHTML = `<p class="sub">${words.length ? 'No company matches.' : 'No companies yet. Add the first with "Add company".'}</p>`;
   } else {
     $('#cp-out').innerHTML = list
       .map(
@@ -77,6 +78,7 @@ function drawCompanies() {
             <h3>${esc(c.name)}${c.locked ? ' <span class="lock" title="Edited here">✎</span>' : ''}</h3>
             <div class="cp-acts">
               <button type="button" class="btn small" data-copy="${c.id}">Copy details</button>
+              ${lgActBtn('co-edit', c.id, { cls: 'small' })}${lgActBtn('co-delete', c.id, { cls: 'small' })}
               <a class="btn small" href="#/lg/${c.id}">Open record</a>
             </div>
           </div>

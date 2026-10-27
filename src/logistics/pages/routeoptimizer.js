@@ -197,7 +197,7 @@ export async function page() {
     available,
     moves,
     rates: rates ? { usd: rates.rates, kind: rates.kind, stale: Boolean(rates.stale) } : null,
-    waits: 'Market prices and the AI route recommendation are asked of Claude with the logistics app’s own key, which masterapp does not hold — they wait for the switch-over.',
+    waits: 'Market prices and the AI route recommendation are asked of Claude with masterapp’s own key (ANTHROPIC_API_KEY).',
   };
 }
 

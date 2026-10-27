@@ -18,6 +18,8 @@
 .pc-addr { font-size: 13.5px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); padding-left: 10px; border-left: 2px solid var(--line); }
 .pc-addr b { color: var(--ink); }
 .pc-msg .btn { justify-self: start; }
+.pc-msg .lg-rowacts { margin-top: 2px; }
+.pc-acts { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .pc-meta { color: var(--muted); font-size: 13px; margin-top: 10px; }
 .pc-notes { font-size: 13.5px; margin-top: 4px; overflow-wrap: anywhere; }
 .pc-stocks { margin-top: 8px; font-size: 14px; line-height: 1.7; }
@@ -27,5 +29,5 @@
   .pc-tiles .ov-tile { padding: 12px 10px 12px 14px; }
   .pc-tiles .ov-tile b { font-size: 26px; }
   .pc-msgs { grid-template-columns: 1fr; }
-  .pc-msg .btn, #pc-status .pill { min-height: 44px; }
+  .pc-msg .btn, .pc-acts .btn, #pc-status .pill { min-height: 44px; }
 }

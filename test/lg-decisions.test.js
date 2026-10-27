@@ -227,7 +227,7 @@ test('route optimizer: the watches available at each place, what each cost to bu
   assert.deepEqual(chdx.filter((x) => x.kind === 'cost').map((x) => x.stands_for), ['mover', 'shipment'], 'a cost line says which record it was written for, so the page can leave it out of the count');
   assert.ok(!r.moves.some((x) => x.kind === 'trip' && x.person === 'Ben'), 'a planned trip is not history');
   assert.equal(r.moves.find((x) => x.kind === 'cost' && x.method === 'Insurance').from, 'Salva', 'a from that is no place stays as typed');
-  assert.match(r.waits, /switch-over/);
+  assert.match(r.waits, /ANTHROPIC_API_KEY/);
   assert.deepEqual(m.route.forStock('4101', []), [], 'the optimizer keeps nothing about a watch');
 });
 

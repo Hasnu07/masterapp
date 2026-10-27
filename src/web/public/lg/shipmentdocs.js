@@ -5,8 +5,9 @@
  * type, newest first). Every stock number is our watch with its clients; a
  * client links as far as the app's id or the typed name goes; the company
  * to its record. The file opens or downloads from our copy; one the app kept
- * on its own storage is a link there. Add / delete wait for the switch-over:
- * a row opens its record.
+ * on its own storage is a link there. Add / delete are the app's own
+ * buttons, done here (actions/records.js); the file goes on the document
+ * through the upload control, and becomes its file.
  */
 'use strict';
 const sd = { q: '', client: '', company: '', type: '', stock: '', sort: 'client', data: null };
@@ -14,7 +15,8 @@ const sd = { q: '', client: '', company: '', type: '', stock: '', sort: 'client'
 LG_PAGES.shipmentdocs = async function () {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('shipmentdocs')}
-    <p class="sub" style="margin:0 0 12px">Invoices, labels, delivery notes and agreements, by client, company and stock. Each stock number is our watch; to add or remove a document, open its record.</p>
+    <p class="sub" style="margin:0 0 12px">Invoices, labels, delivery notes and agreements, by client, company and stock. Each stock number is our watch. Add the document, then its file.</p>
+    ${lgActionBar('shipmentdocs')}
     <div class="lg-toolbar sd-toolbar">
       <input class="q" type="search" id="sdq" placeholder="Stock number, client, company, file name, notes…" value="${esc(sd.q)}" aria-label="Search documents">
       <select id="sd-client" aria-label="Client"><option value="">All clients</option></select>
@@ -98,8 +100,8 @@ const sdRow = (d) => `<tr data-id="${d.id}" tabindex="0">
     <td>${sdOurs(d)}</td>
     <td style="white-space:nowrap"><a href="#/lg/${d.id}"><b>${esc(d.doc_type)}</b></a>${d.locked ? ' <span class="lock" title="Edited here">✎</span>' : ''}</td>
     <td style="white-space:nowrap">${esc(d.date ? dayWords(d.date) : '')}</td>
-    <td>${sdFile(d)}</td>
-    <td>${esc(d.notes || '')}</td>
+    <td>${sdFile(d)}${!d.file || d.file.kind === 'unreadable' ? lgUploadCtl(d.id, 'files', 'Add the file', { multiple: false, then: 'doc-attach' }) : ''}</td>
+    <td>${esc(d.notes || '')}${lgActBtn('doc-delete', d.id) ? `<div class="lg-rowacts">${lgActBtn('doc-delete', d.id)}</div>` : ''}</td>
   </tr>`;
 const sdTable = (rows) => `<div class="panel tscroll" style="padding:0"><table class="list lg sd-table"><thead><tr>
     <th>Client</th><th>Company</th><th>Stock · our watch</th><th>Type</th><th>Date</th><th>Document</th><th>Notes</th>

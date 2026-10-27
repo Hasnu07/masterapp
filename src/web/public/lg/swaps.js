@@ -4,8 +4,8 @@
  * from one watch given with another). Each swap: the give side's reference
  * and accessory ↔ the receive side's, the notes, the time. Each side's stock
  * number is our watch with its clients; its client linked as the logistics
- * client is. New swap and delete change the app's records: they wait for the
- * switch-over.
+ * client is. New swap and delete are the app's own buttons, done here
+ * (actions/accessories.js: saveSwap / deleteSwap).
  */
 'use strict';
 (() => {
@@ -34,7 +34,8 @@
     const seq = ++lgPage;
     $('#app').innerHTML = `${lgHeader('swaps')}
       <p class="sub" style="margin:0 0 4px">A swap settles one "we owe" item against one "they owe" item — useful when an accessory taken from one watch is given with another.</p>
-      <p class="count" style="margin:0 0 12px">New swap and delete change the logistics app's records: they wait for the switch-over. Each side opens its transaction.</p>
+      <p class="count" style="margin:0 0 12px">A new swap marks both items settled; deleting one makes them pending again. Each side opens its transaction.</p>
+      ${lgActionBar('swaps')}
       <div class="count" id="swp-count">Reading the swaps…</div>
       <div id="swp-out" class="swp-list"></div>`;
     let r;
@@ -57,7 +58,7 @@
           <div class="swp-head"><span class="chip reserved">Swap</span><span class="count" style="margin:0">${esc(fmtWhen(s.at) || '—')}</span></div>
           <div class="swp-sides">${side(s.give, 'We gave')}<span class="swp-arrow" aria-hidden="true">↔</span>${side(s.receive, 'We received')}</div>
           ${s.notes ? `<div class="count swp-notes">${esc(s.notes)}</div>` : ''}
-          <div class="count" style="margin:0"><a href="#/lg/${s.id}">Open the swap's record</a></div>
+          <div class="lg-rowacts">${lgActBtn('swap-delete', s.id)}<a class="btn small" href="#/lg/${s.id}">Open the swap's record</a></div>
         </article>`
       )
       .join('');

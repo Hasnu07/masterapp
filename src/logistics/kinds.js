@@ -387,7 +387,7 @@ export const KINDS = [
     group: 'soldstocks',
     fields: [
       ...SALE_FIELDS,
-      f('deliveredVia', 'Delivered by', 'enum', { options: ['in_person', 'shipment'] }),
+      f('deliveredVia', 'Delivered by', 'enum', { options: ['in_person', 'shipment', 'held_in_safe'] }),
       f('deliveredAt', 'Delivered', 'when'),
     ],
     summary: (d) => ({ title: spec(d) || 'Sold watch', sub: join(d.soldToBuyer && `to ${d.soldToBuyer}`, d.soldDate), status: d.deliveredAt ? 'delivered' : 'sold', date: d.soldDate || d.ts }),

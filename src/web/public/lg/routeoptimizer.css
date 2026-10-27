@@ -34,7 +34,27 @@
 .ro-sum small { font-size: 12.5px; color: var(--muted); }
 .ro-table .ro-r { text-align: right; white-space: nowrap; }
 .ro-table .ro-c { text-align: center; }
+/* the AI: the two buttons, the market prices, the recommendation */
+.ro-ai-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ro-ai-acts .btn.off { opacity: .55; cursor: not-allowed; }
+.ro-ai-msg { flex: 1; min-width: 160px; }
+.ro-prices { margin-top: 12px; padding: 10px 14px; border: 1px solid #c9dfd1; border-radius: 8px; background: var(--good-soft); }
+.ro-prices-h { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--good); font-weight: 600; margin-bottom: 6px; }
+.ro-price-row { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid #c9dfd1; font-size: 13px; }
+.ro-price-row:first-of-type { border-top: 0; }
+.ro-price-l { flex: 1; min-width: 140px; }
+.ro-price-note { width: 100%; }
+.ro-conf { font-size: 11px; padding: 1px 7px; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--blue); }
+.ro-conf.high { color: var(--good); }
+.ro-conf.low { color: var(--warn); }
+.ro-advice { margin-top: 12px; padding: 14px 18px; border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 8px; background: var(--paper); font-size: 13.5px; line-height: 1.7; overflow-wrap: anywhere; }
+.ro-advice h3 { font: 600 15px/1.3 var(--serif); color: var(--ink); margin: 14px 0 4px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.ro-advice h3:first-child { margin-top: 0; }
+.ro-advice h4 { font-size: 13px; margin: 8px 0 2px; color: var(--muted); }
+.ro-advice li { margin: 2px 0 2px 18px; list-style: disc; }
+.ro-note { color: var(--warn); }
 @media (max-width: 767.98px) {
+  .ro-ai-acts .btn { min-height: 44px; }
   .ro-route { grid-template-columns: 1fr; }
   .ro-arrow { display: none; }
   .ro-route select, .ro-route input, .ro-avail-acts .pill, .ro-avail-acts .q { min-height: 44px; }

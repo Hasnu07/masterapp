@@ -34,9 +34,14 @@
 .st-moves summary { cursor: pointer; color: var(--gold); min-height: 24px; }
 .st-move { padding: 6px 0 6px 10px; border-left: 2px solid var(--line); margin: 4px 0; }
 .st-card .lg-tag { display: inline-block; }
+/* A row's buttons (the app's Move / Sold / Checkout / Consign / Polish / Vault / Edit / Delete), as every tab draws them. */
+.st-table .st-acts { min-width: 300px; }
+.st-table .st-acts .lg-rowacts { margin-top: 0; }
+.st-card .lg-rowacts { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.lg-rowacts .btn { font-size: 13px; padding: 4px 10px; }
 /* Print: the list as shown, as the app's Print / PDF sheet — without the chrome. */
 @media print {
-  .st-toolbar, .st-subs, .st-chips, #st-sub, .st-table .st-pic { display: none !important; }
+  .st-toolbar, .st-subs, .st-chips, #st-sub, .st-table .st-pic, .lg-actbar, .lg-rowacts, .st-acts { display: none !important; }
   .st-table { font-size: 11px; }
   .st-table th, .st-table td { padding: 4px 6px; }
   .panel.tscroll { overflow: visible; box-shadow: none; }

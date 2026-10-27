@@ -6,9 +6,11 @@
  * ids) and the person it is with, linked as far as the name goes. A return
  * date that has passed is overdue; one within a week is due soon — by this
  * computer's calendar, as the app does. Print / PDF prints the lists shown.
- * Putting a watch on consignment, moving it back, marking it sold, editing
- * or deleting change records in the app until the switch-over: a row opens
- * its record.
+ * The app's buttons, done here (src/logistics/actions/sales.js): Our Watch
+ * → Client and Client Watch → Us over the lists (a picker of London / Dubai
+ * stock), and on each of our rows Move back, Mark sold, Edit, Delete; an
+ * incoming on consignment has Mark sold. "Cost" (the app's allocated-cost
+ * box) is read on the watch's own page, under What it cost.
  */
 'use strict';
 const cs = { q: '', section: '', data: null };
@@ -17,6 +19,7 @@ LG_PAGES.consignment = async function () {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('consignment')}
     <p class="sub cs-sub">Watches on consignment: ours with a client, a client's with us, and consignments still with their supplier. Each is linked to our stock and to the client it is with.</p>
+    ${lgActionBar('consignment')}
     <div class="lg-toolbar cs-toolbar">
       <input class="q" type="search" id="cs-q" aria-label="Search consignments" placeholder="Stock number, brand, reference, who it is with…" value="${esc(cs.q)}">
       <button type="button" class="btn" id="cs-print">Print / PDF</button>
@@ -24,7 +27,7 @@ LG_PAGES.consignment = async function () {
     <div class="lg-subtabs cs-sections" id="cs-sections" role="group" aria-label="Which consignments"></div>
     <div class="count" id="cs-count">Reading what is on consignment…</div>
     <div id="cs-out" class="cs-out"></div>
-    <p class="count cs-note">Putting a watch on consignment, moving it back, marking it sold, editing or deleting it is done in the logistics app until the switch-over — a row here opens its record.</p>`;
+    <p class="count cs-note">${can('editor') ? 'A row’s buttons: move it back, mark it sold (it goes to Ready for delivery), edit the consignment, delete. ' : ''}What a watch cost is on its own page, under What it cost. WhatsApp notices are not sent from here — the text is given to copy.</p>`;
   let timer;
   $('#cs-q').addEventListener('input', (e) => {
     clearTimeout(timer);
@@ -88,6 +91,10 @@ const csPic = (w) =>
       : '<span class="blank">—</span>';
 const csStock = (w) => (/\d/.test(w.stock_no) ? `#${w.stock_no}` : w.stock_no || '—');
 
+/* The app's buttons on one of our rows on consignment, done here. */
+const csActs = (w) =>
+  can('editor') ? `<div class="lg-rowacts">${[lgActBtn('cons-back', w.id, { cls: 'small' }), lgActBtn('cons-sold', w.id, { cls: 'small' }), lgActBtn('cons-edit', w.id, { cls: 'small' }), lgActBtn('cons-delete', w.id, { cls: 'small' })].join('')}</div>` : '';
+
 const CS_SECTIONS = [
   ['', 'All'],
   ['to_client', 'Our watches with clients'],
@@ -137,6 +144,7 @@ function drawConsignment() {
       <td class="cs-notes">${esc(w.notes)}</td>
       <td>${csPic(w)}</td>
       <td>${csOurs(w)}</td>
+      <td class="cs-acts">${csActs(w)}</td>
     </tr>`;
   const incoming = (w) => `<tr data-id="${w.id}" tabindex="0" class="cs-row incoming">
       <td style="white-space:nowrap"><span class="lg-stock">${esc(csStock(w))}</span><div class="count" style="margin:2px 0 0">Incoming${w.location ? ` · ${esc(w.location)}` : ''}</div></td>
@@ -149,6 +157,7 @@ function drawConsignment() {
       <td class="cs-notes">${esc(w.notes)}</td>
       <td>${csPic(w)}</td>
       <td>${csOurs(w)}</td>
+      <td class="cs-acts">${can('editor') ? `<div class="lg-rowacts">${lgActBtn('cons-sold', w.id, { cls: 'small' })}</div>` : ''}</td>
     </tr>`;
   $('#cs-out').innerHTML = shown
     .map(
@@ -156,7 +165,7 @@ function drawConsignment() {
         ${ovHead(g.title, g.rows.length, null, '', 'h2')}
         ${g.explain ? ovExplain(g.explain) : ''}
         <div class="tscroll"><table class="list lg cs-table"><thead><tr>
-          <th>Stock</th><th>Watch</th><th>Direction</th><th>${g.key === 'incoming' ? 'Supplier' : g.key === 'from_client' ? 'Owner' : 'With'}</th><th>Accessories</th><th>${g.key === 'incoming' ? 'Expected' : g.key === 'from_client' ? 'Received' : 'Sent'}</th><th>Return by</th><th>Notes</th><th>Photos</th><th>Ours · client</th>
+          <th>Stock</th><th>Watch</th><th>Direction</th><th>${g.key === 'incoming' ? 'Supplier' : g.key === 'from_client' ? 'Owner' : 'With'}</th><th>Accessories</th><th>${g.key === 'incoming' ? 'Expected' : g.key === 'from_client' ? 'Received' : 'Sent'}</th><th>Return by</th><th>Notes</th><th>Photos</th><th>Ours · client</th><th></th>
         </tr></thead><tbody>${g.rows.map(g.key === 'incoming' ? incoming : owned).join('')}</tbody></table></div>
       </section>`
     )

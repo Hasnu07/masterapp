@@ -3,6 +3,8 @@
 .cs-group { margin-bottom: 14px; }
 .cs-group .ov-head { margin-bottom: 4px; }
 .cs-table { min-width: 1060px; }
+.cs-acts { white-space: nowrap; }
+.cs-table .lg-rowacts { margin-top: 0; flex-wrap: nowrap; }
 .cs-table td { font-size: 14px; }
 .cs-acc, .cs-notes { max-width: 220px; overflow-wrap: anywhere; }
 .cs-notes { color: var(--muted); font-size: 13px; }
@@ -17,9 +19,10 @@
   .cs-toolbar { grid-template-columns: 1fr; }
   .cs-toolbar .btn, .cs-sections .pill { min-height: 44px; }
   .cs-pic { width: 44px; height: 44px; }
+  .cs-table .lg-rowacts { flex-wrap: wrap; }
 }
 @media print {
-  header, nav, .lg-tabs, .cs-toolbar, .cs-sections, .cs-note, .cs-sub, #lg-tabs-toggle { display: none !important; }
+  header, nav, .lg-tabs, .cs-toolbar, .cs-sections, .cs-note, .cs-sub, .cs-acts, .lg-actbar, #lg-tabs-toggle { display: none !important; }
   .cs-group { break-inside: avoid; box-shadow: none; }
   .cs-table { min-width: 0; font-size: 11px; }
   .cs-table th, .cs-table td { padding: 4px 6px; }

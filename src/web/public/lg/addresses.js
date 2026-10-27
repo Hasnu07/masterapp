@@ -3,8 +3,8 @@
  * saved pickup and delivery locations a pickup code is written against. The
  * app's one table (name, address, notes), searchable here, each row saying
  * which pickup codes use it, with a map link for one that reads as a place.
- * Adding, editing and deleting wait for the switch-over: a row opens its
- * record.
+ * Add, edit and delete are the app's own workflows done here (actions
+ * addr-…); a row opens its record.
  */
 'use strict';
 const la = { q: '', data: null };
@@ -14,12 +14,13 @@ LG_PAGES.addresses = async function () {
   la.data = null;
   $('#app').innerHTML = `${lgHeader('addresses')}
     <p class="sub" style="margin:0 0 12px">Saved pickup and delivery locations — the address a pickup code sends to Person A.</p>
+    ${lgActionBar('addresses')}
     <div class="lg-toolbar la-toolbar">
       <input class="q" type="search" id="laq" placeholder="Name, address, notes…" value="${esc(la.q)}" aria-label="Search addresses">
     </div>
     <div class="count" id="la-count">Reading the addresses…</div>
     <div id="la-out"></div>
-    <p class="count la-wait">Adding, editing and deleting an address change the logistics app's records: they wait for the switch-over. Open a row to edit its record here. <a href="#/logistics/addresses-all">The records, as lists</a>.</p>`;
+    <p class="count la-wait">An address a pickup code uses is written into that code's message when the code is made. Open a row to see its record. <a href="#/logistics/addresses-all">The records, as lists</a>.</p>`;
   let timer;
   $('#laq').addEventListener('input', (e) => {
     clearTimeout(timer);
@@ -66,7 +67,7 @@ function drawAddresses() {
     $('#la-out').innerHTML = `<p class="sub">${words.length ? 'No address matches.' : 'No address saved yet.'}</p>`;
     return;
   }
-  $('#la-out').innerHTML = `<div class="panel la-panel"><table class="list lg la-table"><thead><tr><th>Name</th><th>Address</th><th>Notes</th><th>Pickup codes</th><th>Map</th></tr></thead><tbody>${rows
+  $('#la-out').innerHTML = `<div class="panel la-panel"><table class="list lg la-table"><thead><tr><th>Name</th><th>Address</th><th>Notes</th><th>Pickup codes</th><th>Map</th><th></th></tr></thead><tbody>${rows
     .map(
       (a) => `<tr data-id="${a.id}" tabindex="0">
         <td data-k="Name"><b>${esc(a.name || '—')}</b>${laKindWords[a.kind] ? `<div class="count" style="margin:2px 0 0">${laKindWords[a.kind]}</div>` : ''}${a.locked ? '<div><span class="chip lg-muted">edited here</span></div>' : ''}</td>
@@ -74,6 +75,7 @@ function drawAddresses() {
         <td data-k="Notes" class="la-notes">${a.notes ? esc(a.notes) : '<span class="blank">—</span>'}</td>
         <td data-k="Pickup codes">${laUsed(a)}</td>
         <td data-k="Map">${a.map_url ? `<a href="${esc(a.map_url)}" target="_blank" rel="noopener" class="la-map">Open map ↗</a>` : '<span class="blank">—</span>'}</td>
+        <td data-k="Actions" class="la-acts"><div class="lg-rowacts">${lgActBtn('addr-edit', a.id)}${lgActBtn('addr-delete', a.id)}</div></td>
       </tr>`
     )
     .join('')}</tbody></table></div>`;

@@ -7,7 +7,9 @@
  * On top of the app's page: the total in dollars at the converter's rates,
  * as the Overview and Movement tabs. Every stock number on a line is our
  * watch with its clients; From / To link as far as the logistics client
- * does. + Add Cost, edit and delete are the record's page here.
+ * does. + Add Cost (the app's, a line linkable to a live shipment) is in the
+ * toolbar and each line has Edit / Delete — the cost-* actions
+ * (src/logistics/actions/costs.js).
  */
 'use strict';
 const lcState = { q: '', cur: '', title: '', source: '', from: '', to: '', data: null };
@@ -16,7 +18,7 @@ const LC_SOURCE = { shipment: 'Live shipment', mover: 'Mover shipment', trip: 'T
 LG_PAGES.costs = async function () {
   const seq = ++lgPage;
   $('#app').innerHTML = `${lgHeader('costs')}
-    <p class="sub lc-sub" style="margin:0 0 12px">All shipping costs across deliveries — every line the logistics app wrote, in its own currency. A cost is written when a live shipment is delivered, a mover is paid, a trip's expenses are added, or by hand; adding or changing one is done on the record's page.</p>
+    <p class="sub lc-sub" style="margin:0 0 12px">All shipping costs across deliveries — every line the logistics app wrote, in its own currency. A cost is written when a live shipment is delivered, a mover is paid, a trip's expenses are added, or by hand — Add cost here, as the app's + Add Cost (a line can be linked to a live shipment); each line has Edit and Delete.</p>
     <section class="panel lc-totals" id="lc-totals" aria-live="polite"><p class="count" style="margin:0">Reading the costs…</p></section>
     <div class="lc-filters" id="lc-filters">
       <input class="q" type="search" id="lc-q" aria-label="Search" placeholder="Search title, stock number, from, to, notes…" value="${esc(lcState.q)}">
@@ -28,6 +30,7 @@ LG_PAGES.costs = async function () {
       <label class="lc-date"><span>From</span><input type="date" id="lc-from" value="${esc(lcState.from)}"></label>
       <label class="lc-date"><span>To</span><input type="date" id="lc-to" value="${esc(lcState.to)}"></label>
       <div class="lc-acts">
+        ${lgPageActs('costs')}
         <button type="button" class="btn small" id="lc-clear">Clear filters</button>
         <button type="button" class="btn small" id="lc-print">Print / PDF</button>
       </div>
@@ -176,7 +179,9 @@ function lcDraw() {
         const usd = l.currency && l.currency !== 'USD' ? lcUsd(l.amount, l.currency) : null;
         return `<tr data-id="${l.id}" tabindex="0">
           <td class="lc-nowrap">${esc(l.date ? dayWords(l.date) : '—')}</td>
-          <td><a href="#/lg/${l.id}"><b>${esc(l.title || 'Cost')}</b></a>${l.locked ? ' <span class="chip lg-muted" title="A field edited here — the sync leaves it alone">edited here</span>' : ''}</td>
+          <td><a href="#/lg/${l.id}"><b>${esc(l.title || 'Cost')}</b></a>${l.locked ? ' <span class="chip lg-muted" title="A field edited here — the sync leaves it alone">edited here</span>' : ''}${
+            can('editor') ? `<div class="lg-rowacts">${lgActBtn('cost-edit', l.id, { label: 'Edit', cls: 'small' })}${lgActBtn('cost-delete', l.id, { label: 'Delete', cls: 'small' })}</div>` : ''
+          }</td>
           <td class="lc-stock">${l.watches.length ? l.watches.map(lcWatchOf).join('') : l.stock ? `<span class="lg-stock">${esc(l.stock)}</span>` : '<span class="blank">—</span>'}</td>
           <td>${lcSide(l.from)} <span class="lc-arrow">→</span> ${lcSide(l.to)}</td>
           <td class="lc-r lc-nowrap"><b>${money(l.amount, l.currency || null)}</b>${!l.currency ? '<div class="count" style="margin:0">currency not stated</div>' : ''}${usd != null ? `<div class="count" style="margin:0">≈ ${lcDollars(usd)}</div>` : ''}</td>

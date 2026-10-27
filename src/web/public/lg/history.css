@@ -29,3 +29,11 @@
   .hi-toolbar input, .hi-toolbar select, .hi-photos a { min-height: 44px; }
   .hi-when { white-space: normal; }
 }
+
+/* The upload control every page of the accessories / records domain uses (lg/act-accessories.js): a button that is a file input. */
+.lg-upload { position: relative; overflow: hidden; cursor: pointer; }
+.lg-upload input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.lg-upload:focus-within { outline: 2px solid var(--gold); outline-offset: 2px; }
+.lg-upload.busy { opacity: .6; pointer-events: none; }
+.lg-upload.busy span::after { content: '…'; }
+.hi-open { margin: 0; }

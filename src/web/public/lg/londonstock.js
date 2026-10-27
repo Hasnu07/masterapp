@@ -17,10 +17,17 @@
  * movements with their sales). Every row is OUR watch, linked with its
  * clients by Chrono Key's ids; a typed name links as far as it goes.
  *
- * Add row, Import CSV, Template, Reset, Move, Sold, Checkout, Consign,
- * Polish, Cost, the inline notes and the Vault switch change records: they
- * wait for the switch-over — a row opens its record (#/lg/<id>), which has
- * the edit form.
+ * The app's buttons that change records are here too (asked 27 Oct 2026,
+ * "all the features in the logistic side in the erp system to do entries"):
+ * the toolbar's Add row / Import CSV / Template / Add spare (and HK's Add
+ * HK row, Dubai's Stock take by AI), and on each row Move, Mark sold, Check
+ * out, Consign / Back from consignment, Send to polish / Polish done, the
+ * Vault switch, a note, Delete; Move back on the History; Delete on a spare;
+ * on the HK board Move on the board, Check out, Cancel sale. Each is an
+ * action of src/logistics/actions/stock.js drawn by lg/act-stock.js, writing
+ * the records the app's own function writes. "Reset" (the app's re-seed from
+ * a PDF snapshot) is deliberately not here; "Cost" opens our watch's page,
+ * which shows what moving it cost.
  */
 'use strict';
 
@@ -121,12 +128,25 @@ const stPolish = (w) => {
   return w.need_polish ? 'Needs polish' : '';
 };
 
+/* The kind a tab's rows are kept as. */
+const stKind = (key) => ({ londonstock: 'londonStock', dubaistock: 'dubaiStock', hkstock: 'hkStock' })[key] || 'londonStock';
+/* An HK board row's buttons, as the app's card has them: Move, Checkout (and Cancel sale on a sold one), a note, Delete. */
+const stBoardRowActs = (row) =>
+  stRowActs(
+    lgActBtn('stock-hk-move', row.id, { cls: 'primary' }),
+    row.section === 'sold' ? lgActBtn('stock-hk-cancel-sale', row.id) : lgActBtn('stock-checkout', row.id),
+    lgActBtn('stock-notes', row.id),
+    row.watch ? `<a class="btn" href="#/watch/${row.watch.id}" title="What moving it cost, on our watch’s page">Cost</a>` : '',
+    lgActBtn('stock-delete', row.id)
+  );
+
 async function lgStockPage(key) {
   const seq = ++lgPage;
   const st = lgStockOf(key);
   const hk = key === 'hkstock';
   $('#app').innerHTML = `${lgHeader(key)}
     <p class="sub" id="st-sub" style="margin:0 0 12px">Reading the stock…</p>
+    ${lgActionBar(key)}
     <div class="lg-subtabs st-subs" id="st-subs" role="tablist" aria-label="Lists"></div>
     <div class="lg-toolbar st-toolbar">
       <input class="q" type="search" id="stq" placeholder="Stock number, reference, serial, brand, model, client, accessories, notes…" value="${esc(st.q)}" aria-label="Search">
@@ -204,7 +224,7 @@ async function lgStockPage(key) {
   st.data = r;
   $('#st-sub').innerHTML = `The logistics app’s ${esc(r.place === 'Hong Kong' ? 'HK' : r.place)} Stock page — ${esc(r.note)}. Every row is our watch, linked with the clients it was bought from and sold to.
     ${r.as_of ? `Read from the logistics app ${esc(fmtWhen(r.as_of))}.` : ''}
-    Adding, moving, selling, checking out, consigning, polishing and the notes wait for the switch-over: a row opens its record, which has the edit form. Clients’ watches we hold are on the <a href="#/logistics/safe">In Safe</a> tab.`;
+    ${can('editor') ? 'A row’s buttons do what the logistics app’s do, record for record; a row opens its record, which has the edit form.' : 'A row opens its record.'} Clients’ watches we hold are on the <a href="#/logistics/safe">In Safe</a> tab.${key === 'londonstock' || key === 'dubaistock' ? ' The app’s “Reset” (back to its PDF snapshot) is not here on purpose.' : ''}`;
   lgStockDraw(key);
 }
 
@@ -248,13 +268,13 @@ function lgStockDraw(key) {
       r.history.filter((w) => sfMatch(words, w.stock_no, w.brand, w.model, w.reference, w.serial, w.from, w.watch?.bought_from?.name, w.watch?.sold_to?.name, w.movements[0]?.destination, w.movements[0]?.carrier, w.notes)),
       (a, b) => String(b.moved_at || '').localeCompare(String(a.moved_at || '')) || b.id - a.id
     );
-    $('#st-count').textContent = `${rows.length}${words.length ? ` of ${r.history.length}` : ''} watch${rows.length === 1 ? '' : 'es'} moved out of ${r.place}. “Move back” waits for the switch-over: open the row’s record.`;
+    $('#st-count').textContent = `${rows.length}${words.length ? ` of ${r.history.length}` : ''} watch${rows.length === 1 ? '' : 'es'} moved out of ${r.place}.`;
     if (!rows.length) {
       $('#st-out').innerHTML = `<p class="sub">${words.length ? 'Nothing moved out matches.' : `Nothing has been moved out of ${esc(r.place)} yet — a watch moved on in the logistics app shows here.`}</p>`;
       return;
     }
     $('#st-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg st-table"><thead><tr>
-        <th>Moved on</th><th>Stock</th><th>Watch</th><th>From</th><th>Destination</th><th>Accessories taken</th><th>Spares left</th><th>Ours · client</th>
+        <th>Moved on</th><th>Stock</th><th>Watch</th><th>From</th><th>Destination</th><th>Accessories taken</th><th>Spares left</th><th>Ours · client</th>${can('editor') ? '<th></th>' : ''}
       </tr></thead><tbody>${rows
         .map((w) => {
           const m = w.movements[0] || { taken: [], left: [] };
@@ -267,6 +287,7 @@ function lgStockDraw(key) {
             <td class="st-small">${esc(m.taken.join(', ') || '—')}</td>
             <td class="st-small">${esc(m.left.join(', ') || '—')}</td>
             <td>${stOurs(w.watch)}</td>
+            ${can('editor') ? `<td class="st-acts">${stStockRowActs(w, stKind(key))}</td>` : ''}
           </tr>`;
         })
         .join('')}</tbody></table></div>`;
@@ -286,7 +307,7 @@ function lgStockDraw(key) {
       .map((b) => {
         const mine = rows.filter((s) => (s.brand || '(no brand)') === b);
         return `<section class="panel st-brand"><h3>${esc(b)} <span class="count" style="margin:0">· ${mine.length} item${mine.length === 1 ? '' : 's'}</span></h3>
-          <div class="tscroll"><table class="list lg st-table"><thead><tr><th>Accessory</th><th>Qty</th><th>From stock</th><th>From watch</th><th>Added</th><th>Notes</th></tr></thead><tbody>${mine
+          <div class="tscroll"><table class="list lg st-table"><thead><tr><th>Accessory</th><th>Qty</th><th>From stock</th><th>From watch</th><th>Added</th><th>Notes</th>${can('editor') ? '<th></th>' : ''}</tr></thead><tbody>${mine
             .map(
               (s) => `<tr data-id="${s.id}" tabindex="0">
                 <td><a href="#/lg/${s.id}"><b>${esc(s.accessory || '—')}</b></a></td>
@@ -295,6 +316,7 @@ function lgStockDraw(key) {
                 <td class="st-small">${esc(s.from_watch || '—')}</td>
                 <td style="white-space:nowrap">${esc(sfDay(s.added_at) || '—')}</td>
                 <td class="st-small">${esc(s.notes || '')}</td>
+                ${can('editor') ? `<td class="st-acts">${stRowActs(lgActBtn('stock-spare-delete', s.id))}</td>` : ''}
               </tr>`
             )
             .join('')}</tbody></table></div></section>`;
@@ -352,7 +374,7 @@ function lgStockDraw(key) {
   }
   if (st.view === 'list') {
     $('#st-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg st-table"><thead><tr>
-        <th></th><th>Stock</th><th>Watch</th><th>From</th><th>Received</th><th>Cost · B2B · B2C</th><th>Accessories</th>${r.corners.map((k) => `<th>${esc(k.label)}</th>`).join('')}<th>Polish</th><th>Ours · client</th><th>Notes</th>
+        <th></th><th>Stock</th><th>Watch</th><th>From</th><th>Received</th><th>Cost · B2B · B2C</th><th>Accessories</th>${r.corners.map((k) => `<th>${esc(k.label)}</th>`).join('')}<th>Polish</th><th>Ours · client</th><th>Notes</th>${can('editor') ? '<th></th>' : ''}
       </tr></thead><tbody>${rows
         .map(
           (w) => `<tr data-id="${w.id}" tabindex="0" class="${w.consignment ? (w.consignment.direction === 'from_client' ? 'st-from-client' : 'st-consigned') : ''}${w.need_polish || w.polish ? ' st-polish' : ''}">
@@ -367,6 +389,7 @@ function lgStockDraw(key) {
             <td>${stPolish(w) || '<span class="blank">—</span>'}</td>
             <td class="st-ours">${stOurs(w.watch)}</td>
             <td class="st-small">${esc(w.notes || '')}${w.photo_count ? `<div class="count" style="margin:2px 0 0">${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}${w.receiving_photos ? ` · ${w.receiving_photos} receiving` : ''}${w.bracelet_photos ? ` · ${w.bracelet_photos} bracelet` : ''}</div>` : ''}</td>
+            ${can('editor') ? `<td class="st-acts">${stStockRowActs(w, stKind(key))}</td>` : ''}
           </tr>`
         )
         .join('')}</tbody></table></div>`;
@@ -389,6 +412,7 @@ function lgStockDraw(key) {
           ${w.notes ? `<div class="sf-notes">${esc(w.notes)}</div>` : ''}
           ${w.movements.length ? `<div class="m">${stLastMove(w)}</div>` : ''}
           <div class="m">${stOurs(w.watch)}</div>
+          ${stStockRowActs(w, stKind(key))}
         </div>
       </article>`
     )
@@ -450,14 +474,14 @@ function lgStockDrawBoard(key, st, r, words) {
       : `${b.rows.length} piece${b.rows.length === 1 ? '' : 's'} on the HK board — the logistics app’s HK situation: ${b.sections
           .filter((s) => s.n)
           .map((s) => `${s.n} ${s.short.toLowerCase()}`)
-          .join(', ')}${b.holders.length ? ` · held by ${b.holders.join(', ')}` : ''}. Move, Sold and Checkout wait for the switch-over: a row opens its record.`;
+          .join(', ')}${b.holders.length ? ` · held by ${b.holders.join(', ')}` : ''}.`;
   if (!rows.length) {
     $('#st-out').innerHTML = `<p class="sub">${words.length || st.section ? 'Nothing on the HK board matches.' : 'Nothing on the HK board yet — a watch put on it in the logistics app shows here.'}</p>`;
     return;
   }
   if (st.view === 'list') {
     $('#st-out').innerHTML = `<div class="panel tscroll" style="padding:0"><table class="list lg st-table"><thead><tr>
-        <th></th><th>Stock</th><th>Brand</th><th>Description</th><th>Holder</th><th>Section</th><th>Status</th><th>Ours · client</th><th>Notes</th>
+        <th></th><th>Stock</th><th>Brand</th><th>Description</th><th>Holder</th><th>Section</th><th>Status</th><th>Ours · client</th><th>Notes</th>${can('editor') ? '<th></th>' : ''}
       </tr></thead><tbody>${rows
         .map(
           (row) => `<tr data-id="${row.id}" tabindex="0">
@@ -470,6 +494,7 @@ function lgStockDrawBoard(key, st, r, words) {
             <td class="st-small">${esc(row.stock_status || '—')}</td>
             <td>${stBoardWatches(row)}</td>
             <td class="st-small">${esc(row.notes || '')}${row.linked_shipment ? '<div class="count" style="margin:2px 0 0">Came on a shipment</div>' : ''}</td>
+            ${can('editor') ? `<td class="st-acts">${stBoardRowActs(row)}</td>` : ''}
           </tr>`
         )
         .join('')}</tbody></table></div>`;
@@ -489,6 +514,7 @@ function lgStockDrawBoard(key, st, r, words) {
           ${row.notes ? `<div class="sf-notes">${esc(row.notes)}</div>` : ''}
           ${stBoardMoves(row)}
           <div class="m">${stBoardWatches(row)}</div>
+          ${stBoardRowActs(row)}
         </div>
       </article>`
     )

@@ -11,6 +11,8 @@ import * as situation from './situation.js';
 import { linksByName, linksByClientId } from './clients.js';
 import { factsFor } from './pages/index.js';
 import { CLIENT_ID } from './shared.js';
+import { bad, notFound, FIELD_NAME, clean, log, rowStockFromDb, localToday, loadItem, patchItem, fieldsOf } from './write.js';
+import { storeFile } from '../import/logistics/sync.js';
 import { photoPrefix, kindOf, context, text, ticked, iso, dayOf, picturesOf, oursByStock, oursByNumber, NOW_IN_PLACE } from './shared.js';
 export { context } from './shared.js';
 
@@ -23,8 +25,6 @@ export { context } from './shared.js';
  * (locked). A record added here is ours alone and never touched by the sync.
  */
 
-const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
-const notFound = () => Object.assign(new Error('No such logistics record'), { status: 404 });
 
 /* Where the logistics app keeps its pictures: an address there is shown as the picture, through workerFile. */
 
@@ -35,7 +35,7 @@ export function catalog() {
     photoPrefix: photoPrefix(),
     app_url: config.logistics.appUrl ? `${config.logistics.appUrl}/watch-vault` : '',
     groups: GROUPS,
-    kinds: KINDS.map((k) => ({ key: k.key, label: k.label, group: k.group, fields: k.fields || [], place: k.place || '', theirs: Boolean(k.theirs) })),
+    kinds: KINDS.map((k) => ({ key: k.key, label: k.label, group: k.group, fields: fieldsOf(k), place: k.place || '', theirs: Boolean(k.theirs) })),
   };
 }
 
@@ -344,87 +344,6 @@ export async function clientChoices() {
 
 /* ── changing ─────────────────────────────────────────────────────── */
 
-const FIELD_NAME = /^[A-Za-z][A-Za-z0-9_]{0,60}$/;
-
-/**
- * A patch as stored: the kind's own fields by their type; any other field
- * the record carries only as plain text, a number or yes/no — a list or a
- * nested record is the logistics app's structure and is not edited loose.
- */
-function clean(kind, patch, current = {}) {
-  const k = kindOf(kind);
-  const typed = Object.assign(Object.create(null), Object.fromEntries((k.fields || []).map((f) => [f.key, f])));
-  const out = {};
-  for (const [key, v] of Object.entries(patch || {})) {
-    // "constructor", "__proto__" and the like are no field of a record, whatever a request says.
-    if (!FIELD_NAME.test(key) || key in Object.prototype || isSecret(key) || key === 'id') throw bad(`Not a field that can be edited: ${key}`);
-    const f = typed[key];
-    const blank = v === null || v === undefined || String(v).trim() === '';
-    if (!f) {
-      const had = Object.hasOwn(current, key) ? current[key] : undefined;
-      if ((v !== null && typeof v === 'object') || (had !== null && typeof had === 'object')) {
-        throw bad(`${key} is a list or a set of details — edit it in its own section`);
-      }
-      out[key] = typeof v === 'string' ? v.slice(0, 20000) : v;
-      continue;
-    }
-    switch (f.type) {
-      case 'money':
-      case 'number': {
-        if (blank) out[key] = null;
-        else {
-          const n = typeof v === 'number' ? v : f.type === 'money' ? parseMoney(v) : Number(String(v).replace(',', '.'));
-          if (!Number.isFinite(n) || Math.abs(n) > 1e9) throw bad(`${f.label}: "${v}" is not a number`);
-          out[key] = f.type === 'money' ? Math.round(n * 100) / 100 : n;
-        }
-        break;
-      }
-      case 'currency': {
-        const c = blank ? '' : String(v).trim().toUpperCase();
-        if (c && !/^[A-Z]{3,4}$/.test(c)) throw bad(`${f.label}: "${v}" is not a currency code`);
-        out[key] = c;
-        break;
-      }
-      case 'date':
-      case 'when': {
-        const s = blank ? '' : String(v).trim();
-        if (s && (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !realDate(s))) throw bad(`${f.label}: "${v}" is not a date`);
-        out[key] = s || (f.type === 'when' ? null : '');
-        break;
-      }
-      case 'enum': {
-        const s = blank ? '' : String(v);
-        // A value the record already had stays allowed, though the list does not name it.
-        if (s && !f.options.includes(s) && s !== (Object.hasOwn(current, key) ? current[key] : undefined)) {
-          throw bad(`${f.label}: "${v}" is not one of ${f.options.join(', ')}`);
-        }
-        out[key] = s;
-        break;
-      }
-      case 'bool':
-        out[key] = v === true || /^(true|yes|1|on)$/i.test(String(v));
-        break;
-      default:
-        out[key] = blank ? '' : String(v).trim().slice(0, f.type === 'longtext' ? 20000 : 500);
-    }
-  }
-  return out;
-}
-
-async function log(db, itemId, { userId = null, source = 'user', action, changes = {} }) {
-  await db.query('INSERT INTO logistics_events(item_id, user_id, source, action, changes) VALUES ($1,$2,$3,$4,$5)', [itemId, userId, source, action, changes]);
-}
-
-/* A trip's watches are its rows' ids: looked up among our items. */
-async function rowStockFromDb(db) {
-  const { rows } = await db.query(
-    "SELECT kind, source_id, data->>'stockNumber' AS stock FROM logistics_items WHERE source_id IS NOT NULL AND kind = ANY($1)",
-    [['londonStock', 'dubaiStock', 'hkStock', 'safeStock', 'hkSituation', 'incomings', 'soldStocks', 'readyForDelivery', 'checkoutStock']]
-  );
-  const m = new Map(rows.map((r) => [`${r.kind}:${r.source_id}`, r.stock || '']));
-  return (list, id) => (list === '*' ? rows.find((r) => r.source_id === String(id))?.stock || '' : m.get(`${list}:${id}`) || '');
-}
-
 export async function createItem(kind, data, user) {
   if (!kind || !FIELD_NAME.test(kind) || kind === 'settings') throw bad('Say which list the record belongs to');
   if (!KIND[kind]) throw bad(`There is no logistics list called ${kind}`);
@@ -589,9 +508,29 @@ export async function polishAction(id, body, user) {
   });
 }
 
-/* Today as a day on the calendar of the business (Dubai), for a date left blank. */
-function localToday() {
-  return new Date(Date.now() + 4 * 3600_000).toISOString().slice(0, 10);
+
+/**
+ * Pictures or PDFs added to a record here (the app's handover, proof and
+ * document photos): each stored once (storeFile) and named in the record's
+ * list — "photos", "sentPhotos", "donePhotos", "givenPhotos" … — as
+ * "lgfile:<id>", the way the sync keeps the app's own. The list is locked.
+ */
+export async function addFiles(id, field, files, user) {
+  if (!FIELD_NAME.test(field) || !/photo|pic|doc|file|image|proof/i.test(field)) throw bad(`${field} is not a list of pictures`);
+  if (!files.length) throw bad('No file was sent');
+  const ids = [];
+  for (const f of files) {
+    const isPdf = f.buffer.subarray(0, 5).toString('latin1') === '%PDF-';
+    if (!isPdf && !/^image\//.test(f.mimetype || '')) throw bad(`${f.originalname || 'A file'} is not a picture or a PDF`);
+    ids.push(await storeFile(f.buffer));
+  }
+  return tx(async (db) => {
+    const it = await loadItem(db, id);
+    const had = Array.isArray(it.data[field]) ? it.data[field] : [];
+    const refs = ids.map((x) => `lgfile:${x}`).filter((r) => !had.includes(r));
+    await patchItem(db, it, { ...it.data, [field]: [...had, ...refs] }, user);
+    return { added: refs.length, files: refs };
+  });
 }
 
 /* Deleting is soft: one from the logistics app stays deleted however often the sync meets it. */
@@ -726,6 +665,8 @@ export async function inSafe() {
         // Which safe or box, when it says more than a tick; whether it is out with its owner for now.
         where: ticked(d.inSafe) === 'yes' ? '' : ticked(d.inSafe),
         with_owner: ticked(d.withClient),
+        hidden_from_vault: d.hideFromVault === true,
+        status: d.status || 'current',
         accessories_present: text(d.accessoriesPresent),
         accessories_missing: text(d.accessoriesMissing),
         need_polish: d.needPolish === true || d.needPolish === 'true',
@@ -1259,10 +1200,11 @@ const decisionWords = (d) =>
 export async function incomingPage() {
   const [incQ, odQ, fobQ] = await Promise.all([
     query("SELECT * FROM logistics_items WHERE kind = 'incomings' AND deleted_at IS NULL"),
-    query("SELECT source_id, data FROM logistics_items WHERE kind = 'ownerDecisions' AND deleted_at IS NULL AND source_id IS NOT NULL"),
+    query("SELECT source_id, data FROM logistics_items WHERE kind = 'ownerDecisions' AND deleted_at IS NULL"),
     query("SELECT * FROM logistics_items WHERE kind = 'fobPicked' AND deleted_at IS NULL ORDER BY id"),
   ]);
-  const decisions = new Map(odQ.rows.map((r) => [r.source_id, r.data || {}]));
+  // A decision made here has no source_id, only its own data.id: both name it.
+  const decisions = new Map(odQ.rows.map((r) => [(r.source_id || String(r.data?.id || '')), r.data || {}]).filter(([k]) => k));
   const nos = [...new Set([...incQ.rows, ...fobQ.rows].flatMap((r) => r.stock_nos || []))];
   const [ours, places, people] = await Promise.all([
     oursByNumber(nos),
@@ -1417,6 +1359,11 @@ export async function handCarry() {
             model: text(x?.model),
             ...ITEM[role](x || {}),
             watch: watchOf(x?.stockNumber),
+            // Which plan, stop and entry this is (for the actions that unassign it or edit its stop).
+            plan_id: r.id,
+            leg_id: text(l.id),
+            item_id: text(x?.id),
+            role,
           })),
         ])
       );

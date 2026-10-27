@@ -77,3 +77,16 @@
   .od-acts .btn { min-height: 44px; }
   .od-body { padding-left: 16px; }
 }
+/* The buttons the app has on a card and on an execution group (act-decisions.js). */
+.od-acts { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.od-route-acts { margin-top: 10px; }
+@media (max-width: 767.98px) { .od-acts { justify-content: flex-start; } }
+/* A row's actions as the app's ••• menu: a disclosure in the row (act-incoming.js; any tab's rows may use it). */
+.lg-rowmenu { display: inline-block; margin-top: 4px; vertical-align: top; }
+.lg-rowmenu > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; }
+.lg-rowmenu > summary::-webkit-details-marker { display: none; }
+.lg-rowmenu > summary::after { content: ' ▾'; color: var(--muted); margin-left: 4px; }
+.lg-rowmenu[open] > summary::after { content: ' ▴'; }
+/* Open, the buttons sit in the row (a floating menu would be clipped by the table's own scroll box). */
+.lg-rowmenu > .lg-rowacts { display: grid; grid-template-columns: repeat(3, max-content); gap: 4px; margin-top: 6px; }
+.lg-rowmenu > .lg-rowacts .btn { white-space: nowrap; }

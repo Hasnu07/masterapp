@@ -15,6 +15,8 @@
 .gs-pics img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #f0ece4; display: block; }
 .gs-pics a:not(:has(img)) { font-size: 13px; white-space: nowrap; }
 .gs-wait { margin-top: 4px; }
+.gs-acts { min-width: 170px; }
+.gs-acts .lg-rowacts { margin-top: 0; }
 @media (max-width: 767.98px) {
   .ov-tiles.gs-tiles { max-width: none; }
   .gs-toolbar { grid-template-columns: 1fr 1fr; }
@@ -23,4 +25,6 @@
   .gs-table td, .gs-table th { padding: 10px 8px; }
   .gs-pics img { width: 48px; height: 48px; }
   .gs-pics a, .gs-table a.lg-stock { display: inline-flex; align-items: center; min-height: 44px; }
+  .gs-acts { min-width: 0; }
+  .gs-acts .lg-rowacts .btn { min-height: 44px; }
 }

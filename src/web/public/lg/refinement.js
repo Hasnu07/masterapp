@@ -8,10 +8,10 @@
  * (clients' or others', not our stock). Every stock number is our watch,
  * linked with its clients; the polisher's typed name links as far as it goes.
  *
- * Send to polish and Back from polish are the one record change already
- * allowed here (the Overview's buttons, POST /api/logistics/items/:id/polish).
- * An external polish is added, finished, edited or deleted in the app until
- * the switch-over: its row opens its record.
+ * Send to polish and Back from polish post to POST /api/logistics/items/:id/
+ * polish (the Overview's endpoint). An external watch's polish — add, mark
+ * done, edit, delete — is the app's buttons done here
+ * (src/logistics/actions/sales.js, ref-*).
  */
 'use strict';
 const rf = { q: '', data: null, form: null, seq: 0 };
@@ -181,15 +181,17 @@ function drawRefinement() {
       <td>${rfPhotos(e.before_n + e.after_n, e.picture)}</td>
       ${done ? `<td class="rf-notes">${esc(e.return_notes)}</td>` : ''}
       <td>${e.watch ? rfOurs(e) : e.stock_no ? `<span class="blank">#${esc(e.stock_no)} is not one of our watches</span>` : '<span class="blank">Not our stock</span>'}</td>
+      <td class="rf-acts">${editor ? `<div class="lg-rowacts">${(done ? [lgActBtn('ref-delete', e.id, { cls: 'small' })] : [lgActBtn('ref-done', e.id, { cls: 'small primary' }), lgActBtn('ref-edit', e.id, { cls: 'small' }), lgActBtn('ref-delete', e.id, { cls: 'small' })]).join('')}</div>` : ''}</td>
     </tr>`;
   $('#rf-ext').innerHTML =
     ovHead('External watches at polish', ext.active.length, null, '', 'h2') +
-    ovExplain('Clients’ or other watches sent for polish — not our stock. Adding one, marking it done, editing or deleting is done in the logistics app until the switch-over; a row opens its record.') +
+    ovExplain('Clients’ or other watches sent for polish — not our stock. A bare stock number as the watch is ours. No cost line is written for these (the app writes none).') +
+    lgActionBar('refinement') +
     (ext.active.length
-      ? `<div class="tscroll"><table class="list lg rf-table"><thead><tr><th>Watch</th><th>Sent to</th><th>Sent</th><th>Expected back</th><th>Cost</th><th>Photos</th><th>Ours</th></tr></thead><tbody>${ext.active.map((e) => extRow(e, false)).join('')}</tbody></table></div>`
+      ? `<div class="tscroll"><table class="list lg rf-table"><thead><tr><th>Watch</th><th>Sent to</th><th>Sent</th><th>Expected back</th><th>Cost</th><th>Photos</th><th>Ours</th><th></th></tr></thead><tbody>${ext.active.map((e) => extRow(e, false)).join('')}</tbody></table></div>`
       : '<p class="ov-empty">No external watches at polish right now.</p>') +
     (ext.done.length
-      ? `<h3 style="margin-top:14px">External polish history <span class="ov-n">${ext.done.length}</span></h3><div class="tscroll"><table class="list lg rf-table"><thead><tr><th>Watch</th><th>Sent to</th><th>Sent</th><th>Returned</th><th>Cost</th><th>Photos</th><th>Notes</th><th>Ours</th></tr></thead><tbody>${ext.done.map((e) => extRow(e, true)).join('')}</tbody></table></div>`
+      ? `<h3 style="margin-top:14px">External polish history <span class="ov-n">${ext.done.length}</span></h3><div class="tscroll"><table class="list lg rf-table"><thead><tr><th>Watch</th><th>Sent to</th><th>Sent</th><th>Returned</th><th>Cost</th><th>Photos</th><th>Notes</th><th>Ours</th><th></th></tr></thead><tbody>${ext.done.map((e) => extRow(e, true)).join('')}</tbody></table></div>`
       : '');
   lgOpenOnClick($('#rf-ext'));
 }

@@ -16,6 +16,7 @@
 .lc-date input { min-width: 0; }
 .lc-acts { display: flex; gap: 6px; flex-wrap: wrap; }
 .lc-table .lc-r { text-align: right; }
+.lc-table .lg-rowacts { margin-top: 4px; }
 .lc-nowrap { white-space: nowrap; }
 .lc-stock { min-width: 220px; }
 .lc-stock > div { margin-bottom: 4px; overflow-wrap: anywhere; }
@@ -38,7 +39,7 @@
   .lc-tile b { font-size: 20px; }
 }
 @media print {
-  .lg-tabs, .lg-head button, .lc-filters, #lc-count, header, nav, .lc-sub { display: none !important; }
+  .lg-tabs, .lg-head button, .lc-filters, #lc-count, header, nav, .lc-sub, .lg-rowacts, .lg-actbar { display: none !important; }
   .lc-totals, .lc-table { break-inside: auto; }
   .lc-table td, .lc-table th { font-size: 11px; padding: 4px 6px; }
 }

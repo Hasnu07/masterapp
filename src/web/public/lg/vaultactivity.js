@@ -5,8 +5,9 @@
  * B2B / B2C) and, beside them, who holds which watch as the vault's own
  * tracking says (in the office or at home, out with a client, at the Gold
  * Souk, out for photography). Every stock number is our watch with its
- * clients. Nothing here is a button: the vault writes, the app approves on
- * sight, masterapp copies.
+ * clients. A notification still pending is approved (applied to the stock
+ * row) or dismissed as the app does; who holds a watch is set as the
+ * vault's "Tap to update location" writes it (actions/records.js).
  */
 'use strict';
 const va = { q: '', type: '', place: '', data: null };
@@ -125,7 +126,7 @@ function drawVaultActivity() {
             <td>${vaOurs(x)}</td>
             <td>${vaWhat(x)}</td>
             <td>${esc(x.place || '—')}</td>
-            <td>${vaStatus(x.status)}</td>
+            <td>${vaStatus(x.status)}${x.status === 'pending' && lgActBtn('va-approve', x.id) ? `<div class="lg-rowacts">${lgActBtn('va-approve', x.id)}${lgActBtn('va-dismiss', x.id)}</div>` : ''}</td>
           </tr>`
         )
         .join('')}</tbody></table></div>`
@@ -140,7 +141,7 @@ function drawVaultActivity() {
             (h) => `<tr data-id="${h.id}" tabindex="0">
               <td>${vaOurs(h)}${h.row_gone ? '<div class="count" style="margin:2px 0 0">No longer on the app\'s stock lists</div>' : ''}</td>
               <td><span class="chip ${VA_WHERE[h.where]?.[1] || 'lg-muted'}">${esc(h.status)}</span>${h.from_polish ? '<div class="count" style="margin:2px 0 0">At polish, as the stock row says</div>' : ''}</td>
-              <td>${h.holder ? `<b>${esc(h.holder)}</b>` : '<span class="blank">—</span>'}</td>
+              <td>${h.holder ? `<b>${esc(h.holder)}</b>` : '<span class="blank">—</span>'}${lgActBtn('va-holder', h.id) ? `<div class="lg-rowacts">${lgActBtn('va-holder', h.id)}</div>` : ''}</td>
               <td style="white-space:nowrap">${esc(since(h))}</td>
               <td>${esc(h.place || '—')}</td>
             </tr>`
