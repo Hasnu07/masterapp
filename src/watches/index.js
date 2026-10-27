@@ -3,6 +3,7 @@ import { FIELDS, FIELD, cleanValue, displayTitle, parseMoney } from './fields.js
 import { savePhoto, storage, fingerprint, dhashDistance, samePicture } from '../storage/index.js';
 import { leftBlank } from '../import/productlist.js';
 import { isPlaceholder } from '../import/chronokey/parse.js';
+import { factsFor } from '../logistics/pages/index.js';
 
 /*
  * Our record of every watch: reading it, and every way a person changes it.
@@ -138,9 +139,11 @@ export async function listWatches(opts = {}) {
     params
   );
 
+  // What each logistics page knows about the watch (on consignment, at polish, with a driver, its pickup code …): one read for the page of tiles.
+  const facts = await factsFor(rows.map((r) => r.stock_no)).catch(() => new Map());
   return {
     total: rows[0]?.total ?? 0,
-    watches: rows.map(summary),
+    watches: rows.map((r) => ({ ...summary(r), facts: facts.get(r.stock_no) || [] })),
     facets: { status: byStatus, location: byLocation, brand: byBrand.slice(0, 40) },
   };
 }

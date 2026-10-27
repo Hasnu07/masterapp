@@ -13,30 +13,48 @@
  * are its records until the switch-over.
  */
 
+/*
+ * The tabs — the logistics app's own sidebar, every entry in its order
+ * (asked 27 Oct 2026: "all these tabs in my logistic side tabs … keep each
+ * page how it is in the logistic app"). `app` is the app's tab name, for
+ * anyone reading its code; `#/logistics` with no tab opens the Dashboard.
+ */
 export const GROUPS = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'shipments', label: 'Shipments' },
-  { key: 'incoming', label: 'Incoming' },
-  { key: 'stock', label: 'Stock by place' },
-  // Clients' watches we hold, as the logistics app's own In Safe page (asked 26 Oct 2026). No lists of its own: inSafe() reads it.
-  { key: 'safe', label: 'In Safe' },
-  // Watches held somewhere for a while, not sold, as the app's Checkout page (asked 26 Oct 2026). checkedOut() reads it.
-  { key: 'checkout', label: 'Checked out' },
-  // A person's plan of stops — deliver, collect, move — as the app's Hand Carry page (asked 26 Oct 2026). handCarry() reads it.
-  { key: 'handcarry', label: 'Hand carry' },
-  { key: 'sales', label: 'Sales & delivery' },
-  // The app's Movement tab: person travel cost (asked 26 Oct 2026). The key stays, so old links still open it.
-  { key: 'trips', label: 'Movement' },
-  // The app's 3rd Party Movers page: couriers, what they carried, customs and what we owe them (asked 27 Oct 2026). moversPage() reads it.
-  { key: 'movers', label: '3rd party movers' },
-  // Accessory transactions with their clients and what is pending, as the app's All Transactions page (asked 26 Oct 2026). transactionsList() reads it.
-  { key: 'transactions', label: 'Transactions' },
-  { key: 'accessories', label: 'Accessories' },
-  { key: 'services', label: 'Polish & services' },
-  { key: 'costs', label: 'Costs' },
-  { key: 'contacts', label: 'Clients' },
-  { key: 'log', label: 'Activity' },
+  { key: 'safe', label: 'In Safe', app: 'safestock' },
+  { key: 'ownerdecisions', label: 'Owner Decisions', app: 'ownerdecisions' },
+  { key: 'hkstock', label: 'HK Stock', app: 'hkstock' },
+  { key: 'checkout', label: 'Checkout', app: 'checkout' },
+  { key: 'handcarry', label: 'Hand Carry Plans', app: 'kashan' },
+  { key: 'vaultactivity', label: 'Watch Vault Activity', app: 'vaultactivity' },
+  { key: 'otherreceiving', label: 'Other Receiving Pics', app: 'otherreceiving' },
+  { key: 'overview', label: 'Dashboard', app: 'dashboard' },
+  { key: 'contacts', label: 'Clients', app: 'clients' },
+  { key: 'transactions', label: 'Transactions', app: 'transactions' },
+  { key: 'accessories', label: 'Accessories Management', app: 'accessories' },
+  { key: 'history', label: 'Accessory History', app: 'history' },
+  { key: 'shipments', label: 'Live Shipments', app: 'shipments' },
+  { key: 'movers', label: '3rd Party Movers', app: 'thirdpartymovers' },
+  { key: 'costs', label: 'Logistic Cost', app: 'logistics' },
+  { key: 'routeoptimizer', label: 'Route Optimizer', app: 'routeoptimizer' },
+  { key: 'incoming', label: 'Incomings', app: 'incomings' },
+  { key: 'consignment', label: 'In Consignment', app: 'consignment' },
+  { key: 'londonstock', label: 'London Stock', app: 'londonstock' },
+  { key: 'dubaistock', label: 'Dubai Stock', app: 'dubaistock' },
+  { key: 'refinement', label: 'Refinement', app: 'refinement' },
+  { key: 'missingacc', label: 'Missing Accessories', app: 'missingacc' },
+  { key: 'soldstocks', label: 'Sold Stocks', app: 'soldstocks' },
+  // The key stays 'trips', so old links still open it.
+  { key: 'trips', label: 'Movement', app: 'movement' },
+  { key: 'driverdeliveries', label: 'Driver Deliveries', app: 'driverdeliveries' },
+  { key: 'pickupcodes', label: 'Pickup Codes', app: 'pickupcodes' },
+  { key: 'addresses', label: 'Logistics Addresses', app: 'logisticsaddresses' },
+  { key: 'goldsouk', label: 'Gold Souk', app: 'goldsouk' },
+  { key: 'companies', label: 'Companies', app: 'companies' },
+  { key: 'shipmentdocs', label: 'Shipment Documents', app: 'shipmentdocs' },
+  { key: 'swaps', label: 'Swaps', app: 'swaps' },
+  { key: 'log', label: 'Activity', app: 'activity' },
 ];
+
 
 /* ── field types ─────────────────────────────────────────────────────
  *   text, longtext   words
@@ -139,7 +157,7 @@ const corner = (d) => [d.inMayfair && 'Mayfair', d.inNcl && 'NCL', d.inOffice &&
 const locationKind = (key, label, place) => ({
   key,
   label,
-  group: 'stock',
+  group: 'companies',
   place,
   fields: LOCATION_STOCK_FIELDS,
   summary: (d) => ({
@@ -197,7 +215,7 @@ export const KINDS = [
   {
     key: 'thirdPartyShipments',
     label: 'Mover shipments',
-    group: 'shipments',
+    group: 'movers',
     fields: [
       f('moverName', 'Mover'),
       f('stockNumber', 'Stock numbers', 'stock'),
@@ -227,14 +245,14 @@ export const KINDS = [
   {
     key: 'thirdPartyMovers',
     label: 'Movers',
-    group: 'shipments',
+    group: 'movers',
     fields: [f('name', 'Name'), f('country', 'Country'), f('contact', 'Contact'), f('notes', 'Notes', 'longtext')],
     summary: (d) => ({ title: d.name || 'Mover', sub: join(d.country, d.contact), date: d.ts }),
   },
   {
     key: 'driverDeliveries',
     label: 'Driver deliveries',
-    group: 'shipments',
+    group: 'driverdeliveries',
     stockField: 'stockNumbers',
     fields: [
       f('driverName', 'Driver'),
@@ -249,20 +267,23 @@ export const KINDS = [
   {
     key: 'shipmentDocs',
     label: 'Shipping documents',
-    group: 'shipments',
+    group: 'shipmentdocs',
     summary: (d) => ({ title: first(d, ['title', 'name', 'docType', 'type']) || 'Document', sub: first(d, ['notes', 'description']), date: d.date || d.ts || d.createdAt }),
   },
   {
     key: 'pickupCodes',
     label: 'Pickup codes',
-    group: 'shipments',
+    group: 'pickupcodes',
+    // The stock number, when there is one, is in the handover messages.
+    stockField: 'words',
+    wordFields: ['messageA', 'messageB', 'notes'],
     // The handover code itself is not the title: it is on the record's own page, not in every list.
     summary: (d) => ({ title: first(d, ['title', 'name', 'carrier', 'courier', 'client', 'clientName']) || 'Pickup code', sub: first(d, ['address', 'location', 'notes']), status: d.status, date: d.date || d.ts || d.createdAt }),
   },
   {
     key: 'logisticsAddresses',
     label: 'Addresses',
-    group: 'shipments',
+    group: 'addresses',
     summary: (d) => ({ title: first(d, ['name', 'label', 'title']) || 'Address', sub: first(d, ['address', 'city', 'country', 'notes']) }),
   },
 
@@ -298,7 +319,7 @@ export const KINDS = [
   {
     key: 'ownerDecisions',
     label: 'Owner decisions',
-    group: 'incoming',
+    group: 'ownerdecisions',
     summary: (d) => ({ title: join(d.action || d.decision || 'Decision', d.destination), sub: first(d, ['notes', 'collector']), status: d.status, date: d.updatedAt || d.createdAt }),
   },
   {
@@ -309,18 +330,19 @@ export const KINDS = [
   },
 
   /* ── stock by place ── */
-  locationKind('londonStock', 'London', 'London'),
-  locationKind('dubaiStock', 'Dubai', 'Dubai'),
-  locationKind('hkStock', 'Hong Kong', 'Hong Kong'),
+  { ...locationKind('londonStock', 'London', 'London'), group: 'londonstock' },
+  { ...locationKind('dubaiStock', 'Dubai', 'Dubai'), group: 'dubaistock' },
+  { ...locationKind('hkStock', 'Hong Kong', 'Hong Kong'), group: 'hkstock' },
   {
     ...locationKind('safeStock', 'Safe (clients’ watches)', 'our safe'),
+    group: 'safe',
     // The safe holds clients' property: never counted as our stock.
     theirs: true,
   },
   {
     key: 'checkoutStock',
     label: 'Checked out',
-    group: 'stock',
+    group: 'checkout',
     fields: [
       f('stockNumber', 'Stock number', 'stock'),
       ...SPEC,
@@ -334,7 +356,7 @@ export const KINDS = [
   {
     key: 'hkSituation',
     label: 'HK situation',
-    group: 'stock',
+    group: 'hkstock',
     fields: [
       f('stockNumber', 'Stock number', 'stock'),
       f('brand', 'Brand'),
@@ -346,23 +368,23 @@ export const KINDS = [
     ],
     summary: (d) => ({ title: join(d.brand, d.description) || 'HK watch', sub: d.holder && `held by ${d.holder}`, status: d.section, date: d.createdAt }),
   },
-  SPARES('londonSpares', 'London spares'),
-  SPARES('dubaiSpares', 'Dubai spares'),
-  SPARES('hkSpares', 'HK spares'),
-  SPARES('safeSpares', 'Safe spares'),
+  { ...SPARES('londonSpares', 'London spares'), group: 'londonstock' },
+  { ...SPARES('dubaiSpares', 'Dubai spares'), group: 'dubaistock' },
+  { ...SPARES('hkSpares', 'HK spares'), group: 'hkstock' },
+  { ...SPARES('safeSpares', 'Safe spares'), group: 'safe' },
 
   /* ── sales & delivery ── */
   {
     key: 'readyForDelivery',
     label: 'Ready for delivery',
-    group: 'sales',
+    group: 'shipments',
     fields: [...SALE_FIELDS, f('status', 'Status', 'enum', { options: ['pending_ship', 'shipped'] })],
     summary: (d) => ({ title: spec(d) || 'Sold watch', sub: join(d.soldToBuyer && `to ${d.soldToBuyer}`, d.soldFromLocation && `from ${d.soldFromLocation}`), status: d.status === 'shipped' ? 'shipped' : 'waiting to ship', date: d.soldDate || d.ts }),
   },
   {
     key: 'soldStocks',
     label: 'Sold',
-    group: 'sales',
+    group: 'soldstocks',
     fields: [
       ...SALE_FIELDS,
       f('deliveredVia', 'Delivered by', 'enum', { options: ['in_person', 'shipment'] }),
@@ -399,7 +421,7 @@ export const KINDS = [
   {
     key: 'kashanPlans',
     label: 'Travel plans',
-    group: 'trips',
+    group: 'handcarry',
     stockField: 'legs',
     summary: (d) => ({ title: d.name || 'Plan', sub: (d.legs || []).map((l) => l.toCity || l.to).filter(Boolean).join(' → '), status: d.status, date: d.date || d.createdAt }),
   },
@@ -452,22 +474,24 @@ export const KINDS = [
   {
     key: 'swaps',
     label: 'Swaps',
-    group: 'accessories',
-    summary: (d) => ({ title: first(d, ['title', 'notes']) || 'Swap', date: d.ts || d.date }),
+    group: 'swaps',
+    // The app's saveSwap: one item we gave against one we received, both marked done by the swap's id.
+    fields: [f('giveTxId', 'Transaction we gave on'), f('giveItemId', 'Item we gave'), f('receiveTxId', 'Transaction we received on'), f('receiveItemId', 'Item we received'), f('ts', 'When', 'when'), f('notes', 'Notes', 'longtext')],
+    summary: (d) => ({ title: first(d, ['title', 'notes']) || 'Accessory swap', status: 'settled', date: d.ts || d.date }),
   },
 
   /* ── polish & services ── */
   {
     key: 'externalPolish',
     label: 'External polish',
-    group: 'services',
+    group: 'refinement',
     fields: [
       f('description', 'Watch', 'longtext'),
       f('sentTo', 'Sent to'),
       f('takenBy', 'Taken by'),
       f('sentDate', 'Sent', 'date'),
       f('expectedBack', 'Expected back', 'date'),
-      f('costAmount', 'Cost', 'money', { currency: 'costCurrency' }),
+      f('cost', 'Cost', 'money', { currency: 'costCurrency' }),
       f('costCurrency', 'Cost currency', 'currency'),
       f('status', 'Status', 'enum', { options: ['at_polish', 'done'] }),
       f('returnDate', 'Back', 'date'),
@@ -478,7 +502,10 @@ export const KINDS = [
   {
     key: 'goldSoukTasks',
     label: 'Gold souk tasks',
-    group: 'services',
+    group: 'goldsouk',
+    // A task has no stock field: its watches are typed into what is taken ("Stock # 1229 5212A-001").
+    stockField: 'words',
+    wordFields: ['taking', 'notes', 'resultNotes'],
     summary: (d) => ({ title: first(d, ['title', 'task', 'description']) || 'Task', sub: first(d, ['shop', 'notes']), status: d.status, date: d.date || d.ts || d.createdAt }),
   },
 
@@ -511,7 +538,7 @@ export const KINDS = [
   {
     key: 'companies',
     label: 'Companies',
-    group: 'contacts',
+    group: 'companies',
     summary: (d) => ({ title: first(d, ['name', 'title']) || 'Company', sub: first(d, ['country', 'notes']) }),
   },
 
@@ -525,12 +552,12 @@ export const KINDS = [
     keepGone: true,
     summary: (d) => ({ title: d.text || '', date: d.ts }),
   },
-  { key: 'vaultNotifications', label: 'Vault notifications', group: 'log', keepGone: true, summary: (d) => ({ title: first(d, ['text', 'message', 'type']) || 'Notification', sub: first(d, ['field', 'loc']), status: d.status, date: d.ts }) },
-  { key: 'ownerBriefs', label: 'Owner briefs', group: 'log', keepGone: true, summary: (d) => ({ title: first(d, ['title', 'text', 'message']).slice(0, 140) || 'Brief', date: d.ts || d.sentAt }) },
-  { key: 'otherReceivingPics', label: 'Receiving pictures', group: 'log', summary: (d) => ({ title: first(d, ['title', 'description', 'clientName']) || 'Pictures', sub: d.notes, date: d.date || d.ts }) },
+  { key: 'vaultNotifications', label: 'Vault notifications', group: 'vaultactivity', keepGone: true, summary: (d) => ({ title: first(d, ['text', 'message', 'type']) || 'Notification', sub: first(d, ['field', 'loc']), status: d.status, date: d.ts }) },
+  { key: 'ownerBriefs', label: 'Owner briefs', group: 'ownerdecisions', keepGone: true, summary: (d) => ({ title: first(d, ['title', 'text', 'message']).slice(0, 140) || 'Brief', date: d.ts || d.sentAt }) },
+  { key: 'otherReceivingPics', label: 'Receiving pictures', group: 'otherreceiving', summary: (d) => ({ title: first(d, ['title', 'description', 'clientName']) || 'Pictures', sub: d.notes, date: d.date || d.ts }) },
   { key: 'todoItems', label: 'To-do', group: 'log', summary: (d) => ({ title: first(d, ['text', 'title']) || 'To-do', status: d.done ? 'done' : 'open', date: d.ts || d.createdAt }) },
   // The vault's record of who holds which watch, keyed by the stock row's id (a map, not a list).
-  { key: 'vaultTracking', label: 'Vault holders', group: 'log', map: true, stockField: 'mapKey', summary: (d) => ({ title: first(d, ['holder', 'location', 'loc']) || 'Vault tracking', sub: first(d, ['notes', 'status']), date: d.ts || d.updatedAt }) },
+  { key: 'vaultTracking', label: 'Vault holders', group: 'vaultactivity', map: true, stockField: 'mapKey', summary: (d) => ({ title: first(d, ['holder', 'location', 'loc']) || 'Vault tracking', sub: first(d, ['notes', 'status']), date: d.ts || d.updatedAt }) },
 ];
 
 // No prototype: a kind or a field name comes from a request.
@@ -546,6 +573,37 @@ const SECRET = /^(password|secret|token|apikey|api_key|pin|vaultpin|.*(password|
 export const isSecret = (key) => SECRET.test(String(key));
 
 /* ── stock numbers ─────────────────────────────────────────────────── */
+
+/*
+ * A stock number inside an activity line is picked out where the app's own
+ * wording puts it ("Dubai Stock 1698 updated", "Received Stock 1698", "Added
+ * incoming 1760", "SOLD 1698 ·", "Accessories given for Stock #1698", "1698
+ * delivered to", "Polish done for 1698", "3rd party shipment: Ferrari · 1601,
+ * 1602") — never a bare figure, which is as often a price or a reference.
+ */
+const LINE_NO = '(\\d{2,5}(?:\\.\\d*)?)';
+const LINE_PATTERNS = [
+  new RegExp(`\\bstock\\s*#?\\s*${LINE_NO}`, 'gi'),
+  new RegExp(`#${LINE_NO}`, 'g'),
+  new RegExp(`\\b(?:incoming|sale|SOLD|Polish done for|for stock)\\s+${LINE_NO}`, 'gi'),
+  new RegExp(`^\\W*${LINE_NO}\\s+(?:delivered|hidden|shown)\\b`, 'g'),
+  /party shipment: [^·]+ · ((?:\d{2,5}(?:\s*,\s*)?)+)/gi,
+];
+export function stockNosInLine(line) {
+  const s = String(line || '');
+  const out = [];
+  for (const re of LINE_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(s))) {
+      for (const n of m[1].split(/\s*,\s*/)) {
+        const v = n.replace(/\.$/, '');
+        if (/^\d{2,5}$/.test(v) && !out.includes(v)) out.push(v);
+      }
+    }
+  }
+  return out;
+}
 
 /**
  * The stock numbers a value names: "1617", "1617, 1618", "#1617", a list of
@@ -616,6 +674,16 @@ export function stockOf(kind, d, rowStock = () => '') {
     return stockList(n);
   }
   if (k?.stockField === 'stockNumbers') return stockList(d.stockNumbers ?? d.stockNumber);
+  // A number written into words — "Stock # 1229", "#1229" — never a bare figure (as often a reference or a price; the page itself reads those against our watch list).
+  if (k?.stockField === 'words') {
+    const out = [];
+    for (const field of k.wordFields || []) {
+      for (const m of String(d[field] ?? '').matchAll(/(?:\bstock\s*(?:no\.?|number|#)?\s*:?\s*#?|#\s*)(\d{3,4})\b/gi)) if (!out.includes(m[1])) out.push(m[1]);
+    }
+    return out;
+  }
+  // An activity line names its watch in the app's own wordings (pages/log.js reads them the same way).
+  if (kind === 'activity') return stockNosInLine(d.text);
   if (kind === 'vaultNotifications' && !d.stockNumber && d.watchId) return stockList(rowStock('*', d.watchId));
   return stockList(d.stockNumber);
 }

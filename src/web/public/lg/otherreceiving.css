@@ -1,0 +1,27 @@
+/* Other receiving pictures: a card per entry with up to four thumbnails, a picture opened full size in a dialog. */
+.orp-toolbar { grid-template-columns: 1fr auto auto; }
+.orp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.orp-card { padding: 14px 16px; display: grid; gap: 10px; align-content: start; cursor: pointer; }
+.orp-card:hover { border-color: #cdbf9f; }
+.orp-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.orp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.orp-who { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.orp-notes { font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.orp-pics { display: flex; flex-wrap: wrap; gap: 6px; }
+.orp-pic, .orp-more { width: 72px; height: 72px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: #f0ece4; cursor: pointer; overflow: hidden; }
+.orp-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.orp-more { font-size: 12px; color: var(--muted); font-family: var(--sans); }
+.orp-pic:focus-visible, .orp-more:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.orp-light { border: none; border-radius: var(--radius); padding: 10px; background: var(--card); max-width: min(96vw, 1100px); max-height: 94vh; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
+.orp-light::backdrop { background: rgba(29, 27, 24, .72); }
+.orp-light-bar { display: flex; gap: 14px; align-items: center; justify-content: flex-end; margin-bottom: 8px; font-size: 14px; }
+.orp-light img { display: block; max-width: 100%; max-height: calc(94vh - 70px); object-fit: contain; border-radius: 6px; margin: 0 auto; }
+@media (max-width: 640px) {
+  .orp-toolbar { grid-template-columns: 1fr 1fr; }
+  .orp-toolbar .q { grid-column: 1 / -1; }
+  .orp-toolbar select, .orp-toolbar .btn { min-height: 44px; }
+  .orp-grid { grid-template-columns: 1fr; }
+  .orp-card { padding: 12px; }
+  .orp-pic, .orp-more { width: 64px; height: 64px; }
+  .orp-light-bar .btn { min-height: 44px; }
+}

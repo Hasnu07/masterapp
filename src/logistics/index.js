@@ -9,6 +9,10 @@ import { lastLogisticsRead, stockFor, copyWorkerFile } from '../import/logistics
 import { GROUPS, KINDS, KIND, isSecret, stockList } from './kinds.js';
 import * as situation from './situation.js';
 import { linksByName, linksByClientId } from './clients.js';
+import { factsFor } from './pages/index.js';
+import { CLIENT_ID } from './shared.js';
+import { photoPrefix, kindOf, context, text, ticked, iso, dayOf, picturesOf, oursByStock, oursByNumber, NOW_IN_PLACE } from './shared.js';
+export { context } from './shared.js';
 
 /*
  * Logistics, as masterapp holds it: every record of the logistics app — and
@@ -23,44 +27,16 @@ const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const notFound = () => Object.assign(new Error('No such logistics record'), { status: 404 });
 
 /* Where the logistics app keeps its pictures: an address there is shown as the picture, through workerFile. */
-const photoPrefix = () => {
-  try {
-    return `${new URL(config.vault.url).origin}/photos/`;
-  } catch {
-    return '';
-  }
-};
+
 
 /* What the page builds its tabs and forms from. */
 export function catalog() {
   return {
     photoPrefix: photoPrefix(),
+    app_url: config.logistics.appUrl ? `${config.logistics.appUrl}/watch-vault` : '',
     groups: GROUPS,
     kinds: KINDS.map((k) => ({ key: k.key, label: k.label, group: k.group, fields: k.fields || [], place: k.place || '', theirs: Boolean(k.theirs) })),
   };
-}
-
-/* A kind the app added that this catalog does not know yet still has a page. */
-const kindOf = (key) =>
-  KIND[key] || {
-    key,
-    label: String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase()),
-    group: 'log',
-    summary: (d) => ({ title: String(d.title || d.name || d.description || d.text || d.id || key), date: d.ts || d.createdAt || d.date }),
-  };
-
-/*
- * A logistics client's id as records name it: the app's own, or — for one
- * added here, which has none — "ma-" and our row's id.
- */
-const CLIENT_ID = "COALESCE(source_id, 'ma-' || id)";
-
-/* The logistics clients by id, for every summary that names one. */
-export async function context() {
-  const { rows } = await query(`SELECT ${CLIENT_ID} AS id, data->>'name' AS name FROM logistics_items WHERE kind = 'clients'`);
-  const names = new Map(rows.map((r) => [r.id, r.name || '']));
-  const client = (id) => (id ? names.get(String(id)) || '' : '');
-  return { client, route: (d) => situation.route(d, client), stage: situation.stage };
 }
 
 function summarise(row, ctx) {
@@ -707,70 +683,13 @@ export async function forWatch(watchId) {
     transactions,
     // What it has and what is missing, from every source that says (its own panel on the watch's page).
     accessories: await accessoriesOf(w[0].id, rows, transactions),
+    // What each of the app's pages knows about it (consignment, polish, driver, pickup code, documents …), each linking to its tab.
+    facts: (await factsFor([stockNo]).catch(() => new Map())).get(stockNo) || [],
     items: rows.filter((r) => !r.deleted_at).map((r) => view(r, ctx)),
   };
 }
 
 /* ── held for a while: in the safe, checked out ──────────────────── */
-
-const text = (v) => (v === null || v === undefined || v === false ? '' : String(v).trim());
-const TICK = /^(true|✓|✔|yes|y|x|1)$/i;
-const UNTICKED = /^(false|no|n|0)$/i;
-/* A tick field that may instead say where or why: '' when unticked, 'yes' for a bare tick, else its words. */
-const ticked = (v) => (UNTICKED.test(text(v)) ? '' : TICK.test(text(v)) ? 'yes' : text(v));
-const iso = (v) => {
-  const t = situation.when(v);
-  return t ? new Date(t).toISOString() : null;
-};
-/* A day as the app wrote it (YYYY-MM-DD stays itself — no time zone moves it); milliseconds become a moment. */
-const dayOf = (v) => (/^\d{4}-\d{2}-\d{2}/.test(text(v)) ? text(v).slice(0, 10) : iso(v));
-function picturesOf(d) {
-  const prefix = photoPrefix();
-  const all = (Array.isArray(d.photos) ? d.photos : []).filter((v) => typeof v === 'string' && (/^lgfile:\d+$/.test(v) || (prefix && v.startsWith(prefix))));
-  return { picture: all[0] || null, photo_count: all.length };
-}
-
-/*
- * Our watch of a record's stock number, and the clients Chrono Key ties it to
- * — bought from, sold to — by id, never by a typed name: so a row on these
- * pages links to our stock and to our client in one go.
- */
-async function oursByStock(rows) {
-  const byNo = await oursByNumber(rows.flatMap((r) => r.stock_nos || []));
-  return (r) => (r.stock_nos || []).map((s) => byNo.get(s)).find(Boolean) || null;
-}
-async function oursByNumber(list) {
-  const nos = [...new Set(list)];
-  if (!nos.length) return new Map();
-  const person = (col) =>
-    `(SELECT jsonb_build_object('id', c.id, 'forename', c.forename, 'surname', c.surname, 'nickname', c.nickname, 'company', c.company)
-        FROM clients c WHERE c.id = w.${col} AND c.deleted_at IS NULL)`;
-  const { rows: ours } = await query(
-    `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.status,
-            (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id,
-            ${person('purchased_from_client_id')} AS bought_from, ${person('sold_to_client_id')} AS sold_to
-       FROM watches w WHERE w.stock_no = ANY($1) AND w.deleted_at IS NULL`,
-    [nos]
-  );
-  const who = (c) => (c ? { id: c.id, name: clientName(c) } : null);
-  return new Map(
-    ours.map((w) => [
-      w.stock_no,
-      {
-        id: w.id,
-        stock_no: w.stock_no,
-        title: displayTitle(w),
-        brand: w.brand || '',
-        model: w.model || '',
-        reference: w.reference || '',
-        status: w.status,
-        photo_id: w.photo_id,
-        bought_from: who(w.bought_from),
-        sold_to: who(w.sold_to),
-      },
-    ])
-  );
-}
 
 /*
  * The logistics app's In Safe page (asked 26 Oct 2026): clients' watches we
@@ -781,8 +700,6 @@ async function oursByNumber(list) {
  * logistics client of that name, and to ours only as that client is
  * (linksByName — by its watches, as on the Clients tab).
  */
-const NOW_IN_PLACE = "COALESCE(data->>'status','') IN ('', 'current', 'consignment')";
-
 export async function inSafe() {
   const [watchRows, accRows] = await Promise.all([
     query(`SELECT * FROM logistics_items WHERE kind = 'safeStock' AND deleted_at IS NULL AND ${NOW_IN_PLACE}`),

@@ -123,6 +123,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .tile-acc.ok { background: var(--good-soft); color: var(--good); }
 .tile-acc.miss { background: var(--bad-soft); color: var(--bad); }
 .tile-move { font-size: 13px; color: var(--blue); background: var(--blue-soft); border-radius: 8px; padding: 4px 8px; overflow-wrap: anywhere; }
+/* What each logistics page knows about the watch (consignment, polish, a driver, a pickup code …), in its tone's colour. */
+.tile-fact { font-size: 13px; border-radius: 8px; padding: 4px 8px; overflow-wrap: anywhere; background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
+.tile-fact.good { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.tile-fact.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.tile-fact.move { background: var(--blue-soft); color: var(--blue); border-color: transparent; }
+.tile-fact.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 /* The prices at the foot: what we paid, and — once sold — what it sold for. */
 .tile .p { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); display: grid; gap: 4px; }
 .tile .p .pr { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 600; font-size: 15px; }
@@ -358,14 +364,33 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 /* logistics: its own tabs across the top, its lists' kinds in a row under them */
 .lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
 .lg-head h1 { margin: 0; }
-/* The tabs wrap onto the next line when the window is too narrow — never a sideways scroll (asked 26 Oct 2026). */
-.lg-tabs { display: flex; flex-wrap: wrap; gap: 0 2px; border-bottom: 1px solid var(--line); margin: 10px 0 16px; }
-.lg-tabs a { white-space: nowrap; padding: 9px 13px; display: inline-flex; align-items: center; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 14.5px;
-  border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.lg-tabs a:hover { color: var(--ink); }
-.lg-tabs a.on { color: var(--ink); border-bottom-color: var(--gold); }
-.lg-tabs .lg-n { display: inline-block; min-width: 1.6em; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--blue-soft);
+/* The tabs are the logistics app's own sidebar (asked 27 Oct 2026): down the left of every logistics page on a wide
+   screen, behind a button naming the tab shown on a narrow one — never a sideways scroll (asked 26 Oct 2026). */
+.lg-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 10px 0 16px; }
+.lg-tabs a { white-space: nowrap; padding: 8px 10px; display: inline-flex; align-items: center; gap: 9px; text-decoration: none; color: var(--muted);
+  font-weight: 500; font-size: 14px; border-radius: 8px; line-height: 1.25; }
+.lg-tabs a:hover { color: var(--ink); background: var(--paper); }
+.lg-tabs a.on { color: var(--ink); background: var(--gold-soft); }
+.lg-tabs a.lg-ext { color: var(--gold); font-weight: 600; }
+.lg-ic { width: 17px; height: 17px; flex: none; opacity: .75; }
+.lg-tabs a.on .lg-ic, .lg-tabs a:hover .lg-ic { opacity: 1; }
+.lg-tabs .lg-n { display: inline-block; min-width: 1.6em; margin-left: 2px; padding: 0 6px; border-radius: 999px; background: var(--blue-soft);
   color: var(--blue); font-size: 12px; font-weight: 600; text-align: center; line-height: 1.6; }
+.lg-tabs-toggle { display: none; }
+@media (min-width: 1024px) {
+  #app.lg-page { display: grid; grid-template-columns: 222px minmax(0, 1fr); column-gap: 28px; align-items: start; }
+  #app.lg-page > * { grid-column: 2; min-width: 0; }
+  #app.lg-page > .lg-tabs { grid-column: 1; grid-row: 1 / span 600; flex-direction: column; flex-wrap: nowrap; gap: 1px; margin: 0;
+    position: sticky; top: 64px; max-height: calc(100vh - 76px); overflow-y: auto; padding: 0 8px 8px 0; border-right: 1px solid var(--line); }
+  #app.lg-page > .lg-tabs a { white-space: normal; }
+  #app.lg-page > .lg-tabs a.lg-ext { margin-bottom: 6px; border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+}
+@media (max-width: 1023.98px) {
+  .lg-tabs-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; margin-left: auto; }
+  #app.lg-page:not(.tabs-open) > .lg-tabs { display: none; }
+  .lg-tabs { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; background: var(--card); gap: 2px 4px; }
+  .lg-tabs a { min-height: 44px; }
+}
 /* In Safe: the clients' watches we hold */
 .sf-view { display: flex; gap: 4px; }
 .sf-view .pill { min-height: 36px; }
@@ -617,6 +642,7 @@ table.list th.num, table.list td.num { text-align: right; }
 .lg-tag.warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcbf; }
 .lg-tag.problem { background: var(--bad-soft); color: var(--bad); border-color: #ecc9c5; }
 .lg-tag.moving { background: var(--blue-soft); color: var(--blue); border-color: #cddcf0; }
+.lg-tag.good { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
 .lg-tl { list-style: none; margin: 0; padding: 0; }
 .lg-tl li { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .lg-tl li:last-child { border-bottom: 0; }
@@ -699,6 +725,27 @@ table.list.lg a { text-decoration: none; color: var(--ink); }
 .fx-pop-out { margin-top: 8px; font-family: var(--serif); font-size: 19px; color: #2D6BCF; font-variant-numeric: tabular-nums; }
 .fx-pop-foot { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
 </style>
+<link rel="stylesheet" href="/lg/ownerdecisions.css">
+<link rel="stylesheet" href="/lg/hkstock.css">
+<link rel="stylesheet" href="/lg/vaultactivity.css">
+<link rel="stylesheet" href="/lg/otherreceiving.css">
+<link rel="stylesheet" href="/lg/history.css">
+<link rel="stylesheet" href="/lg/costs.css">
+<link rel="stylesheet" href="/lg/routeoptimizer.css">
+<link rel="stylesheet" href="/lg/consignment.css">
+<link rel="stylesheet" href="/lg/londonstock.css">
+<link rel="stylesheet" href="/lg/dubaistock.css">
+<link rel="stylesheet" href="/lg/refinement.css">
+<link rel="stylesheet" href="/lg/missingacc.css">
+<link rel="stylesheet" href="/lg/soldstocks.css">
+<link rel="stylesheet" href="/lg/driverdeliveries.css">
+<link rel="stylesheet" href="/lg/pickupcodes.css">
+<link rel="stylesheet" href="/lg/addresses.css">
+<link rel="stylesheet" href="/lg/goldsouk.css">
+<link rel="stylesheet" href="/lg/companies.css">
+<link rel="stylesheet" href="/lg/shipmentdocs.css">
+<link rel="stylesheet" href="/lg/swaps.css">
+<link rel="stylesheet" href="/lg/log.css">
 </head>
 <body>
 <header class="bar hide" id="bar">
@@ -728,5 +775,27 @@ table.list.lg a { text-decoration: none; color: var(--ink); }
 <script src="/app.js"></script>
 <script src="/logistics.js"></script>
 <script src="/fxchip.js"></script>
+<script src="/lg/icons.js"></script>
+<script src="/lg/ownerdecisions.js"></script>
+<script src="/lg/hkstock.js"></script>
+<script src="/lg/vaultactivity.js"></script>
+<script src="/lg/otherreceiving.js"></script>
+<script src="/lg/history.js"></script>
+<script src="/lg/costs.js"></script>
+<script src="/lg/routeoptimizer.js"></script>
+<script src="/lg/consignment.js"></script>
+<script src="/lg/londonstock.js"></script>
+<script src="/lg/dubaistock.js"></script>
+<script src="/lg/refinement.js"></script>
+<script src="/lg/missingacc.js"></script>
+<script src="/lg/soldstocks.js"></script>
+<script src="/lg/driverdeliveries.js"></script>
+<script src="/lg/pickupcodes.js"></script>
+<script src="/lg/addresses.js"></script>
+<script src="/lg/goldsouk.js"></script>
+<script src="/lg/companies.js"></script>
+<script src="/lg/shipmentdocs.js"></script>
+<script src="/lg/swaps.js"></script>
+<script src="/lg/log.js"></script>
 </body>
 </html>

@@ -1,0 +1,19 @@
+/* Companies: one card per company, its pasted details kept as typed, the documents issued through it under them. */
+.cp-toolbar { grid-template-columns: 1fr auto; }
+.cp-list { display: grid; gap: 12px; }
+.cp-card { padding: 14px 16px; }
+.cp-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+/* The name as it was typed — not the console's small-caps panel heading. */
+.cp-head h3, .cp-places h3 { margin: 0; font-family: var(--serif); font-size: 20px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink); overflow-wrap: anywhere; }
+.cp-places h3 { margin-bottom: 6px; }
+.cp-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.cp-details { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--sans); font-size: 14px; line-height: 1.45; margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--paper); border: 1px solid var(--line); color: var(--ink); }
+.cp-doclist { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.cp-doclist li { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.cp-places { margin-top: 14px; }
+.cp-places .pill { text-decoration: none; color: var(--ink); display: inline-flex; align-items: center; min-height: 36px; }
+@media (max-width: 640px) {
+  .cp-card { padding: 12px; }
+  .cp-acts .btn { min-height: 44px; }
+  .cp-places .pill { min-height: 44px; }
+}

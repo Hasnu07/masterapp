@@ -1,0 +1,13 @@
+/* Swaps — the logistics app's page in the console's look (lg/swaps.js). */
+.swp-list { display: grid; gap: 8px; }
+.swp-row { border-left: 4px solid var(--warn); display: grid; gap: 10px; }
+.swp-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.swp-sides { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px 16px; align-items: start; }
+.swp-side { display: grid; gap: 4px; }
+.swp-what { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+.swp-arrow { font-size: 22px; color: var(--muted); align-self: center; }
+.swp-notes { margin: 0; white-space: pre-line; }
+@media (max-width: 640px) {
+  .swp-sides { grid-template-columns: 1fr; }
+  .swp-arrow { text-align: center; }
+}

@@ -1,0 +1,43 @@
+/* Route Optimizer — the console's look (index.html's palette), scoped under ro- */
+.ro-plan { margin-bottom: 14px; }
+.ro-waits { color: var(--warn); }
+.ro-route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: end; margin-bottom: 14px; }
+.ro-route label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+.ro-route label.hide { display: none; }
+.ro-route select, .ro-route input { width: 100%; min-width: 0; }
+.ro-arrow { font-size: 22px; color: var(--muted); padding-bottom: 6px; }
+.ro-h { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; margin: 14px 0 8px; }
+.ro-avail-head { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.ro-avail-acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ro-avail-acts .q { min-width: 220px; }
+.ro-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--paper); }
+.ro-pick { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 2px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; user-select: none; min-height: 44px; }
+.ro-pick:hover { border-color: #cdbf9f; }
+.ro-pick:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.ro-pick.on { border-color: var(--gold); background: var(--gold-soft); }
+.ro-box { flex: none; width: 20px; height: 20px; margin-top: 1px; border: 2px solid var(--line); border-radius: 5px; background: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff; }
+.ro-pick.on .ro-box { background: var(--gold); border-color: var(--gold); }
+.ro-pick-body { min-width: 0; display: grid; gap: 2px; font-size: 13px; }
+.ro-pick-t { font-weight: 600; overflow-wrap: anywhere; }
+.ro-sel { display: grid; gap: 6px; }
+.ro-sel-row { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.ro-sel-main { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
+.ro-fig { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.ro-fig small { font-weight: 400; color: var(--muted); }
+.ro-fig.good, .ro-table .good, .ro-sum .good { color: var(--good); }
+.ro-fig.warn { color: var(--warn); }
+.ro-fig.bad, .ro-sum .bad { color: var(--bad); }
+.ro-sel-row .btn { min-width: 44px; min-height: 44px; }
+.ro-sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 14px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.ro-sum > div { display: grid; gap: 2px; }
+.ro-sum b { font: 600 22px/1.1 var(--serif); color: var(--ink); }
+.ro-sum small { font-size: 12.5px; color: var(--muted); }
+.ro-table .ro-r { text-align: right; white-space: nowrap; }
+.ro-table .ro-c { text-align: center; }
+@media (max-width: 767.98px) {
+  .ro-route { grid-template-columns: 1fr; }
+  .ro-arrow { display: none; }
+  .ro-route select, .ro-route input, .ro-avail-acts .pill, .ro-avail-acts .q { min-height: 44px; }
+  .ro-avail-acts .q { min-width: 0; width: 100%; }
+  .ro-grid { grid-template-columns: 1fr; max-height: 360px; }
+}

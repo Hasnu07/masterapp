@@ -1,0 +1,23 @@
+/* Logistics Addresses: the logistics app's page, in the console's look */
+.la-toolbar { grid-template-columns: 1fr; }
+.la-panel { padding: 0; overflow: hidden; }
+.la-table tbody tr { cursor: pointer; }
+.la-table tbody tr:hover { background: var(--paper); }
+.la-addr { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 18ch; }
+.la-notes { color: var(--muted); max-width: 24ch; overflow-wrap: anywhere; }
+.la-code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 1px; white-space: nowrap; }
+.la-map { white-space: nowrap; }
+.la-wait { margin-top: 4px; }
+/* On a phone each address is a card: the headings become labels. */
+@media (max-width: 767.98px) {
+  .la-table, .la-table tbody, .la-table tr, .la-table td { display: block; }
+  .la-table thead { display: none; }
+  .la-table tr { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .la-table tr:last-child { border-bottom: 0; }
+  .la-table td { border: 0; padding: 4px 0; }
+  .la-table td::before { content: attr(data-k); display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
+  .la-table td[data-k="Name"]::before { display: none; }
+  .la-table td[data-k="Name"] b { font-size: 16px; }
+  .la-notes { max-width: none; }
+  .la-map, .la-code { display: inline-flex; align-items: center; min-height: 44px; }
+}

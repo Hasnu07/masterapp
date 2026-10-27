@@ -12,6 +12,8 @@
 'use strict';
 
 const lgState = { q: '', kind: '', deleted: false };
+/* The logistics app's pages, one script each under lg/ (loaded after this file): each registers its tab here, by the tab's key. */
+const LG_PAGES = Object.create(null);
 /* Each logistics page drawn bumps this: an answer for a page no longer shown is dropped, not drawn over the new one. */
 let lgPage = 0;
 
@@ -143,14 +145,36 @@ const stockTags = (nos) => (nos || []).map((s) => `<span class="lg-stock">#${esc
  */
 function lgHeader(active, note = '') {
   setTimeout(() => lgCountBadges(active));
-  return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}</div>
-    <div class="lg-tabs" role="navigation" aria-label="Logistics">${lgGroups()
+  // The tabs sit down the left on a wide screen (#app.lg-page, index.html); route() takes the class off again.
+  $('#app').classList.add('lg-page');
+  const cur = lgGroups().find((g) => g.key === active);
+  const vault = state.meta?.logistics?.app_url || '';
+  return `<div class="lg-head"><h1>Logistics</h1>${note ? `<span class="count" style="margin:0">${note}</span>` : ''}
+      <button type="button" class="btn small lg-tabs-toggle" id="lg-tabs-toggle" aria-expanded="false" aria-controls="lg-tabs">${lgIcon(cur?.app)}${esc(cur?.label || 'Tabs')} ▾</button></div>
+    <nav class="lg-tabs" id="lg-tabs" aria-label="Logistics">${
+      vault ? `<a href="${esc(vault)}" target="_blank" rel="noopener" class="lg-ext">${lgIcon('vault')}Watch Vault ↗</a>` : ''
+    }${lgGroups()
       .map(
         (g) =>
-          `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" data-g="${esc(g.key)}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${lgTabLabel(g)}</a>`
+          `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" data-g="${esc(g.key)}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${lgIcon(g.app)}${lgTabLabel(g)}</a>`
       )
-      .join('')}</div>`;
+      .join('')}</nav>`;
 }
+/* The app's own icon for a tab (lg/icons.js, by the app's tab name). */
+const lgIcon = (app) =>
+  typeof LG_ICONS !== 'undefined' && LG_ICONS[app]
+    ? `<svg class="lg-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${LG_ICONS[app]}</svg>`
+    : '';
+/* On a narrow screen the tabs open from the button that names the tab shown; a tab chosen closes them. */
+document.getElementById('app').addEventListener('click', (e) => {
+  const t = e.target.closest('#lg-tabs-toggle');
+  const app = document.getElementById('app');
+  if (t) {
+    const open = app.classList.toggle('tabs-open');
+    t.setAttribute('aria-expanded', String(open));
+    if (open) document.querySelector('#lg-tabs a.on')?.scrollIntoView({ block: 'nearest' });
+  } else if (e.target.closest('#lg-tabs a')) app.classList.remove('tabs-open');
+});
 
 /*
  * The In Safe, Checked out and Hand carry tabs carry how many each holds, on
@@ -160,8 +184,9 @@ const LG_COUNTED = {
   safe: { url: '/api/logistics/in-safe', n: (r) => r.watches.length, what: (n) => `${n} client watch${n === 1 ? '' : 'es'} in the safe` },
   checkout: { url: '/api/logistics/checked-out', n: (r) => r.watches.length, what: (n) => `${n} watch${n === 1 ? '' : 'es'} checked out` },
   handcarry: { url: '/api/logistics/hand-carry', n: (r) => r.plans.length, what: (n) => `${n} open hand-carry plan${n === 1 ? '' : 's'}` },
+  ownerdecisions: { url: '/api/logistics/page/ownerdecisions', n: (r) => (r.rows || []).filter((i) => i.status === 'DECISION_NEEDED').length, what: (n) => `${n} watch${n === 1 ? '' : 'es'} waiting for the owner's decision` },
 };
-const lgCount = { safe: null, checkout: null, handcarry: null, at: 0 };
+const lgCount = { safe: null, checkout: null, handcarry: null, ownerdecisions: null, at: 0 };
 const lgTabLabel = (g) => {
   const n = lgCount[g.key];
   return `${esc(g.label)}${LG_COUNTED[g.key] && n ? ` <b class="lg-n" title="${esc(LG_COUNTED[g.key].what(n))}">${n}</b>` : ''}`;
@@ -170,7 +195,7 @@ function lgSetCount(key, n) {
   lgCount[key] = n;
   const a = $(`.lg-tabs a[data-g="${key}"]`);
   const g = lgGroups().find((x) => x.key === key);
-  if (a && g) a.innerHTML = lgTabLabel(g);
+  if (a && g) a.innerHTML = lgIcon(g.app) + lgTabLabel(g);
 }
 /* The tab open now counts its own list as it reads it: only the others are asked for. */
 function lgCountBadges(active) {
@@ -189,27 +214,25 @@ function lgCountBadges(active) {
 let lgSeq = 0;
 let lgShown = [];
 async function showLogistics(group) {
-  if (!group || group === 'overview') return showLogisticsOverview();
-  if (group === 'safe') return showLogisticsSafe();
-  if (group === 'checkout') return showLogisticsCheckout();
-  if (group === 'handcarry') return showLogisticsHandCarry();
-  if (group === 'transactions') return showLogisticsTransactions();
-  // The Accessories tab is the app's Accessories Management page; its lists (to collect, to give, settlements, swaps) are one link away.
-  if (group === 'accessories') return showLogisticsAccessories();
-  // The Incoming tab is the app's Incomings page; its lists (incomings, owner decisions, picked from Chrono Key) are one link away.
-  if (group === 'incoming') return showLogisticsIncoming();
-  // The Shipments tab is the app's Live Shipments and Need to Give and Collect; its lists are one link away.
-  if (group === 'shipments') return showLogisticsShipments();
-  // The Trips tab is the app's Movement tab (person travel cost); its lists are one link away.
-  if (group === 'trips') return showLogisticsMovement();
-  if (group === 'movers') return showLogisticsMovers();
-  if (group === 'trips-all') group = 'trips';
-  if (group === 'shipments-all') group = 'shipments';
-  if (group === 'incoming-all') group = 'incoming';
-  if (group === 'accessories-all') group = 'accessories';
-  // The Clients tab shows each client's situation; its records, as lists, are one link away.
-  if (group === 'contacts') return showLogisticsClients();
-  if (group === 'contacts-all') group = 'contacts';
+  // "<tab>-all" is a tab's records as plain lists, one link from the tab's own page.
+  const lists = /-all$/.test(group || '');
+  if (lists) group = group.replace(/-all$/, '');
+  else {
+    if (!group || group === 'overview') return showLogisticsOverview();
+    if (group === 'safe') return showLogisticsSafe();
+    if (group === 'checkout') return showLogisticsCheckout();
+    if (group === 'handcarry') return showLogisticsHandCarry();
+    if (group === 'transactions') return showLogisticsTransactions();
+    if (group === 'accessories') return showLogisticsAccessories();
+    if (group === 'incoming') return showLogisticsIncoming();
+    if (group === 'shipments') return showLogisticsShipments();
+    if (group === 'trips') return showLogisticsMovement();
+    if (group === 'movers') return showLogisticsMovers();
+    // The Clients tab shows each client's situation; its records, as lists, are one link away.
+    if (group === 'contacts') return showLogisticsClients();
+    // The pages added 27 Oct 2026, one script each (lg/*.js).
+    if (LG_PAGES[group]) return LG_PAGES[group]();
+  }
   lgPage += 1;
   if (!lgGroups().some((g) => g.key === group)) {
     location.hash = '#/logistics';
@@ -4070,6 +4093,8 @@ function renderClientLogistics(c, box, r) {
 /* ── on a watch's page ──────────────────────────────────────────── */
 
 const TONE_CLASS = { here: 'here', moving: 'moving', away: 'away', sold: 'sold' };
+/* A page's fact about the watch (pages/*.js forStock): its tone as a tag. */
+const FACT_TONE = { good: 'good', warn: 'warn', move: 'moving', bad: 'problem' };
 
 /*
  * The watch's accessories (asked 26 Oct 2026: "what is missing against that
@@ -4157,7 +4182,8 @@ function renderWatchLogistics() {
   strip.className = `lg-now ${TONE_CLASS[n.tone] || ''}`;
   strip.innerHTML = n.headline || n.overlays.length
     ? `<div><span class="count" style="margin:0">Right now</span> ${n.itemId ? `<a href="#/lg/${n.itemId}" class="h">${esc(n.headline || 'In the logistics app')}</a>` : `<span class="h">${esc(n.headline || '')}</span>`}${n.detail ? ` — ${esc(n.detail)}` : ''}${asOf}</div>
-       ${n.overlays.length ? `<div class="lg-ov">${n.overlays.map((o) => (o.itemId ? `<a class="lg-tag ${esc(o.tone)}" href="#/lg/${o.itemId}">${esc(o.text)}</a>` : `<span class="lg-tag ${esc(o.tone)}">${esc(o.text)}</span>`)).join('')}</div>` : ''}`
+       ${n.overlays.length ? `<div class="lg-ov">${n.overlays.map((o) => (o.itemId ? `<a class="lg-tag ${esc(o.tone)}" href="#/lg/${o.itemId}">${esc(o.text)}</a>` : `<span class="lg-tag ${esc(o.tone)}">${esc(o.text)}</span>`)).join('')}</div>` : ''}
+       ${L.facts?.length ? `<div class="lg-ov">${L.facts.map((f) => `<a class="lg-tag ${esc(FACT_TONE[f.tone] || '')}" href="${esc(f.link)}" title="Open the ${esc(lgGroupLabel(f.page))} tab">${esc(f.text)}</a>`).join('')}</div>` : ''}`
     : `<span class="count" style="margin:0">The logistics app holds nothing for this watch.</span>${asOf}`;
 
   if (!L.items.length && !L.timeline.length) {
