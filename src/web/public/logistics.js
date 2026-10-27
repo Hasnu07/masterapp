@@ -76,10 +76,39 @@ function lgActBtn(key, id = null, { label = '', cls = '', extra = {} } = {}) {
     off ? ' title="Needs the AI key (ANTHROPIC_API_KEY)"' : ''
   }><span class="act-ic" aria-hidden="true">${ic}</span>${esc(label || a.label)}</button>`;
 }
-/* Every action that applies to a kind, as buttons for one record. */
-const lgActBtnsFor = (kind, id) =>
+/* An action that makes no sense for the record as it is now is not offered (a 'Move back' on a row that never moved). */
+const LG_HIDE = {
+  'stock-move-back': (d) => d.status !== 'moved',
+  'stock-move': (d) => d.status === 'moved',
+  'stock-checkout': (d) => d.status === 'moved',
+  'cons-back': (d) => d.status !== 'consignment',
+  'cons-edit': (d) => d.status !== 'consignment',
+  'cons-consign': (d) => d.status === 'consignment' || d.status === 'moved',
+  'cons-sold': (d) => d.status === 'moved',
+  'cons-delete': (d) => d.status !== 'consignment',
+  'stock-checkout-return': (d) => /^(returned|done)$/.test(d.status || ''),
+  'ship-shipped': (d) => d.status === 'in_transit' || d.status === 'delivered',
+  'ship-pending': (d) => d.status === 'pending' || d.status === 'delivered',
+  'ship-deliver': (d) => d.status === 'delivered' || d.status === 'cancelled',
+  'ship-cancel': (d) => d.status === 'delivered' || d.status === 'cancelled',
+  'od-start': (d) => d.status !== 'APPROVED',
+  'od-done': (d) => d.status !== 'IN_EXECUTION',
+  'plan-complete': (d) => d.status === 'completed',
+  'plan-restore': (d) => d.status !== 'completed',
+  'trip-complete': (d) => d.status === 'completed',
+  'dd-deliver': (d) => d.status !== 'out',
+  'dd-return': (d) => d.status !== 'out',
+  'gs-done': (d) => d.status === 'done',
+  'pc-done': (d) => d.status === 'completed',
+  'ref-done': (d) => d.status === 'done',
+  'tx-settle': (d) => !(d.items || []).some((i) => i.status !== 'done'),
+  'va-approve': (d) => d.status !== 'pending',
+  'va-dismiss': (d) => d.status !== 'pending',
+};
+/* Every action that applies to a kind — and to the record as it is — as buttons for one record. */
+const lgActBtnsFor = (kind, id, data = null) =>
   lgActions()
-    .filter((a) => a.kinds && a.kinds.includes(kind))
+    .filter((a) => a.kinds && a.kinds.includes(kind) && !(data && LG_HIDE[a.key] && LG_HIDE[a.key](data)))
     .map((a) => lgActBtn(a.key, id))
     .join(' ');
 /* The page-level actions of a tab (Add Row, Import CSV, Template …), as a toolbar. */
@@ -3690,7 +3719,7 @@ async function showLogisticsItem(id, { editing = false, root = null } = {}) {
       </div>
       <div class="row">
         ${editor && !editing ? '<button class="btn act act-blue" id="lg-edit"><span class="act-ic" aria-hidden="true">✏️</span>Edit</button>' : ''}
-        ${editor && !editing ? lgActBtnsFor(it.kind, it.id) : ''}
+        ${editor && !editing ? lgActBtnsFor(it.kind, it.id, it.data) : ''}
         ${can('editor') ? (it.deleted_at ? '<button class="btn act act-good" id="lg-restore"><span class="act-ic" aria-hidden="true">♻️</span>Restore</button>' : lgActions().some((a) => a.kinds?.includes(it.kind) && a.danger && /delete/i.test(a.label)) ? '' : '<button class="btn act act-bad" id="lg-del"><span class="act-ic" aria-hidden="true">🗑️</span>Delete</button>') : ''}
       </div>
     </div>
