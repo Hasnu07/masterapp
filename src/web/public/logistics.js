@@ -27,17 +27,54 @@ const LG_ACTION_BARS = Object.create(null);
 const LG_ROW_ACTIONS = Object.create(null);
 const lgActions = () => state.meta?.logistics?.actions || [];
 const lgAction = (key) => lgActions().find((a) => a.key === key);
+/*
+ * What a button looks like, from what the action does (asked 27 Oct 2026:
+ * "colour coded with emojis … easy to understand"): the same emoji and the
+ * same colour for the same kind of thing on every tab — green to add or
+ * finish, amber to hand over or hold, purple to move, blue to edit, red to
+ * delete or undo, gold to check out, grey for the rest. First match wins.
+ */
+const LG_LOOKS = [
+  [/delete|remove|clear/, '🗑️', 'bad'],
+  [/cancel|undo|dismiss|unassign|drop/, '↩️', 'bad'],
+  [/import/, '📥', 'neutral'],
+  [/stock-take|route-|parse|flights|optimise/, '🤖', 'move'],
+  [/brief|owner/, '🎙️', 'warn'],
+  [/sold|handover/, '💵', 'good'],
+  [/checkout-return|move-back|cons-back|restore|dd-return/, '↩️', 'warn'],
+  [/checkout/, '📤', 'gold'],
+  [/consign|cons-in|cons-out/, '🤝', 'warn'],
+  [/safe/, '🔒', 'warn'],
+  [/deliver|arrive|arranged|-done$|complete|approve|settle$|receive|collect-done|give-done/, '✅', 'good'],
+  [/polish|^ref-/, '✨', 'neutral'],
+  [/cost|expense|allowance|payment|payable/, '💰', 'neutral'],
+  [/vault/, '🌐', 'neutral'],
+  [/notes/, '📝', 'neutral'],
+  [/ship|send|collect$|plan-send|inc-fob-send/, '🚚', 'move'],
+  [/move|assign/, '↗️', 'move'],
+  [/edit|rename|date|status|person|holder|decide|attach|item-/, '✏️', 'blue'],
+  [/start/, '▶️', 'good'],
+  [/add|new|pick|stop|leg/, '➕', 'good'],
+  [/give/, '📤', 'warn'],
+];
+function lgLook(a) {
+  const key = `${a.key} ${a.label}`.toLowerCase();
+  const hit = LG_LOOKS.find(([re]) => re.test(key));
+  if (a.danger && !/^(↩️|🗑️)$/.test(hit?.[1] || '')) return { ic: '🗑️', tone: 'bad' };
+  return hit ? { ic: hit[1], tone: hit[2] } : { ic: '•', tone: 'neutral' };
+}
 /* A button for an action — on a record (id) or on a page. Nothing for a viewer. */
 function lgActBtn(key, id = null, { label = '', cls = '', extra = {} } = {}) {
   const a = lgAction(key);
   if (!a || !can('editor')) return '';
   const off = a.ai && !a.ai_ready;
+  const { ic, tone } = lgLook(a);
   const q = Object.entries(extra)
     .map(([k, v]) => ` data-q-${esc(k)}="${esc(v)}"`)
     .join('');
-  return `<button type="button" class="btn ${a.danger ? 'danger' : cls}${off ? ' off' : ''}" data-act="${esc(key)}"${id ? ` data-id="${esc(id)}"` : ''}${q}${
+  return `<button type="button" class="btn act act-${tone} ${cls}${off ? ' off' : ''}" data-act="${esc(key)}"${id ? ` data-id="${esc(id)}"` : ''}${q}${
     off ? ' title="Needs the AI key (ANTHROPIC_API_KEY)"' : ''
-  }>${esc(label || a.label)}</button>`;
+  }><span class="act-ic" aria-hidden="true">${ic}</span>${esc(label || a.label)}</button>`;
 }
 /* Every action that applies to a kind, as buttons for one record. */
 const lgActBtnsFor = (kind, id) =>
@@ -75,8 +112,14 @@ async function lgRunAction(key, id = null, q = {}) {
       const r = await api(url, { method: 'POST', body: input });
       dlg?.close();
       flash(r.message || `${a.label}: done`);
-      if (r.open) location.hash = r.open;
-      else route();
+      const inWindow = lgModal.root?.isConnected ? lgModal.id : null;
+      const rec = r.open && r.open.match(/^#\/lg\/(\d+)$/);
+      if (r.open && !rec) location.hash = r.open;
+      else {
+        route();
+        if (rec) lgOpenRecord(Number(rec[1]));
+        else if (inWindow) lgOpenRecord(inWindow);
+      }
     } catch (err) {
       const e = dlg?.querySelector('.err');
       if (e) e.textContent = err.message;
@@ -126,7 +169,7 @@ function lgDialog(d, submit) {
   dlg.showModal();
   form.querySelector('input:not([type=hidden]), select, textarea')?.focus();
 }
-document.getElementById('app').addEventListener('click', (e) => {
+document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
   if (!b || b.classList.contains('off')) return;
   e.preventDefault();
@@ -134,6 +177,53 @@ document.getElementById('app').addEventListener('click', (e) => {
   for (const [k, v] of Object.entries(b.dataset)) if (k.startsWith('q') && k.length > 1 && k[1] === k[1].toUpperCase()) q[k[1].toLowerCase() + k.slice(2)] = v;
   lgRunAction(b.dataset.act, b.dataset.id ? Number(b.dataset.id) : null, q);
 });
+
+/*
+ * A record opens in a window over the tab (asked 27 Oct 2026: "a window pops
+ * up instead of switching tabs"): every link or row that would have gone to
+ * #/lg/<id> or #/lg-new/<kind> opens it here instead, the tab stays where it
+ * was, and closing the window draws the tab again if anything changed. The
+ * address #/lg/<id> still opens the record as a page (a link from elsewhere,
+ * the browser's back button).
+ */
+const lgModal = { id: null, root: null, dirty: false };
+function lgOpenModal(render, { id = null } = {}) {
+  document.getElementById('lg-rec')?.remove();
+  const dlg = document.createElement('dialog');
+  dlg.id = 'lg-rec';
+  dlg.className = 'lg-dlg lg-rec';
+  dlg.innerHTML = '<button type="button" class="lg-rec-x" aria-label="Close">×</button><div class="lg-rec-body"></div>';
+  document.body.appendChild(dlg);
+  const body = dlg.querySelector('.lg-rec-body');
+  Object.assign(lgModal, { id, root: body, dirty: false });
+  dlg.querySelector('.lg-rec-x').addEventListener('click', () => dlg.close());
+  // A click on the backdrop closes it.
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg) dlg.close();
+  });
+  dlg.addEventListener('close', () => {
+    const changed = lgModal.dirty;
+    if (lgModal.root === body) Object.assign(lgModal, { id: null, root: null, dirty: false });
+    dlg.remove();
+    if (changed) route();
+  });
+  dlg.showModal();
+  render(body, () => dlg.close());
+}
+const lgOpenRecord = (id, opts = {}) => lgOpenModal((root) => showLogisticsItem(id, { ...opts, root }), { id: Number(id) });
+const lgOpenNew = (kind) => lgOpenModal((root) => showNewLogisticsItem(kind, { root }));
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href^="#/lg/"], a[href^="#/lg-new/"]');
+  if (!a || e.ctrlKey || e.metaKey || e.button) return;
+  const m = a.getAttribute('href').match(/^#\/lg\/(\d+)$/);
+  const n = a.getAttribute('href').match(/^#\/lg-new\/([A-Za-z][A-Za-z0-9_]*)$/);
+  if (!m && !n) return;
+  e.preventDefault();
+  if (m) lgOpenRecord(Number(m[1]));
+  else lgOpenNew(n[1]);
+});
+// Leaving the page under it (a tab, a watch) closes the window.
+window.addEventListener('hashchange', () => document.getElementById('lg-rec')?.close());
 /* Each logistics page drawn bumps this: an answer for a page no longer shown is dropped, not drawn over the new one. */
 let lgPage = 0;
 
@@ -386,10 +476,10 @@ async function showLogistics(group) {
     loadLogistics();
   });
   $('#lg-more').addEventListener('click', () => loadLogistics(true));
-  $('#lg-add')?.addEventListener('click', () => (location.hash = `#/lg-new/${lgAddKind()}`));
+  $('#lg-add')?.addEventListener('click', () => lgOpenNew(lgAddKind()));
   $('#lg-rows').addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-id]');
-    if (tr && !e.target.closest('a')) location.hash = `#/lg/${tr.dataset.id}`;
+    if (tr && !e.target.closest('a')) lgOpenRecord(Number(tr.dataset.id));
   });
   loadLogistics();
 }
@@ -571,7 +661,7 @@ function lgOpenOnClick(...boxes) {
       if (e.target !== at || (e.key !== 'Enter' && e.key !== ' ')) return;
       e.preventDefault();
     }
-    location.hash = `#/lg/${at.dataset.id}`;
+    lgOpenRecord(Number(at.dataset.id));
   };
   for (const box of boxes) {
     box.addEventListener('click', open);
@@ -3530,15 +3620,20 @@ async function runOverviewSearch() {
 
 /* ── one record─────────────────────────────────────────────────── */
 
-async function showLogisticsItem(id, { editing = false } = {}) {
-  const seq = ++lgPage;
-  const still = () => seq === lgPage && location.hash === `#/lg/${id}`;
+async function showLogisticsItem(id, { editing = false, root = null } = {}) {
+  // In the window over a tab (root), or — from the address bar — as a page.
+  const target = root || (lgModal.id === Number(id) && lgModal.root?.isConnected ? lgModal.root : null) || $('#app');
+  const inWindow = target !== $('#app');
+  const seq = inWindow ? lgPage : ++lgPage;
+  const still = () => (inWindow ? target.isConnected : seq === lgPage && location.hash === `#/lg/${id}`);
+  const q = (sel) => target.querySelector(sel);
+  if (inWindow) target.innerHTML = '<p class="count" style="margin:12px">Opening…</p>';
   let it;
   let events = [];
   try {
     [it, { events }] = await Promise.all([api(`/api/logistics/items/${id}`), api(`/api/logistics/items/${id}/events`)]);
   } catch (err) {
-    if (still()) $('#app').innerHTML = `<p class="err">${esc(err.message)}</p><a href="#/logistics">Back to logistics</a>`;
+    if (still()) target.innerHTML = `<p class="err">${esc(err.message)}</p>${inWindow ? '' : '<a href="#/logistics">Back to logistics</a>'}`;
     return;
   }
   if (!still()) return;
@@ -3582,11 +3677,11 @@ async function showLogisticsItem(id, { editing = false } = {}) {
         scalars.map(([key, v]) => `<dt>${esc(humanKey(key))}</dt><dd>${lgValue(v, key)}${lockMark(key)}</dd>`).join('')
       }</dl></div>`;
 
-  $('#app').innerHTML = `
-    ${lgHeader(k.group)}
+  target.innerHTML = `
+    ${inWindow ? '' : lgHeader(k.group)}
     <div class="watch-head">
       <div>
-        <a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))} · ${esc(k.label)}</a>
+        ${inWindow ? `<span class="count" style="margin:0">${esc(lgGroupLabel(k.group))} · ${esc(k.label)}</span>` : `<a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))} · ${esc(k.label)}</a>`}
         <h2 class="lg-title">${esc(it.summary.title)}</h2>
         <div class="row">${lgStockLinks(it.stock_nos.join(', '), it.watches)} ${it.deleted_at ? '<span class="chip deleted">deleted</span>' : lgChip(it.summary.status)}
           <span class="count" style="margin:0">${esc(k.label)} · ${it.origin === 'manual' ? 'added in masterapp' : 'from the logistics app'}</span></div>
@@ -3594,9 +3689,9 @@ async function showLogisticsItem(id, { editing = false } = {}) {
         ${it.kind === 'clients' && !it.deleted_at ? `<p style="margin:6px 0 0"><a class="ov-more" href="#/lg-client/${it.id}">See their logistics situation</a></p>` : ''}
       </div>
       <div class="row">
-        ${editor && !editing ? '<button class="btn primary" id="lg-edit">Edit</button>' : ''}
+        ${editor && !editing ? '<button class="btn act act-blue" id="lg-edit"><span class="act-ic" aria-hidden="true">✏️</span>Edit</button>' : ''}
         ${editor && !editing ? lgActBtnsFor(it.kind, it.id) : ''}
-        ${can('editor') ? (it.deleted_at ? '<button class="btn" id="lg-restore">Restore</button>' : lgActions().some((a) => a.kinds?.includes(it.kind) && a.danger && /delete/i.test(a.label)) ? '' : '<button class="btn danger" id="lg-del">Delete</button>') : ''}
+        ${can('editor') ? (it.deleted_at ? '<button class="btn act act-good" id="lg-restore"><span class="act-ic" aria-hidden="true">♻️</span>Restore</button>' : lgActions().some((a) => a.kinds?.includes(it.kind) && a.danger && /delete/i.test(a.label)) ? '' : '<button class="btn act act-bad" id="lg-del"><span class="act-ic" aria-hidden="true">🗑️</span>Delete</button>') : ''}
       </div>
     </div>
     ${
@@ -3637,26 +3732,29 @@ async function showLogisticsItem(id, { editing = false } = {}) {
       </div>
     </div>`;
 
-  $('#lg-edit')?.addEventListener('click', () => showLogisticsItem(id, { editing: true }));
-  $('#lg-cancel')?.addEventListener('click', () => showLogisticsItem(id));
-  $('#lg-del')?.addEventListener('click', async () => {
-    if (!confirm(`Delete “${it.summary.title}”? It can be restored later.`)) return;
-    await api(`/api/logistics/items/${id}`, { method: 'DELETE' }).then(() => showLogisticsItem(id), (err) => flash(err.message, true));
+  const again = () => {
+    if (inWindow) lgModal.dirty = true;
+    showLogisticsItem(id, { root: inWindow ? target : null });
+  };
+  q('#lg-edit')?.addEventListener('click', () => showLogisticsItem(id, { editing: true, root: inWindow ? target : null }));
+  q('#lg-cancel')?.addEventListener('click', () => showLogisticsItem(id, { root: inWindow ? target : null }));
+  q('#lg-del')?.addEventListener('click', () => {
+    lgDialog({ label: 'Delete', form: [], confirm: `Delete “${it.summary.title}”? It can be restored later.` }, async (input, d) => {
+      await api(`/api/logistics/items/${id}`, { method: 'DELETE' }).then(again, (err) => flash(err.message, true));
+      d?.close();
+    });
   });
-  $('#lg-restore')?.addEventListener('click', async () => {
-    await api(`/api/logistics/items/${id}/restore`, { method: 'POST' }).then(() => showLogisticsItem(id), (err) => flash(err.message, true));
+  q('#lg-restore')?.addEventListener('click', async () => {
+    await api(`/api/logistics/items/${id}/restore`, { method: 'POST' }).then(again, (err) => flash(err.message, true));
   });
-  $$('[data-unlock]').forEach((a) =>
+  [...target.querySelectorAll('[data-unlock]')].forEach((a) =>
     a.addEventListener('click', async (e) => {
       e.preventDefault();
       if (!confirm('Hand this field back to the logistics app? Its value there comes back now.')) return;
-      await api(`/api/logistics/items/${id}/unlock`, { method: 'POST', body: { field: a.dataset.unlock } }).then(
-        () => showLogisticsItem(id),
-        (err) => flash(err.message, true)
-      );
+      await api(`/api/logistics/items/${id}/unlock`, { method: 'POST', body: { field: a.dataset.unlock } }).then(again, (err) => flash(err.message, true));
     })
   );
-  const form = $('#lg-form');
+  const form = q('#lg-form');
   if (form) {
     fillLogisticsClients(form);
     form.addEventListener('submit', async (e) => {
@@ -3671,9 +3769,10 @@ async function showLogisticsItem(id, { editing = false } = {}) {
       try {
         const r = Object.keys(patch).length ? await api(`/api/logistics/items/${id}`, { method: 'PATCH', body: patch }) : { changed: [] };
         flash(r.changed.length ? `Saved ${r.changed.length} change${r.changed.length === 1 ? '' : 's'}` : 'Nothing changed');
-        showLogisticsItem(id);
+        if (r.changed.length) again();
+        else showLogisticsItem(id, { root: inWindow ? target : null });
       } catch (err) {
-        $('#lg-err').textContent = err.message;
+        q('#lg-err').textContent = err.message;
       }
     });
   }
@@ -3761,22 +3860,24 @@ async function fillLogisticsClients(form) {
   }
 }
 
-function showNewLogisticsItem(kind) {
+function showNewLogisticsItem(kind, { root = null } = {}) {
   const k = lgKind(kind);
   if (!can('editor') || !lgKinds().some((x) => x.key === kind)) return (location.hash = '#/logistics');
-  lgPage += 1;
+  const target = root || $('#app');
+  const inWindow = Boolean(root);
+  if (!inWindow) lgPage += 1;
   const blank = {};
   for (const f of k.fields) if (f.type === 'date') blank[f.key] = localDay();
-  $('#app').innerHTML = `
-    ${lgHeader(k.group)}
-    <a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))}</a>
+  target.innerHTML = `
+    ${inWindow ? '' : lgHeader(k.group)}
+    ${inWindow ? '' : `<a href="#/logistics/${esc(k.group)}" class="count" style="text-decoration:none">← ${esc(lgGroupLabel(k.group))}</a>`}
     <h2 class="lg-title">Add to ${esc(k.label)}</h2>
     <form class="panel" id="lg-new" style="max-width:860px">
       ${k.fields.length ? lgForm(k.fields, blank) : '<div class="form-grid"><label class="wide">Title<input type="text" name="title"></label><label class="wide">Notes<textarea name="notes"></textarea></label></div>'}
       <div class="err" id="lg-err"></div>
-      <div class="row" style="margin-top:12px"><button class="btn primary">Add</button></div>
+      <div class="row" style="margin-top:12px"><button class="btn act act-good"><span class="act-ic" aria-hidden="true">➕</span>Add</button></div>
     </form>`;
-  const form = $('#lg-new');
+  const form = target.querySelector('#lg-new');
   fillLogisticsClients(form);
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3784,9 +3885,14 @@ function showNewLogisticsItem(kind) {
     const data = lgRead(form, fields, {});
     try {
       const { id } = await api('/api/logistics/items', { method: 'POST', body: { kind, data } });
-      location.hash = `#/lg/${id}`;
+      flash(`Added to ${k.label}`);
+      if (inWindow) {
+        lgModal.dirty = true;
+        document.getElementById('lg-rec')?.close();
+        lgOpenRecord(id);
+      } else location.hash = `#/lg/${id}`;
     } catch (err) {
-      $('#lg-err').textContent = err.message;
+      target.querySelector('#lg-err').textContent = err.message;
     }
   });
 }

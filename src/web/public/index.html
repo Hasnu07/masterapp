@@ -387,6 +387,40 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .lg-actbar .btn, .lg-rowacts .btn { min-height: 36px; }
 .lg-rowacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .btn.off { opacity: .5; cursor: not-allowed; }
+/* Action buttons: an emoji and a colour by what they do, the same on every tab (asked 27 Oct 2026). */
+.btn.act { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; min-height: 34px; font-size: 13px; font-weight: 600; white-space: nowrap; line-height: 1.2; }
+.btn.act .act-ic { font-size: 14px; line-height: 1; }
+.btn.act-good { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
+.btn.act-warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcbf; }
+.btn.act-bad { background: var(--bad-soft); color: var(--bad); border-color: #ecc9c5; }
+.btn.act-move { background: #ece7f8; color: #5b3fa0; border-color: #d6ccef; }
+.btn.act-blue { background: var(--blue-soft); color: var(--blue); border-color: #cddcf0; }
+.btn.act-gold { background: var(--gold-soft); color: var(--gold); border-color: #e6d7b5; }
+.btn.act-neutral { background: var(--paper); color: var(--ink); }
+.btn.act:hover { filter: brightness(.96); border-color: currentColor; }
+/* The other buttons on a row read the same way. */
+.lg-rowacts a.btn[href^="#/lg/"]::before, .lg-actbar a.btn[href^="#/lg/"]::before { content: "🔎 "; }
+.lg-rowacts a.btn[href^="#/watch/"]::before { content: "⌚ "; }
+.lg-rowacts .btn[data-copy]::before, .btn[data-copy]::before { content: "📋 "; }
+a.btn[download]::before { content: "📄 "; }
+label.btn.lg-upload::before, label.btn.lg-upl::before { content: "📷 "; }
+.lg-rowacts .btn, .lg-actbar .btn, .watch-head .row .btn { min-height: 34px; padding: 6px 11px; font-size: 13px; }
+.lg-rowacts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* On a card the buttons line up in two even columns; in a table cell they stay on one line where they fit. */
+.tile .lg-rowacts, .sf-card .lg-rowacts, .st-card .lg-rowacts, article .lg-rowacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tile .lg-rowacts .btn, .sf-card .lg-rowacts .btn, .st-card .lg-rowacts .btn, article .lg-rowacts .btn { justify-content: flex-start; width: 100%; overflow: hidden; text-overflow: ellipsis; }
+td .lg-rowacts { margin-top: 0; }
+.lg-actbar { gap: 8px; align-items: center; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.watch-head > .row { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* A record in a window over the tab, not a page of its own (asked 27 Oct 2026). */
+.lg-rec { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; padding: 0; }
+.lg-rec-body { padding: 18px 20px 24px; }
+.lg-rec-body .watch-head { margin-top: 0; }
+.lg-rec-body .watch-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.lg-rec-x { position: sticky; top: 8px; float: right; margin: 8px 8px 0 0; z-index: 2; width: 36px; height: 36px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.lg-rec-x:hover { color: var(--ink); background: var(--gold-soft); }
+@media (max-width: 900px) { .lg-rec-body .watch-layout { grid-template-columns: 1fr; } .lg-rec { width: calc(100vw - 16px); max-height: calc(100vh - 16px); } .lg-rec-body { padding: 14px 14px 20px; } }
+@media (max-width: 640px) { .btn.act, .lg-rowacts .btn, .lg-actbar .btn { min-height: 44px; } }
 @media (max-width: 640px) { .lg-actbar .btn, .lg-rowacts .btn { min-height: 44px; } }
 @media (min-width: 1024px) {
   #app.lg-page { display: grid; grid-template-columns: 222px minmax(0, 1fr); column-gap: 28px; align-items: start; }
