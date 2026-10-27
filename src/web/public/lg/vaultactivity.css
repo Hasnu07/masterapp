@@ -1,0 +1,11 @@
+/* Watch vault activity: five tiles, the changes as a table, who holds which watch under them. */
+.va-toolbar { grid-template-columns: 1fr auto; }
+.va-table td { vertical-align: top; }
+.va-from { color: var(--muted); }
+.va-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.va-h { margin: 18px 0 8px; font-family: var(--serif); font-size: 20px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink); }
+@media (max-width: 640px) {
+  .va-toolbar { grid-template-columns: 1fr; }
+  .va-toolbar .btn { min-height: 44px; justify-content: center; }
+  #va-types .pill, #va-places .pill { min-height: 44px; }
+}

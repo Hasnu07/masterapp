@@ -1,0 +1,30 @@
+/* Gold Souk: the logistics app's page, in the console's look */
+.ov-tiles.gs-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 520px; }
+.gs-toolbar { grid-template-columns: 1fr auto auto; }
+.gs-panel { margin-bottom: 16px; border-left-width: 4px; }
+.gs-panel.warn { border-left-color: var(--warn); }
+.gs-panel.good { border-left-color: var(--good); }
+.gs-h { font-size: 19px; margin: 0 0 10px; display: flex; gap: 10px; align-items: baseline; }
+.gs-table tbody tr { cursor: pointer; }
+.gs-table tbody tr:hover { background: var(--paper); }
+.gs-taking { min-width: 18ch; max-width: 34ch; overflow-wrap: anywhere; }
+.gs-notes { max-width: 26ch; overflow-wrap: anywhere; color: var(--muted); font-size: 13.5px; }
+.gs-stocks { margin-top: 4px; font-size: 13.5px; line-height: 1.7; }
+.gs-pics { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gs-pics + .gs-pics { margin-top: 6px; }
+.gs-pics img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: #f0ece4; display: block; }
+.gs-pics a:not(:has(img)) { font-size: 13px; white-space: nowrap; }
+.gs-wait { margin-top: 4px; }
+.gs-acts { min-width: 170px; }
+.gs-acts .lg-rowacts { margin-top: 0; }
+@media (max-width: 767.98px) {
+  .ov-tiles.gs-tiles { max-width: none; }
+  .gs-toolbar { grid-template-columns: 1fr 1fr; }
+  .gs-toolbar .q { grid-column: 1 / -1; }
+  .gs-toolbar select, .gs-toolbar .btn, #gs-who .pill { min-height: 44px; }
+  .gs-table td, .gs-table th { padding: 10px 8px; }
+  .gs-pics img { width: 48px; height: 48px; }
+  .gs-pics a, .gs-table a.lg-stock { display: inline-flex; align-items: center; min-height: 44px; }
+  .gs-acts { min-width: 0; }
+  .gs-acts .lg-rowacts .btn { min-height: 44px; }
+}

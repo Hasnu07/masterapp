@@ -31,9 +31,10 @@ src/
   import/vault/sync.js      the Watch vault → watches
   import/logistics/sync.js  the logistics app (same worker document) → logistics_items
   logistics/                its lists (kinds.js), "right now" / history / costs (situation.js), the API's reads and edits
+  logistics/pages/          the app's pages, one module each (page() + forStock()); shared.js what they share
   import/jobs.js            the timer, and the one-job-at-a-time lock
   web/server.js             the API
-  web/public/               the console — no build step, served raw
+  web/public/               the console — no build step, served raw; lg/<tab>.js + .css, one per logistics page
 test/                       node:test against stand-ins and a real Postgres
 ```
 
@@ -557,6 +558,192 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   full name decides only when no watch does. Worked out each time it is shown
   (held 30 s); a person's choice (`logistics_client_links`, migration 010,
   NULL = "none of ours") always wins and goes in the record's history.
+- **Every tab of the app, in its own order** (asked 27 Oct 2026: "all these
+  tabs in my logistic side tabs … keep each page how it is in the logistic
+  vercel app … the client and watch rule stays intact"). `GROUPS` in
+  `kinds.js` is the app's sidebar, entry for entry (its `app` key names the
+  app's tab, for anyone reading its code); `#/logistics` with no tab is the
+  Dashboard. The console draws them as the app does — a column down the left
+  on a wide screen (`#app.lg-page`, a grid; the app's own icons, `lg/icons.js`),
+  behind a button naming the tab shown on a narrow one (never a sideways
+  scroll). `LOGISTICS_APP_URL` adds the app's "Watch Vault ↗" link at the top.
+  Each page added that day is **one module each side**:
+  `src/logistics/pages/<key>.js` — `page()` behind
+  `GET /api/logistics/page/<key>`, and `forStock(stockNo, rows, ctx)`: what
+  the page knows about one watch, as short facts — and
+  `src/web/public/lg/<key>.js` + `.css`, registering `LG_PAGES.<key>`
+  (`showLogistics` dispatches to it; `#/logistics/<key>-all` is the tab's
+  records as plain lists). What every page shares — the kinds, the logistics
+  clients by id, the readers of the app's loosely typed values, and the link
+  from a stock number to OUR watch and its clients (`oursByNumber`) — is in
+  `src/logistics/shared.js`. **The facts reach the watch** through
+  `pages/index.js` `factsFor(stockNos)` (one read for a page of tiles):
+  `listWatches` puts them on each Inventory card (`.tile-fact`, in the fact's
+  tone) and `forWatch` under "Right now" on the watch page, each a tag opening
+  its tab — so a stock number says where the app has it (on consignment, at
+  polish, with a driver, its pickup code …) without opening every tab. On a
+  PC being worked on the console page is fingerprinted on each request, so an
+  edited script shows on reload; in production once, at start-up.
+  The pages, each read from the app's own render code and checked on the live
+  copy (27 Oct 2026); on every one, the buttons that CHANGE the app's records
+  (add, edit, mark, send, assign, delete) wait for the switch-over — a row
+  opens its record — and anything needing the app's AI / WhatsApp / carrier
+  keys says so in a line:
+  - **London / Dubai / HK Stock** — one engine, three places (the app's
+    `renderLondonStock`): in stock = status current or consignment, list or
+    cards, the stock card per row, chips (shelf, consignment either way,
+    polish, the place's corners, not ours), History (moved rows), Spares, and
+    on HK the app's situation board too (`hkSituation`: in hand / incoming /
+    outgoing / sold, holders — the app reaches it without a nav entry).
+    Live: London 21 in / 71 moved, Dubai 120 / 17, HK 4, board 11.
+  - **In Consignment** — stock rows with status consignment (`consignment`:
+    direction to_client / from_client, with, date, returnDate) and incomings
+    with status consignment; a row a sold/ready record names as its origin is
+    left out, as the app does. Live 6 + 8 + 0.
+  - **Sold Stocks** — the app's revenue / costs / profit / margin in dollars,
+    here at the converter's rates (the app's fixed table is why its revenue
+    reads $21.98M and ours $22.10M); costs = `situation.costs` lines INCLUDING
+    the purchase, as the app sums them; our sale price and sold-to client (by
+    id) beside the app's typed buyer; a sale opens in place. Export CSV added.
+  - **Refinement** — need / at polish / completed / spend; Send and Back use
+    the one write already allowed (`polishAction`). A row on consignment at
+    the polisher is shown (the app hides it: live "00000").
+  - **Missing Accessories** — the app's parser and canonical names ported
+    verbatim (`links` → Link, `manual` → Booklet …); counted by location →
+    brand → accessory, what clients still owe us (pending `receive` items),
+    the printable sheet; plus "Chrono Key says" (our box / papers = false).
+    Live: 30 rows, 79 items / 29 types, 210 owed by 33 clients — identical.
+  - **Accessory History** — every transaction newest first with its items
+    (we owe / they owe) and settlements (`settlements` by `txId`+`itemIds`,
+    proof photos). **Swaps** — the app's `saveSwap` shape (give / receive tx
+    + item, both marked done by the swap's id); 0 live.
+  - **Logistic Cost** — the ledger with the app's totals per currency (301
+    lines: AED 158,437.83 … = the SQL sums), filters, a Source tag (a line the
+    app wrote for a shipment / mover shipment / trip / polish opens it), and
+    the whole in dollars at the converter's rates. **Route Optimizer** —
+    everything but the two AI calls: available watches by place, the cargo
+    summary, "historical costs on this route" (shipments by carrier, movers,
+    cost lines, completed trips' legs — a cost line written FOR a shipment is
+    not counted twice, which the app does).
+  - **Owner Decisions** — the `od*` family ported line for line (statuses incl.
+    `fromFob` → not asked, review due, stale, execution queue, consolidations,
+    the brief's text with Copy). Live: 21 decision needed + 2 sent. A tab
+    badge counts decisions waiting. Also lists every decision record (the app
+    shows one only while its incoming is live) and the briefs sent.
+  - **Driver Deliveries** (out / delivered / money collected, dollars at the
+    converter's rates; live 6 delivered, AED 400,000), **Pickup Codes** (the
+    app's `buildPickupMessage` word for word, Copy message A / B; address read
+    live from the saved one), **Logistics Addresses** (uses by pickup codes, a
+    map link only for a street address — 4 of the 17 are e-mails, 2 links;
+    two hold what looks like an e-mail password, the app's own data),
+    **Gold Souk** (open / completed, by person and shop, Copy all tasks = the
+    app's text; WhatsApp share needs its settings).
+  - **Companies** (firms we ship / invoice through — `state.companies`; the
+    client list's `isCompany` rows are OUR places, shown apart), **Shipment
+    Documents** (the app's filters and four orders; the 9 live files are on the
+    app's Supabase bucket, never on the worker, so they open there — not
+    embedded, CSP), **Activity** (the last 200 lines grouped by day, a line's
+    stock number read in the app's own wordings — `stockNosInLine` in
+    kinds.js, so the sync gives activity rows `stock_nos` too; to-dos belong
+    to its notepad, not here), **Watch Vault Activity** (notifications read as
+    the app reads them + who holds which watch from `vaultTracking`, which
+    vault.html writes keyed by the stock row's id — 11 of 19 live keys are rows
+    the app dropped, named through the row's last copy here), **Other
+    Receiving Pics** (passports etc., behind the sign-in).
+  - **Stock numbers in words**: gold souk tasks and pickup codes have no stock
+    field — `stockField: 'words'` reads "Stock # 1229" / "#1229" out of named
+    fields (never a bare figure); `STOCK_RULE` in the sync's hash makes a
+    changed rule re-apply every record once. A fact two pages agree on (the
+    place's row and Refinement both know it is at polish) is said once.
+  - Still on this PC's copy only: `purchased_from_client_id` / `sold_to…` are
+    NULL here (the client sync has not run locally), so no logistics client
+    resolves to one of ours; live data does.
+- **The app's workflows, done here** (asked 27 Oct 2026: "all the features
+  in the logistic side in the erp system to do entries … keeping our same
+  rule"). Every button of the app that changes records — Add Row, Import
+  CSV, Move, Consign, Sold, Checkout, Cost, Polish, Mark Arrived, Receive,
+  Ask Owner, New Plan, Give to driver … — is an ACTION in
+  `src/logistics/actions/<domain>.js` (stock, sales, incoming, decisions,
+  shipping, movers, costs, plans, dubai, accessories, records): `{ key,
+  label, kinds | page, form, prefill, run }`, each ported from the app's own
+  function record for record (which list gets a row, which row its status
+  and `movements` entry, which cost line with which ids, the `logActivity`
+  line), inside ONE transaction on `src/logistics/write.js` — `insertItem`
+  (origin manual, the app's `id` shape, stock_nos as the sync reads them),
+  `patchItem` (every changed top-level field on an app copy is LOCKED
+  against the sync — the standing rule), `softDelete`, `logActivity`, the
+  typed-field checks (`clean`). Routes: `GET/POST /api/logistics/act/:key`
+  (page-level), `GET/POST /api/logistics/items/:id/act/:key`,
+  `GET …/act/:key/template` (a CSV import's template),
+  `POST /api/logistics/items/:id/files?field=photos` (pictures / PDFs into
+  `logistics_files`, named `lgfile:<id>` in the record's list). Editors only.
+  The console: any `[data-act]` button opens the action's form (from the
+  GET) in a dialog and runs it (`lgRunAction`); the record page draws every
+  action of its kind beside Edit; a tab draws its page-level actions with
+  `lgActionBar('<tab>')` and its rows' with `lgRowActs('<tab>', row)`, which
+  the domain scripts `lg/act-<domain>.js` fill (`LG_ACTION_BARS`,
+  `LG_ROW_ACTIONS`). The catalog is `meta.logistics.actions`; a kind's
+  extra typed fields from the modules (`FIELDS`) reach its Add / Edit form.
+  **AI**: the app's route optimizer, AI flights, "Parse & Add", market prices
+  and Stock Take ran on a Claude key in its settings (never copied); here
+  `src/logistics/ai.js` uses masterapp's own `ANTHROPIC_API_KEY`
+  (`@anthropic-ai/sdk`, model `ANTHROPIC_MODEL`, default claude-opus-5-5);
+  without one an `ai` action's button is greyed and its run refused.
+  **WhatsApp** sending (Ask Owner, pickup codes, gold souk share) is not
+  here: the text is built as the app builds it, with Copy and "Mark as sent".
+  Nothing is written back to the app, as before.
+  The domains, 171 actions, each with its test file (`test/lg-act-*.test.js`,
+  every action through the API as an editor, a viewer refused):
+  - **stock** (`stock-…`): Add row / Import CSV + template per place, Move
+    (movements, the destination row, spares left, a shipment or trip
+    attached), Move back, Checkout and Return, notes, Show / hide from the
+    Watch Vault, Delete, spares, the HK board's Add / Move / Cancel sale
+    (restored into the section it left — never another list), the safe's
+    Give; Stock Take by AI (`ai`, with the photos). Polish stays the one
+    endpoint `…/polish`. Reset (the app's re-seed) is not ported.
+  - **sales** (`sale-…`, `cons-…`, `ref-…`): Set delivery date, Hold in safe,
+    Cancel sale (back into the list it came from — an HK sale into hkStock
+    or hkSituation by its snapshot), Delete, Mark delivered (finalises a
+    Ready row as sold), Link to shipment; Our watch → client / Client's
+    watch → us, Move back, Mark sold (ONE Sold for every stock list:
+    `cons-sold`, `soldPriceUsd` at the converter's rates), Delete; external
+    polish Add / Done / Edit / Delete (no cost line — the app writes none).
+  - **incoming** (`inc-…`) and **decisions** (`od-…`): Add / Import CSV /
+    Edit / Mark arrived (the arrival record and the supplier-owes
+    transaction) / Receive to inventory (the stock row in London, Dubai or
+    HK) / Create shipment / Plan collections / Mark sold / Add cost / Date
+    received / Vault / Cancel / Delete; Pick from Chrono Key = OUR watches
+    with status incoming (not the app's FOB read); Decision, Status, Start,
+    Done, Assign collector, Mark arranged, the brief (`odBriefText` ported;
+    Mark as sent writes `ownerBriefs` and SENT_TO_OWNER), Delete. A decision
+    made here is named by its own `data.id` (`source_id || data.id` wherever
+    a record names another).
+  - **shipping** (`ship-…`), **movers** (`tpm-…`), **costs** (`cost-…`),
+    the optimizer's AI (`route-…`): Add / Edit shipment with the app's
+    tail (the cost line, the HK situation auto-row, the customs mirror),
+    status changes, Mark delivered (missing items → a transaction; a linked
+    Ready row finalised as sold), Delete; mover shipments and movers with
+    both CSV imports and templates, payment / status / not payable; the cost
+    ledger's Add (linked to a shipment as the app's form), Edit, Delete;
+    market prices and the AI recommendation with the app's prompts.
+  - **plans** (`plan-…`, `trip-…`) and **dubai** (`dd-…`, `pc-…`, `addr-…`,
+    `gs-…`): New plan, Add / Edit / Remove stop, Assign / Unassign a ready
+    sale, an incoming or a stock move, Clear, Delete, Complete, Send to
+    movements, Parse & Add / AI flights / Optimise (`ai`); trips with legs,
+    watches, cost lines, the allowance (lines computed in the browser, as
+    the app), Complete (one ledger line per cost); Give to driver / Mark
+    delivered / Returned; pickup codes (the app's code generator and
+    messages, persons typed, Mark sent, Done); addresses; gold souk tasks.
+  - **accessories** (`tx-…`, `swap-…`, `acc-…`) and **records** (`cl-…`,
+    `co-…`, `doc-…`, `pic-…`, `va-…`): transactions with items, Settle
+    (`settlements`) and Undo, swaps, To collect / To give with the watch
+    row's `movements` entry as the app records it, Edit what is missing;
+    logistics clients, company locations, companies, shipment documents
+    (the file through the files route, then `doc-attach`), receiving
+    pictures, vault notifications Approve / Dismiss, Set holder.
+  Where the app writes no activity line, one is written in its toast's
+  words. Pictures and documents go on after a record exists (the upload
+  control `lgUploadCtl`, act-accessories.js, one for every tab).
 - First copy of the June snapshot (on a stand-in worker): 699 records, 18
   lists, 59 pictures. `npm run import -- logistics` runs it by hand.
 - **Found in the logistics app, for its owner** (not ours to fix): its

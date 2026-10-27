@@ -36,6 +36,9 @@ import { savePhoto, saveDocument } from '../../storage/index.js';
 const sha = (s, alg = 'sha256') => crypto.createHash(alg).update(s).digest('hex');
 
 /* JSON with its keys in order, at every depth: Postgres' jsonb reorders keys, so a plain JSON.stringify would see changes that are not there. */
+/* Bump when kinds.js stockOf() changes what a record's stock numbers are, so the next pass rewrites every record's stock_nos. */
+const STOCK_RULE = 2;
+
 export function stable(v) {
   if (Array.isArray(v)) return `[${v.map(stable).join(',')}]`;
   if (v && typeof v === 'object') {
@@ -486,7 +489,8 @@ export async function syncLogistics({ user, reuse = false, quiet = false, state:
           // records, is not part of the logistics app's record: a missed read
           // of it is not a change of every stock row.
           const { vaultPhotos, ...rec } = listed; // eslint-disable-line no-unused-vars
-          const hash = sha(JSON.stringify(rec), 'sha1');
+          // STOCK_RULE is part of the hash: a change to how stock numbers are read (kinds.js stockOf) re-applies every record once.
+          const hash = sha(`${JSON.stringify(rec)}#${STOCK_RULE}`, 'sha1');
           const k = known.get(sourceId);
           if (k && k.hash === hash && !k.gone_at && k.item_id) {
             stats.unchanged += 1;

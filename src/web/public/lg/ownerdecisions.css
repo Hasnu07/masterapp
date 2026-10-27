@@ -1,0 +1,92 @@
+/* Owner Decisions — the console's look (index.html's palette), scoped under od- */
+.od-waits { color: var(--warn); }
+.od-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.od-tile { position: relative; display: grid; gap: 2px; padding: 12px 14px 12px 18px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
+.od-tile::before { content: ''; position: absolute; left: 0; top: 14px; bottom: 14px; width: 4px; border-radius: 0 4px 4px 0; background: var(--line); }
+.od-tile.bad::before { background: var(--bad); }
+.od-tile.warn::before { background: var(--warn); }
+.od-tile.good::before { background: var(--good); }
+.od-tile.blue::before { background: var(--blue); }
+.od-tile.zero::before { background: var(--line); }
+.od-tile b { font: 600 30px/1.1 var(--serif); color: var(--ink); }
+.od-tile.zero b { color: var(--muted); }
+.od-tile span { font-size: 13px; color: var(--muted); }
+.od-attn-l { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--warn); margin-right: 4px; }
+.od-cons { margin-bottom: 10px; border-left: 4px solid var(--blue); font-size: 14px; }
+.od-sec-h { margin: 18px 0 10px; }
+.od-route { margin-bottom: 12px; }
+.od-route-t { font-family: var(--serif); font-size: 20px; }
+.od-route-sup { font-weight: 600; margin: 10px 0 4px; padding-top: 8px; border-top: 1px solid var(--line); }
+.od-route-w { display: flex; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; padding: 4px 0; font-size: 14px; }
+.od-quote { width: 100%; font-style: italic; color: var(--muted); font-size: 13px; margin: 2px 0 4px; overflow-wrap: anywhere; }
+.od-brief { margin: 14px 0; padding: 0; }
+.od-brief > summary { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 14px 16px; cursor: pointer; list-style: none; min-height: 44px; }
+.od-brief > summary::-webkit-details-marker { display: none; }
+.od-brief > summary::before { content: '▸'; color: var(--muted); }
+.od-brief[open] > summary::before { content: '▾'; }
+.od-brief > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: var(--radius); }
+.od-brief > div { padding: 0 16px 16px; border-top: 1px solid var(--line); }
+.od-l { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+.od-check { display: inline-flex; align-items: center; gap: 6px; margin: 0 14px 6px 0; font-size: 14px; cursor: pointer; min-height: 32px; }
+.od-check input { width: 18px; height: 18px; accent-color: var(--gold); }
+.od-resend { display: flex; color: var(--warn); }
+.od-rows { display: grid; gap: 4px; }
+.od-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; min-height: 44px; font-size: 14px; }
+.od-row input { width: 18px; height: 18px; accent-color: var(--gold); }
+.od-fields { display: flex; flex-wrap: wrap; }
+.od-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13.5px/1.45 var(--sans); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 0 0 10px; max-height: 420px; overflow: auto; }
+.od-sec { margin-bottom: 18px; }
+.od-sec-t { font-size: 15px; margin: 0 0 8px; display: flex; align-items: baseline; }
+.od-sec.od-need .od-sec-t { color: var(--bad); }
+.od-sec.od-approved .od-sec-t, .od-sec.od-done .od-sec-t { color: var(--good); }
+.od-sup { padding: 0; margin-bottom: 10px; }
+.od-sup-h { display: flex; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); font-weight: 600; }
+.od-card { border-bottom: 1px solid var(--line); }
+.od-card:last-child { border-bottom: 0; }
+.od-top { display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 12px 16px; cursor: pointer; }
+.od-top:hover { background: var(--paper); }
+.od-top:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.od-ph { width: 56px; height: 56px; border-radius: 8px; background: var(--paper); border: 1px solid var(--line); overflow: hidden; }
+.od-ph img { width: 100%; height: 100%; object-fit: cover; }
+.od-main { display: grid; gap: 3px; min-width: 0; font-size: 14px; }
+.od-main .count { overflow-wrap: anywhere; }
+.od-title { font-weight: 600; }
+.od-title a { color: var(--ink); text-decoration: none; }
+.od-title a:hover { text-decoration: underline; }
+.od-mid { display: grid; gap: 4px; font-size: 14px; min-width: 0; }
+.od-instr { font-weight: 600; overflow-wrap: anywhere; }
+.od-price { color: var(--muted); }
+.od-warn { color: var(--warn); font-size: 13px; }
+.od-acts .btn { white-space: nowrap; min-height: 36px; }
+.od-body { padding: 0 16px 14px 86px; font-size: 14px; }
+.od-tl { display: grid; gap: 6px; }
+.od-ev { display: flex; gap: 4px 12px; flex-wrap: wrap; align-items: baseline; }
+.od-sent { padding: 0; margin-bottom: 8px; }
+.od-sent > summary { padding: 12px 16px; cursor: pointer; min-height: 44px; font-size: 14px; }
+.od-sent > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; border-radius: var(--radius); }
+.od-sent[open] > summary { border-bottom: 1px solid var(--line); }
+.od-sent .od-pre { margin: 12px 16px 8px; }
+.od-sent > a { display: inline-block; margin: 0 16px 12px; }
+@media (max-width: 1100px) { .od-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 767.98px) {
+  .od-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .od-tile b { font-size: 26px; }
+  .od-top { grid-template-columns: 48px minmax(0, 1fr); }
+  .od-ph { width: 48px; height: 48px; }
+  .od-mid, .od-acts { grid-column: 2; }
+  .od-acts .btn { min-height: 44px; }
+  .od-body { padding-left: 16px; }
+}
+/* The buttons the app has on a card and on an execution group (act-decisions.js). */
+.od-acts { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.od-route-acts { margin-top: 10px; }
+@media (max-width: 767.98px) { .od-acts { justify-content: flex-start; } }
+/* A row's actions as the app's ••• menu: a disclosure in the row (act-incoming.js; any tab's rows may use it). */
+.lg-rowmenu { display: inline-block; margin-top: 4px; vertical-align: top; }
+.lg-rowmenu > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; }
+.lg-rowmenu > summary::-webkit-details-marker { display: none; }
+.lg-rowmenu > summary::after { content: ' ▾'; color: var(--muted); margin-left: 4px; }
+.lg-rowmenu[open] > summary::after { content: ' ▴'; }
+/* Open, the buttons sit in the row (a floating menu would be clipped by the table's own scroll box). */
+.lg-rowmenu > .lg-rowacts { display: grid; grid-template-columns: repeat(3, max-content); gap: 4px; margin-top: 6px; }
+.lg-rowmenu > .lg-rowacts .btn { white-space: nowrap; }

@@ -1,0 +1,45 @@
+/* Logistic Cost — the console's look (index.html's palette), scoped under lc- */
+.lc-totals { margin-bottom: 14px; }
+.lc-h { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+.lc-h-filtered { margin-top: 14px; color: var(--gold); }
+.lc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.lc-tile { display: grid; gap: 2px; align-content: start; padding: 10px 12px 10px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); position: relative; min-width: 0; }
+.lc-tile::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 4px; border-radius: 0 4px 4px 0; background: var(--line); }
+.lc-tile.lc-usd { background: var(--blue-soft); border-color: #cddcf0; }
+.lc-tile.lc-usd::before { background: var(--blue); }
+.lc-tile .lc-cur { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .5px; }
+.lc-tile b { font: 600 24px/1.1 var(--serif); color: var(--ink); overflow-wrap: anywhere; }
+.lc-tile small { font-size: 12.5px; color: var(--muted); }
+.lc-filters { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(0, 1fr)) auto auto auto; gap: 8px; align-items: center; margin: 0 0 10px; }
+.lc-filters select.on { border-color: var(--gold); }
+.lc-date { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.lc-date input { min-width: 0; }
+.lc-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.lc-table .lc-r { text-align: right; }
+.lc-table .lg-rowacts { margin-top: 4px; }
+.lc-nowrap { white-space: nowrap; }
+.lc-stock { min-width: 220px; }
+.lc-stock > div { margin-bottom: 4px; overflow-wrap: anywhere; }
+.lc-notes { color: var(--muted); font-size: 13px; max-width: 260px; overflow-wrap: anywhere; }
+.lc-arrow { color: var(--muted); }
+.lg-tag.lc-src { white-space: nowrap; }
+.lg-tag.lc-shipment { background: var(--blue-soft); color: var(--blue); border-color: #cddcf0; }
+.lg-tag.lc-mover { background: var(--gold-soft); color: var(--gold); border-color: #e6d6b5; }
+.lg-tag.lc-trip { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
+.lg-tag.lc-polish { background: var(--warn-soft); color: var(--warn); border-color: #f0dcbf; }
+@media (max-width: 1100px) {
+  .lc-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lc-filters .q, .lc-acts { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .lc-filters { grid-template-columns: 1fr 1fr; }
+  .lc-filters select, .lc-filters input, .lc-acts .btn { min-height: 44px; }
+  .lc-date { flex-direction: column; align-items: stretch; gap: 2px; }
+  .lc-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lc-tile b { font-size: 20px; }
+}
+@media print {
+  .lg-tabs, .lg-head button, .lc-filters, #lc-count, header, nav, .lc-sub, .lg-rowacts, .lg-actbar { display: none !important; }
+  .lc-totals, .lc-table { break-inside: auto; }
+  .lc-table td, .lc-table th { font-size: 11px; padding: 4px 6px; }
+}

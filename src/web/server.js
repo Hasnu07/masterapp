@@ -11,6 +11,8 @@ import * as clients from '../clients/index.js';
 import * as expenses from '../expenses/index.js';
 import * as logistics from '../logistics/index.js';
 import * as lgClients from '../logistics/clients.js';
+import * as lgPages from '../logistics/pages/index.js';
+import * as lgActions from '../logistics/actions/index.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -57,14 +59,18 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js'];
+// The logistics app's pages, one script each, after logistics.js (which they register on).
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js', 'lg/icons.js', 'lg/ownerdecisions.js', 'lg/hkstock.js', 'lg/vaultactivity.js', 'lg/otherreceiving.js', 'lg/history.js', 'lg/costs.js', 'lg/routeoptimizer.js', 'lg/consignment.js', 'lg/londonstock.js', 'lg/dubaistock.js', 'lg/refinement.js', 'lg/missingacc.js', 'lg/soldstocks.js', 'lg/driverdeliveries.js', 'lg/pickupcodes.js', 'lg/addresses.js', 'lg/goldsouk.js', 'lg/companies.js', 'lg/shipmentdocs.js', 'lg/swaps.js', 'lg/log.js', 'lg/act-stock.js', 'lg/act-sales.js', 'lg/act-incoming.js', 'lg/act-shipping.js', 'lg/act-movers.js', 'lg/act-plans.js', 'lg/act-decisions.js', 'lg/act-accessories.js', 'lg/act-dubai.js', 'lg/act-records.js', 'lg/act-costs.js'];
+// Each page's own stylesheet, versioned with the scripts.
+const CONSOLE_STYLES = ['lg/ownerdecisions.css', 'lg/hkstock.css', 'lg/vaultactivity.css', 'lg/otherreceiving.css', 'lg/history.css', 'lg/costs.css', 'lg/routeoptimizer.css', 'lg/consignment.css', 'lg/londonstock.css', 'lg/dubaistock.css', 'lg/refinement.css', 'lg/missingacc.css', 'lg/soldstocks.css', 'lg/driverdeliveries.css', 'lg/pickupcodes.css', 'lg/addresses.css', 'lg/goldsouk.css', 'lg/companies.css', 'lg/shipmentdocs.css', 'lg/swaps.css', 'lg/log.css'];
 function consolePage() {
   const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
   const hash = crypto.createHash('sha256').update(html);
-  for (const f of CONSOLE_SCRIPTS) hash.update(fs.readFileSync(path.join(PUBLIC, f)));
+  for (const f of [...CONSOLE_SCRIPTS, ...CONSOLE_STYLES]) hash.update(fs.readFileSync(path.join(PUBLIC, f)));
   const build = hash.digest('hex').slice(0, 12);
   let page = html.replace('<meta charset="utf-8">', `<meta charset="utf-8">\n<meta name="build" content="${build}">`);
   for (const f of CONSOLE_SCRIPTS) page = page.replace(`<script src="/${f}">`, `<script src="/${f}?v=${build}">`);
+  for (const f of CONSOLE_STYLES) page = page.replace(`<link rel="stylesheet" href="/${f}">`, `<link rel="stylesheet" href="/${f}?v=${build}">`);
   return { build, page };
 }
 
@@ -155,7 +161,9 @@ function giveBackAttempt({ keys, now }) {
 export const attemptKeys = () => [...attempts.keys()];
 
 export function createServer() {
-  const CONSOLE = consolePage();
+  // Fingerprinted once in production; on a PC being worked on, read again on each request so an edited script shows up without a restart.
+  const built = consolePage();
+  const CONSOLE = config.production ? built : { get page() { return consolePage().page; }, get build() { return consolePage().build; } };
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
@@ -250,7 +258,7 @@ export function createServer() {
       clientFields: clients.CLIENT_FIELDS,
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
-      logistics: logistics.catalog(),
+      logistics: { ...logistics.catalog(), actions: lgActions.catalog() },
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
@@ -560,6 +568,23 @@ export function createServer() {
   app.get('/api/logistics/shipping', need('viewer'), wrap(async (req, res) => res.json(await logistics.shippingPage())));
   app.get('/api/logistics/movement', need('viewer'), wrap(async (req, res) => res.json(await logistics.movementPage())));
   app.get('/api/logistics/movers', need('viewer'), wrap(async (req, res) => res.json(await logistics.moversPage())));
+  // A picture or a PDF added to a record here (the app's handover / proof / document photos): stored once, named in the record's list.
+  app.post(
+    '/api/logistics/items/:id/files',
+    need('editor'),
+    photoUpload.array('files', 20),
+    wrap(async (req, res) => res.json(await logistics.addFiles(req.params.id, String(req.query.field || req.body?.field || 'photos'), req.files || [], req.user)))
+  );
+  // The logistics app's workflows done here (src/logistics/actions): the form to show, then the run — editors only.
+  app.get('/api/logistics/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.describe(String(req.params.key), null, req.query))));
+  app.get('/api/logistics/act/:key/template', need('editor'), wrap(async (req, res) => {
+    res.type('text/csv').attachment(`${req.params.key}-template.csv`).send(lgActions.template(String(req.params.key)));
+  }));
+  app.post('/api/logistics/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.run(String(req.params.key), null, req.body || {}, req.user, req.query))));
+  app.get('/api/logistics/items/:id/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.describe(String(req.params.key), Number(req.params.id) || 0, req.query))));
+  app.post('/api/logistics/items/:id/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.run(String(req.params.key), Number(req.params.id) || 0, req.body || {}, req.user, req.query))));
+  // The tabs added 27 Oct 2026, one module each (src/logistics/pages).
+  app.get('/api/logistics/page/:name', need('viewer'), wrap(async (req, res) => res.json(await lgPages.page(String(req.params.name)))));
   /* Search everything: our watches and clients, and the logistics records — nothing twice. */
   app.get(
     '/api/logistics/search',

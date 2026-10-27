@@ -148,6 +148,7 @@ function route() {
   const [, page, id] = hash.split('/');
   const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics', 'lg-client': 'logistics' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  $('#app').classList.remove('lg-page', 'tabs-open');
   menu(false);
   window.scrollTo(0, 0);
   if (!page) return showInventory();
@@ -395,6 +396,7 @@ function tile(w) {
       ${w.accessories?.with.length ? `<div class="tile-acc ok"><b>With it</b> ${esc(w.accessories.with.join(', '))}</div>` : ''}
       ${w.accessories?.missing.length ? `<div class="tile-acc miss"><b>Missing</b> ${esc(w.accessories.missing.join(', '))}</div>` : ''}
       ${moving.map((t) => `<div class="tile-move">${esc(t)}</div>`).join('')}
+      ${(w.facts || []).map((f) => `<div class="tile-fact ${esc(f.tone || '')}">${esc(f.text)}</div>`).join('')}
       ${prices.length ? `<div class="p">${prices.map(([k, v, cls]) => `<div class="pr ${cls}"><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` : ''}
     </div>
   </button>`;

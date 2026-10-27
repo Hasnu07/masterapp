@@ -24,7 +24,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.94); backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line); }
-.bar-in { max-width: 1320px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.bar-in { padding: 10px 20px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
 .brand { font: 600 21px/1 var(--serif); letter-spacing: .2px; margin-right: 6px; white-space: nowrap; }
 .brand small { font: 500 11px var(--sans); color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; margin-left: 6px; }
 /* The menu: a ☰ in the bar, the pages in a drawer from the left. */
@@ -52,7 +52,9 @@ nav a.on { color: var(--ink); background: var(--gold-soft); }
 .who span { min-width: 0; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
 
-main { max-width: 1320px; margin: 0 auto; padding: 18px 16px 60px; }
+/* The console fills the screen (asked 27 Oct 2026: "wide screen the whole app instead of aligned at middle"). */
+main { width: 100%; padding: 18px 20px 60px; }
+@media (max-width: 640px) { main { padding: 14px 16px 60px; } .bar-in { padding: 10px 16px; } }
 h1 { font: 600 30px/1.15 var(--serif); margin: 0 0 4px; }
 h2 { font: 600 21px/1.2 var(--serif); margin: 0 0 10px; }
 h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.1px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
@@ -123,6 +125,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .tile-acc.ok { background: var(--good-soft); color: var(--good); }
 .tile-acc.miss { background: var(--bad-soft); color: var(--bad); }
 .tile-move { font-size: 13px; color: var(--blue); background: var(--blue-soft); border-radius: 8px; padding: 4px 8px; overflow-wrap: anywhere; }
+/* What each logistics page knows about the watch (consignment, polish, a driver, a pickup code …), in its tone's colour. */
+.tile-fact { font-size: 13px; border-radius: 8px; padding: 4px 8px; overflow-wrap: anywhere; background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
+.tile-fact.good { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.tile-fact.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.tile-fact.move { background: var(--blue-soft); color: var(--blue); border-color: transparent; }
+.tile-fact.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 /* The prices at the foot: what we paid, and — once sold — what it sold for. */
 .tile .p { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); display: grid; gap: 4px; }
 .tile .p .pr { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 600; font-size: 15px; }
@@ -358,14 +366,86 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 /* logistics: its own tabs across the top, its lists' kinds in a row under them */
 .lg-head { display: flex; gap: 10px 16px; align-items: baseline; flex-wrap: wrap; }
 .lg-head h1 { margin: 0; }
-/* The tabs wrap onto the next line when the window is too narrow — never a sideways scroll (asked 26 Oct 2026). */
-.lg-tabs { display: flex; flex-wrap: wrap; gap: 0 2px; border-bottom: 1px solid var(--line); margin: 10px 0 16px; }
-.lg-tabs a { white-space: nowrap; padding: 9px 13px; display: inline-flex; align-items: center; text-decoration: none; color: var(--muted); font-weight: 500; font-size: 14.5px;
-  border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.lg-tabs a:hover { color: var(--ink); }
-.lg-tabs a.on { color: var(--ink); border-bottom-color: var(--gold); }
-.lg-tabs .lg-n { display: inline-block; min-width: 1.6em; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--blue-soft);
+/* The tabs are the logistics app's own sidebar (asked 27 Oct 2026): down the left of every logistics page on a wide
+   screen, behind a button naming the tab shown on a narrow one — never a sideways scroll (asked 26 Oct 2026). */
+.lg-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 10px 0 16px; }
+.lg-tabs a { white-space: nowrap; padding: 8px 10px; display: inline-flex; align-items: center; gap: 9px; text-decoration: none; color: var(--muted);
+  font-weight: 500; font-size: 14px; border-radius: 8px; line-height: 1.25; }
+.lg-tabs a:hover { color: var(--ink); background: var(--paper); }
+.lg-tabs a.on { color: var(--ink); background: var(--gold-soft); }
+.lg-tabs a.lg-ext { color: var(--gold); font-weight: 600; }
+.lg-ic { width: 17px; height: 17px; flex: none; opacity: .75; }
+.lg-tabs a.on .lg-ic, .lg-tabs a:hover .lg-ic { opacity: 1; }
+.lg-tabs .lg-n { display: inline-block; min-width: 1.6em; margin-left: 2px; padding: 0 6px; border-radius: 999px; background: var(--blue-soft);
   color: var(--blue); font-size: 12px; font-weight: 600; text-align: center; line-height: 1.6; }
+.lg-tabs-toggle { display: none; }
+/* An action's form (the app's workflows done here): a dialog in the console's look; a page's actions in a bar. */
+.lg-dlg { border: 1px solid var(--line); border-radius: var(--radius); padding: 0; width: min(720px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgba(0,0,0,.18); background: var(--card); color: var(--ink); }
+.lg-dlg::backdrop { background: rgba(29,27,24,.35); }
+.lg-dlg-form { padding: 18px 18px 14px; }
+.lg-dlg-form h2 { margin-bottom: 12px; }
+.lg-dlg-acts { margin-top: 14px; gap: 8px; }
+.lg-actbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.lg-actbar .btn, .lg-rowacts .btn { min-height: 36px; }
+.lg-rowacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.btn.off { opacity: .5; cursor: not-allowed; }
+/* Action buttons: an emoji and a colour by what they do, the same on every tab (asked 27 Oct 2026). */
+.btn.act { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; min-height: 34px; font-size: 13px; font-weight: 600; white-space: nowrap; line-height: 1.2; }
+.btn.act .act-ic { font-size: 14px; line-height: 1; }
+.btn.act-good { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
+.btn.act-warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcbf; }
+.btn.act-bad { background: var(--bad-soft); color: var(--bad); border-color: #ecc9c5; }
+.btn.act-move { background: #ece7f8; color: #5b3fa0; border-color: #d6ccef; }
+.btn.act-blue { background: var(--blue-soft); color: var(--blue); border-color: #cddcf0; }
+.btn.act-gold { background: var(--gold-soft); color: var(--gold); border-color: #e6d7b5; }
+.btn.act-neutral { background: var(--paper); color: var(--ink); }
+.btn.act:hover { filter: brightness(.96); border-color: currentColor; }
+/* The other buttons on a row read the same way. */
+.lg-actbar a.btn[href^="#/lg/"]::before { content: "🔎 "; }
+
+.lg-rowacts .btn[data-copy]::before, .btn[data-copy]::before { content: "📋 "; }
+a.btn[download]::before { content: "📄 "; }
+label.btn.lg-upload::before, label.btn.lg-upl::before { content: "📷 "; }
+.lg-rowacts .btn, .lg-actbar .btn, .watch-head .row .btn { min-height: 34px; padding: 6px 11px; font-size: 13px; }
+.lg-rowacts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* On a card the buttons line up in two even columns; in a table cell they stay on one line where they fit. */
+.tile .lg-rowacts, .sf-card .lg-rowacts, .st-card .lg-rowacts, article .lg-rowacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tile .lg-rowacts .btn, .sf-card .lg-rowacts .btn, .st-card .lg-rowacts .btn, article .lg-rowacts .btn { justify-content: flex-start; width: 100%; white-space: normal; text-align: left; line-height: 1.15; padding: 6px 9px; font-size: 12.5px; min-height: 36px; }
+/* Every button on a row reads like an action: the same size and shape, an emoji where it has none of its own. */
+.lg-rowacts .btn:not(.act) { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; background: var(--paper); line-height: 1.15; }
+.lg-rowacts .btn[data-polish]::before, .btn[data-psend]::before, .btn[data-pdone]::before { content: "✨"; }
+.lg-rowacts .btn[data-polish="done"]::before, .btn[data-pdone]::before { content: "✅"; }
+.lg-rowacts .btn[data-polish="done"], .btn[data-pdone] { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
+.lg-rowacts a.btn[href^="#/watch/"]::before { content: "💰"; }
+.lg-rowacts a.btn[href^="#/lg/"]::before { content: "🔎"; }
+td .lg-rowacts { margin-top: 0; }
+.lg-actbar { gap: 8px; align-items: center; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.watch-head > .row { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* A record in a window over the tab, not a page of its own (asked 27 Oct 2026). */
+.lg-rec { width: min(1560px, calc(100vw - 48px)); max-height: calc(100vh - 40px); overflow: auto; padding: 0; }
+.lg-rec-body { padding: 18px 20px 24px; }
+.lg-rec-body .watch-head { margin-top: 0; }
+.lg-rec-body .watch-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.lg-rec-x { position: sticky; top: 8px; float: right; margin: 8px 8px 0 0; z-index: 2; width: 36px; height: 36px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.lg-rec-x:hover { color: var(--ink); background: var(--gold-soft); }
+@media (max-width: 900px) { .lg-rec-body .watch-layout { grid-template-columns: 1fr; } .lg-rec { width: calc(100vw - 16px); max-height: calc(100vh - 16px); } .lg-rec-body { padding: 14px 14px 20px; } }
+@media (max-width: 640px) { .btn.act, .lg-rowacts .btn, .lg-actbar .btn { min-height: 44px; } .watch-head > .row { justify-content: flex-start; }
+  .tile .lg-rowacts, .sf-card .lg-rowacts, .st-card .lg-rowacts, article .lg-rowacts { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .lg-actbar .btn, .lg-rowacts .btn { min-height: 44px; } }
+@media (min-width: 1024px) {
+  #app.lg-page { display: grid; grid-template-columns: 222px minmax(0, 1fr); column-gap: 28px; align-items: start; }
+  #app.lg-page > * { grid-column: 2; min-width: 0; }
+  #app.lg-page > .lg-tabs { grid-column: 1; grid-row: 1 / span 600; flex-direction: column; flex-wrap: nowrap; gap: 1px; margin: 0;
+    position: sticky; top: 64px; max-height: calc(100vh - 76px); overflow-y: auto; padding: 0 8px 8px 0; border-right: 1px solid var(--line); }
+  #app.lg-page > .lg-tabs a { white-space: normal; }
+  #app.lg-page > .lg-tabs a.lg-ext { margin-bottom: 6px; border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
+}
+@media (max-width: 1023.98px) {
+  .lg-tabs-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; margin-left: auto; }
+  #app.lg-page:not(.tabs-open) > .lg-tabs { display: none; }
+  .lg-tabs { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; background: var(--card); gap: 2px 4px; }
+  .lg-tabs a { min-height: 44px; }
+}
 /* In Safe: the clients' watches we hold */
 .sf-view { display: flex; gap: 4px; }
 .sf-view .pill { min-height: 36px; }
@@ -617,6 +697,7 @@ table.list th.num, table.list td.num { text-align: right; }
 .lg-tag.warn { background: var(--warn-soft); color: var(--warn); border-color: #f0dcbf; }
 .lg-tag.problem { background: var(--bad-soft); color: var(--bad); border-color: #ecc9c5; }
 .lg-tag.moving { background: var(--blue-soft); color: var(--blue); border-color: #cddcf0; }
+.lg-tag.good { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
 .lg-tl { list-style: none; margin: 0; padding: 0; }
 .lg-tl li { display: grid; grid-template-columns: 8.5em minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .lg-tl li:last-child { border-bottom: 0; }
@@ -699,6 +780,27 @@ table.list.lg a { text-decoration: none; color: var(--ink); }
 .fx-pop-out { margin-top: 8px; font-family: var(--serif); font-size: 19px; color: #2D6BCF; font-variant-numeric: tabular-nums; }
 .fx-pop-foot { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
 </style>
+<link rel="stylesheet" href="/lg/ownerdecisions.css">
+<link rel="stylesheet" href="/lg/hkstock.css">
+<link rel="stylesheet" href="/lg/vaultactivity.css">
+<link rel="stylesheet" href="/lg/otherreceiving.css">
+<link rel="stylesheet" href="/lg/history.css">
+<link rel="stylesheet" href="/lg/costs.css">
+<link rel="stylesheet" href="/lg/routeoptimizer.css">
+<link rel="stylesheet" href="/lg/consignment.css">
+<link rel="stylesheet" href="/lg/londonstock.css">
+<link rel="stylesheet" href="/lg/dubaistock.css">
+<link rel="stylesheet" href="/lg/refinement.css">
+<link rel="stylesheet" href="/lg/missingacc.css">
+<link rel="stylesheet" href="/lg/soldstocks.css">
+<link rel="stylesheet" href="/lg/driverdeliveries.css">
+<link rel="stylesheet" href="/lg/pickupcodes.css">
+<link rel="stylesheet" href="/lg/addresses.css">
+<link rel="stylesheet" href="/lg/goldsouk.css">
+<link rel="stylesheet" href="/lg/companies.css">
+<link rel="stylesheet" href="/lg/shipmentdocs.css">
+<link rel="stylesheet" href="/lg/swaps.css">
+<link rel="stylesheet" href="/lg/log.css">
 </head>
 <body>
 <header class="bar hide" id="bar">
@@ -728,5 +830,38 @@ table.list.lg a { text-decoration: none; color: var(--ink); }
 <script src="/app.js"></script>
 <script src="/logistics.js"></script>
 <script src="/fxchip.js"></script>
+<script src="/lg/icons.js"></script>
+<script src="/lg/ownerdecisions.js"></script>
+<script src="/lg/hkstock.js"></script>
+<script src="/lg/vaultactivity.js"></script>
+<script src="/lg/otherreceiving.js"></script>
+<script src="/lg/history.js"></script>
+<script src="/lg/costs.js"></script>
+<script src="/lg/routeoptimizer.js"></script>
+<script src="/lg/consignment.js"></script>
+<script src="/lg/londonstock.js"></script>
+<script src="/lg/dubaistock.js"></script>
+<script src="/lg/refinement.js"></script>
+<script src="/lg/missingacc.js"></script>
+<script src="/lg/soldstocks.js"></script>
+<script src="/lg/driverdeliveries.js"></script>
+<script src="/lg/pickupcodes.js"></script>
+<script src="/lg/addresses.js"></script>
+<script src="/lg/goldsouk.js"></script>
+<script src="/lg/companies.js"></script>
+<script src="/lg/shipmentdocs.js"></script>
+<script src="/lg/swaps.js"></script>
+<script src="/lg/log.js"></script>
+<script src="/lg/act-stock.js"></script>
+<script src="/lg/act-sales.js"></script>
+<script src="/lg/act-incoming.js"></script>
+<script src="/lg/act-shipping.js"></script>
+<script src="/lg/act-movers.js"></script>
+<script src="/lg/act-plans.js"></script>
+<script src="/lg/act-decisions.js"></script>
+<script src="/lg/act-accessories.js"></script>
+<script src="/lg/act-dubai.js"></script>
+<script src="/lg/act-records.js"></script>
+<script src="/lg/act-costs.js"></script>
 </body>
 </html>
