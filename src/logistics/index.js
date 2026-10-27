@@ -1050,6 +1050,67 @@ export async function accessoriesSummary() {
 }
 
 /*
+ * The logistics app's 3rd Party Movers page (asked 27 Oct 2026: "the same tab
+ * … our rule of stock no and clients stays"): the couriers (Ferrari, Willie,
+ * RK …) and every shipment they carried — the value of the watch and the
+ * customs paid on it, what we pay the mover (none when it is "not payable by
+ * us"), paid / pending / partial, where from and to, tracking, documents.
+ * Our stock (`isOurStock`) links to our watch and its clients; a friend's
+ * watch is only its description; the typed "from client" links as far as the
+ * logistics client does. Dollars at the converter's rates, as everywhere here.
+ */
+export async function moversPage() {
+  const [moverQ, shipQ, rates] = await Promise.all([
+    query("SELECT id, source_id, data FROM logistics_items WHERE kind = 'thirdPartyMovers' AND deleted_at IS NULL ORDER BY id"),
+    query("SELECT * FROM logistics_items WHERE kind = 'thirdPartyShipments' AND deleted_at IS NULL"),
+    ratesSoon(),
+  ]);
+  const [ours, people] = await Promise.all([oursByNumber(shipQ.rows.flatMap((r) => r.stock_nos || [])), linksByName(shipQ.rows.map((r) => r.data?.fromClientName))]);
+  const movers = moverQ.rows.map((r) => {
+    const d = r.data || {};
+    return { id: r.id, source_id: r.source_id, name: text(d.name), country: text(d.country), contact: text(d.contact), notes: text(d.notes) };
+  });
+  const moverBySource = new Map(movers.map((m) => [m.source_id, m]));
+  const shipments = shipQ.rows.map((r) => {
+    const d = r.data || {};
+    const m = moverBySource.get(text(d.moverId));
+    const docs = Array.isArray(d.shippingDocuments) ? d.shippingDocuments : d.shippingLabel ? [d.shippingLabel] : [];
+    return {
+      id: r.id,
+      mover_id: m?.id || null,
+      mover: m?.name || text(d.moverName),
+      date: text(d.shipmentDate).slice(0, 10),
+      delivered: text(d.deliveryDate).slice(0, 10),
+      value_usd: Number(d.valueUsd) || 0,
+      brand: text(d.watchBrand),
+      reference: text(d.watchReference),
+      ours: Boolean(d.isOurStock),
+      stock_no: text(d.stockNumber),
+      description: text(d.description),
+      from_client: text(d.fromClientName) ? { name: text(d.fromClientName), link: people.get(text(d.fromClientName)) || null } : null,
+      from: text(d.fromCountry),
+      to: text(d.toCountry),
+      items: text(d.items),
+      amount: Number(d.amount) || 0,
+      currency: text(d.currency).toUpperCase() || 'USD',
+      payment: text(d.paymentStatus) || 'pending',
+      status: text(d.status) || 'pending',
+      tracking: text(d.trackingNumber),
+      not_payable: Boolean(d.notPayable),
+      customs_usd: Number(d.customsUsd) || 0,
+      customs_aed: Number(d.customsAed) || 0,
+      customs_pct: Number(d.customsRatePct) || 0.3,
+      order: typeof d.sortOrder === 'number' ? d.sortOrder : null,
+      photo_count: (Array.isArray(d.photos) ? d.photos : []).length,
+      docs: docs.filter((v) => typeof v === 'string' && v),
+      // Our stock only: a friend's watch carries no stock number of ours.
+      watch: d.isOurStock ? (r.stock_nos || []).map((s) => ours.get(s)).find(Boolean) || null : null,
+    };
+  });
+  return { as_of: await asOf(), movers, shipments, rates: rates ? { usd: rates.rates, kind: rates.kind, stale: Boolean(rates.stale) } : null };
+}
+
+/*
  * The logistics app's Movement tab (asked 26 Oct 2026: "the same tab … make
  * sure our rule of stock no and clients stays"): every person's trip, its legs
  * (or the old from → to), its expense lines, the days the allowance is worked

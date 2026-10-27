@@ -476,6 +476,24 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   read-only. Add trip, complete, add allowance to expenses, edit, delete:
   wait for the switch-over; Open shows the record, Copy details copies it.
   Old lists at `#/logistics/trips-all`.
+- **3rd party movers** (asked 27 Oct 2026, "the same tab … our rule of
+  stock no and clients stays"): a Logistics tab, the app's 3rd Party Movers
+  page (`moversPage()`, `/api/logistics/movers`; `thirdPartyMovers` +
+  `thirdPartyShipments`, read from its code). Movers table (shipments, how
+  many with customs, value of watches, customs paid in USD and AED, mover
+  cost = `amount` in dollars unless `notPayable`, and the total across
+  movers); Shipments summary (mover cost, value of watches moved, paid to
+  movers, still to pay = pending + partial, each currency); Shipments with
+  the app's filters (mover, from / to country, status, payment, ownership,
+  from / to date, search) and sort (its custom `sortOrder`, date, country,
+  mover). A shipment's mover by the app's `moverId`, else its typed name.
+  `isOurStock` → the stock number links to our watch and its clients; a
+  friend's watch is only its description, never linked by number; the typed
+  `fromClientName` via `linksByName`. Dollars at the converter's rates.
+  Read-only outputs kept: Copy, Export (a .csv Excel opens), Print, the
+  Customs sheet (valued shipments by mover, printable) and each mover's
+  "Coming to them" (not landed yet, with documents). Add / import / edit /
+  delete / not payable / templates: wait for the switch-over.
 - **Shipments** (asked 26 Oct 2026, "the same tab … make sure our rule of
   stock no and clients stays"): the Logistics → Shipments tab is the app's
   Live Shipments + Need to Give and Collect (`shippingPage()`,

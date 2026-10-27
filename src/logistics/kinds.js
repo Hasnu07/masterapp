@@ -27,6 +27,8 @@ export const GROUPS = [
   { key: 'sales', label: 'Sales & delivery' },
   // The app's Movement tab: person travel cost (asked 26 Oct 2026). The key stays, so old links still open it.
   { key: 'trips', label: 'Movement' },
+  // The app's 3rd Party Movers page: couriers, what they carried, customs and what we owe them (asked 27 Oct 2026). moversPage() reads it.
+  { key: 'movers', label: '3rd party movers' },
   // Accessory transactions with their clients and what is pending, as the app's All Transactions page (asked 26 Oct 2026). transactionsList() reads it.
   { key: 'transactions', label: 'Transactions' },
   { key: 'accessories', label: 'Accessories' },

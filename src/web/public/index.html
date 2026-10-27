@@ -379,6 +379,30 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .sf-for { font-size: 14px; }
 .sf-notes { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .sf-card:focus-visible, .sf-row:focus-visible, table.list.lg tr:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+/* 3rd party movers: couriers, what they carried, customs and what we owe them */
+.tp-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tp-filters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 8px 0 12px; }
+.tp-filters .q { grid-column: span 2; }
+.tp-filters select.on { border-color: var(--gold); }
+table.tp-table td { vertical-align: middle; }
+table.tp-table td .btn { white-space: nowrap; }
+table.tp-table tr.tp-total td { background: var(--paper); font-weight: 600; }
+table.tp-table tr.tp-total td:first-child { text-align: right; }
+table.tp-table tr.tp-free td { background: var(--good-soft); }
+.tp-paid, .tp-delivered { color: var(--good); font-weight: 600; }
+.tp-pending { color: var(--bad); font-weight: 600; }
+.tp-partial, .tp-in_transit { color: var(--warn); font-weight: 600; }
+.tp-cancelled { color: var(--muted); font-weight: 600; }
+.tp-sums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.tp-sum { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); }
+.tp-sum b { font-family: var(--serif); font-size: 24px; font-weight: 600; }
+.tp-sum small { color: var(--muted); font-size: 13px; }
+.tp-sum.good { background: var(--good-soft); border-color: #cfe3d6; } .tp-sum.good b { color: var(--good); }
+.tp-sum.warn { background: var(--warn-soft); border-color: #f0dcbf; } .tp-sum.warn b { color: var(--warn); }
+#tp-out b, #tp-out .btn, .tp-acts .pill { font-weight: 600; }
+@media (max-width: 1100px) { .tp-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .tp-filters .q { grid-column: 1 / -1; } .tp-sums { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .tp-filters { grid-template-columns: 1fr; } .tp-acts .pill, .tp-filters select, .tp-filters input, #tp-out .btn { min-height: 44px; } }
+@media print { .tp-acts, .tp-filters, #tp-out .btn { display: none !important; } }
 /* Movement: the logistics app's person travel cost */
 .inc-filters.mv-filters { grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr) minmax(200px, 2fr); }
 .mv-f { display: flex; align-items: center; gap: 6px; }
