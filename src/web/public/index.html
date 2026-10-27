@@ -401,8 +401,8 @@ a.ov-tile:hover { border-color: #cdbf9f; }
 .btn.act-neutral { background: var(--paper); color: var(--ink); }
 .btn.act:hover { filter: brightness(.96); border-color: currentColor; }
 /* The other buttons on a row read the same way. */
-.lg-rowacts a.btn[href^="#/lg/"]::before, .lg-actbar a.btn[href^="#/lg/"]::before { content: "🔎 "; }
-.lg-rowacts a.btn[href^="#/watch/"]::before { content: "⌚ "; }
+.lg-actbar a.btn[href^="#/lg/"]::before { content: "🔎 "; }
+
 .lg-rowacts .btn[data-copy]::before, .btn[data-copy]::before { content: "📋 "; }
 a.btn[download]::before { content: "📄 "; }
 label.btn.lg-upload::before, label.btn.lg-upl::before { content: "📷 "; }
@@ -410,7 +410,14 @@ label.btn.lg-upload::before, label.btn.lg-upl::before { content: "📷 "; }
 .lg-rowacts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 /* On a card the buttons line up in two even columns; in a table cell they stay on one line where they fit. */
 .tile .lg-rowacts, .sf-card .lg-rowacts, .st-card .lg-rowacts, article .lg-rowacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.tile .lg-rowacts .btn, .sf-card .lg-rowacts .btn, .st-card .lg-rowacts .btn, article .lg-rowacts .btn { justify-content: flex-start; width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.tile .lg-rowacts .btn, .sf-card .lg-rowacts .btn, .st-card .lg-rowacts .btn, article .lg-rowacts .btn { justify-content: flex-start; width: 100%; white-space: normal; text-align: left; line-height: 1.15; padding: 6px 9px; font-size: 12.5px; min-height: 36px; }
+/* Every button on a row reads like an action: the same size and shape, an emoji where it has none of its own. */
+.lg-rowacts .btn:not(.act) { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; background: var(--paper); line-height: 1.15; }
+.lg-rowacts .btn[data-polish]::before, .btn[data-psend]::before, .btn[data-pdone]::before { content: "✨"; }
+.lg-rowacts .btn[data-polish="done"]::before, .btn[data-pdone]::before { content: "✅"; }
+.lg-rowacts .btn[data-polish="done"], .btn[data-pdone] { background: var(--good-soft); color: var(--good); border-color: #c9dfd1; }
+.lg-rowacts a.btn[href^="#/watch/"]::before { content: "💰"; }
+.lg-rowacts a.btn[href^="#/lg/"]::before { content: "🔎"; }
 td .lg-rowacts { margin-top: 0; }
 .lg-actbar { gap: 8px; align-items: center; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
 .watch-head > .row { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -422,7 +429,8 @@ td .lg-rowacts { margin-top: 0; }
 .lg-rec-x { position: sticky; top: 8px; float: right; margin: 8px 8px 0 0; z-index: 2; width: 36px; height: 36px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; }
 .lg-rec-x:hover { color: var(--ink); background: var(--gold-soft); }
 @media (max-width: 900px) { .lg-rec-body .watch-layout { grid-template-columns: 1fr; } .lg-rec { width: calc(100vw - 16px); max-height: calc(100vh - 16px); } .lg-rec-body { padding: 14px 14px 20px; } }
-@media (max-width: 640px) { .btn.act, .lg-rowacts .btn, .lg-actbar .btn { min-height: 44px; } .watch-head > .row { justify-content: flex-start; } }
+@media (max-width: 640px) { .btn.act, .lg-rowacts .btn, .lg-actbar .btn { min-height: 44px; } .watch-head > .row { justify-content: flex-start; }
+  .tile .lg-rowacts, .sf-card .lg-rowacts, .st-card .lg-rowacts, article .lg-rowacts { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .lg-actbar .btn, .lg-rowacts .btn { min-height: 44px; } }
 @media (min-width: 1024px) {
   #app.lg-page { display: grid; grid-template-columns: 222px minmax(0, 1fr); column-gap: 28px; align-items: start; }
