@@ -264,6 +264,47 @@ export async function linksByName(names) {
 }
 
 /*
+ * Our client of exactly this name — the full name or the company, compared
+ * as normName compares — when exactly one of ours carries it. For the
+ * logistics app inside the ERP (30 Oct 2026, "the same client, one connected
+ * whole"): a name typed there that is one of ours links to ours, with no copy
+ * of the app's records needed. Two of ours with one name link nowhere.
+ */
+export async function oursByExactName(names) {
+  const want = new Map(); // as compared → every spelling asked for
+  for (const n of names) {
+    const k = normName(n);
+    if (!k) continue;
+    if (!want.has(k)) want.set(k, []);
+    want.get(k).push(String(n).trim());
+  }
+  if (!want.size) return new Map();
+  const { rows } = await query('SELECT id, forename, surname, nickname, company FROM clients WHERE deleted_at IS NULL');
+  const byNorm = new Map();
+  for (const c of rows) {
+    for (const k of new Set([`${c.forename || ''} ${c.surname || ''}`, c.company, c.nickname].map(normName).filter(Boolean))) {
+      if (!byNorm.has(k)) byNorm.set(k, new Set());
+      byNorm.get(k).add(c.id);
+    }
+  }
+  const byId = new Map(rows.map((c) => [c.id, c]));
+  const out = new Map();
+  for (const [k, spellings] of want) {
+    const ids = byNorm.get(k);
+    if (ids?.size !== 1) continue;
+    const c = byId.get([...ids][0]);
+    for (const typed of spellings) out.set(typed, { client_id: c.id, client_name: clientName(c) });
+  }
+  return out;
+}
+
+/* Every client of ours by name, for the app's own name lists: what somebody types there can be one of ours exactly. */
+export async function ourClientNames() {
+  const { rows } = await query('SELECT id, forename, surname, nickname, company FROM clients WHERE deleted_at IS NULL ORDER BY surname, forename');
+  return rows.map((c) => ({ id: c.id, name: clientName(c) })).filter((c) => c.name);
+}
+
+/*
  * Who a logistics client id is (a transaction's clientId, the app's own id):
  * its name and country, and which of ours it is — the same link as on the
  * Clients tab.

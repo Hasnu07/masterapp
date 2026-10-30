@@ -312,17 +312,47 @@ the logistics app on our own"):
   the ERP asks for and finds what it names (`#tab=…&q=…` on the frame, or a
   `postMessage`: a stock number's row scrolled to and marked, else the app's
   dashboard search on it; on Clients the name searched and the profile opened
-  when one matches), and marks every stock number ("#1461", a cell that is
-  only the number) and client name (a cell that is only the name) with a small
-  "ERP" link to OUR watch / OUR client — `POST /api/lg-app/links` decides by
-  the standing rule (`oursByNumber`, `linksByName`). Console: `logistics.js`
+  when one matches). **The two are one connected whole** (asked 30 Oct 2026:
+  "don't show the ERP button — every watch should be linked already because
+  it is the same watch"): every stock number the app shows that is OUR watch
+  IS the link to our watch, and every client name that is OUR client IS the
+  link to our client — the text itself wrapped (`.erp-link`, a dotted
+  underline, gold on hover), no badge; `POST /api/lg-app/links` decides: a
+  stock number is our watch of that number (`oursByNumber`), a name is our
+  client when exactly one of ours carries it (`oursByExactName`, compared as
+  `normName`), else as the copied records tie it to one (`linksByName`). A
+  stock number typed into one of the app's forms (`FORMS` in the bridge:
+  London / Dubai / HK rows, Incoming, Receive, 3rd-party shipment,
+  Transaction — by the ids of their fields) fills the watch in from the ERP
+  where the form's fields are still empty — brand (its select matched by
+  text), model, reference, serial, watch date, the HK description line
+  (`GET /api/lg-app/watch?no=`); and our clients' names are added to the
+  app's own name lists (`clientNameList`, `shipClientList`;
+  `GET /api/lg-app/clients`), so a name typed there can be ours exactly.
+  Nothing is written to the app's records by the ERP. Console: `logistics.js`
   is only this — one iframe in `#lg-app-host`, kept while other pages show,
   dropped at sign-out; `#/logistics/<tab>/<what>`; tabs map through
   `GROUPS[].app` (kinds.js, the app's sidebar in its order).
   `test/lgapp.test.js` against a stand-in Vercel.
 - **From our pages into the app, nothing of the copy shown.** The watch page's
-  "Find #1461 in Logistics →" (`#/logistics/dashboard/1461`) and the client
-  page's "See <name> in Logistics →" (`#/logistics/contacts/<name>`). The
+  **Logistics** button (asked 30 Oct 2026: "each logistics info … live
+  shipment, incoming, sold or in stock … as a window when I tap a button
+  named Logistics"; then "design a better window with Claude design") opens
+  a window in the console's own look (`showLogisticsWindow`, a `<dialog
+  class="lgw">`): the hidden frame hands over everything the app holds on the
+  stock number (the bridge's `passport-data`: incomings, the rows in every
+  stock list with their movements, sales, waiting deliveries, shipments,
+  courier shipments, accessory transactions and settlements, cost lines,
+  trips, polish; its clients' and movers' names; pictures made absolute to
+  the worker, which the console's `img-src` allows), and the window says in
+  one serif line where the watch is (sold → waiting for delivery → on its way
+  → on consignment → checked out → in a place → incoming), then its story
+  newest first with the pictures taken, the shipments, what moving it cost
+  per currency, every picture, and "See it in the logistics app" — the app's
+  own passport laid over the page in the same frame (`showLogisticsAppWindow`,
+  `#lg-app-host.as-window`, the bridge's `body.erp-window`). Asked again
+  every two seconds until the frame has loaded. The client page's "See <name> in Logistics →"
+  (`#/logistics/contacts/<name>`) opens the app's Clients tab. The
   Inventory card shows Ref, Serial and From (our client by Chrono Key's id,
   else as typed) — nothing from the logistics copy.
 - **The ERP's own logistics pages are gone.** 24–27 Oct 2026 had built every

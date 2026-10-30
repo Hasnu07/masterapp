@@ -12,7 +12,7 @@ import * as expenses from '../expenses/index.js';
 import * as logistics from '../logistics/index.js';
 import * as lgClients from '../logistics/clients.js';
 import * as lgShared from '../logistics/shared.js';
-import { mountLogisticsApp } from './lgapp.js';
+import { mountLogisticsApp, workerOrigin } from './lgapp.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -85,7 +85,8 @@ const PAGE_POLICY = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data: blob:",
+  // The logistics app's pictures, shown in the watch's Logistics window, live on its worker.
+  `img-src 'self' data: blob: ${workerOrigin()}`,
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
@@ -573,13 +574,30 @@ export function createServer() {
     need('viewer'),
     wrap(async (req, res) => {
       const list = (v, max) => (Array.isArray(v) ? v : []).slice(0, max).map((x) => String(x ?? '').trim()).filter(Boolean);
-      const [ours, people] = await Promise.all([lgShared.oursByNumber(list(req.body?.stock, 5000)), lgClients.linksByName(list(req.body?.clients, 2000))]);
+      const names = list(req.body?.clients, 2000);
+      // A name is our client when it is exactly one of ours; else as the copied records tie it to one (by the watches).
+      const [ours, exact, voted] = await Promise.all([lgShared.oursByNumber(list(req.body?.stock, 5000)), lgClients.oursByExactName(names), lgClients.linksByName(names)]);
+      const people = new Map([...voted].filter(([, l]) => l.client_id));
+      for (const [name, l] of exact) people.set(name, l);
       res.json({
         watches: Object.fromEntries([...ours].map(([no, w]) => [no, { id: w.id, title: w.title, status: w.status }])),
-        clients: Object.fromEntries([...people].filter(([, l]) => l.client_id).map(([name, l]) => [name, { id: l.client_id, name: l.client_name }])),
+        clients: Object.fromEntries([...people].map(([name, l]) => [name, { id: l.client_id, name: l.client_name }])),
       });
     })
   );
+  /* One watch of ours by its stock number, for the app's forms: a stock number typed there fills the watch in from the ERP. */
+  app.get(
+    '/api/lg-app/watch',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const no = String(req.query.no || '').trim();
+      const w = no ? (await lgShared.oursByNumber([no])).get(no) : null;
+      if (!w) return res.status(404).json({ error: 'No watch of ours has that stock number' });
+      res.json({ watch: { id: w.id, stock_no: w.stock_no, title: w.title, brand: w.brand, model: w.model, reference: w.reference, serial: w.serial, watch_date: w.watch_date, status: w.status, bought_from: w.bought_from, sold_to: w.sold_to } });
+    })
+  );
+  /* Every client of ours by name, for the app's own name lists. */
+  app.get('/api/lg-app/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await lgClients.ourClientNames() })));
 
   /* ── import ──────────────────────────────────────────────────── */
 

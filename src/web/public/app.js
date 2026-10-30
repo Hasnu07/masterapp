@@ -520,9 +520,9 @@ function renderWatch() {
               ${w.location ? `<span>${esc(w.location)}</span>` : ''}
               <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
             ${statusLine(w)}
-            ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() ? `<p class="count" style="margin:6px 0 0"><a href="${lgAppLink('dashboard', w.stock_no)}">Find #${esc(w.stock_no)} in Logistics</a></p>` : ''}
           </div>
           <div class="row actions">
+            ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
             ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
           </div>
@@ -544,6 +544,8 @@ function renderWatch() {
   renderGallery();
   renderWatchClients();
   renderDetails(groups);
+  // Whatever the logistics app has on this stock number, as a window over the page.
+  $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
