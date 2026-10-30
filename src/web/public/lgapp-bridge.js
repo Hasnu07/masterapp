@@ -280,6 +280,7 @@
     if (!r || (!r.tab && !r.passport)) return;
     if (!window._bootstrapDone) { pending = r; return; }
     if (r.passport) return showPassport(r.passport);
+    if (r.passportInApp) return showPassport(r.passportInApp, true);
     if (typeof showTab === 'function' && document.getElementById('tab-' + r.tab)) showTab(r.tab);
     if (!r.q) return;
     if (r.tab === 'clients') findClient(r.q);
@@ -356,7 +357,7 @@
     return {
       stock: no,
       meta: meta || null,
-      incomings: list('incomings', has),
+      incomings: list('incomings', function (r) { return has(r.stockNumber); }),
       london: list('londonStock', exact),
       dubai: list('dubaiStock', exact),
       hk: list('hkStock', exact),
@@ -383,8 +384,14 @@
     if (!window._bootstrapDone) { dataWanted = no; return; }
     tellErp({ erp: 'passport-data', stock: no, data: passportData(no) });
   }
-  function showPassport(no) {
+  function showPassport(no, inApp) {
     if (typeof openStockPassportModal !== 'function') return;
+    // In the app itself (the Logistics page, the app around it): the passport in front, nothing hidden.
+    if (inApp) {
+      if (typeof showTab === 'function') showTab('dashboard');
+      openStockPassportModal(no);
+      return;
+    }
     inWindow = true;
     document.body.classList.add('erp-window');
     openStockPassportModal(no);
@@ -449,7 +456,10 @@
       if (inWindow && typeof closeModal === 'function') closeModal('stockPassportModal');
       applyRequest({ tab: String(e.data.tab || ''), q: String(e.data.q || e.data.stock || '') });
     } else if (e.data.erp === 'passport') {
-      applyRequest({ passport: String(e.data.stock || '') });
+      if (e.data.inApp) {
+        if (!window._bootstrapDone) pending = { tab: 'dashboard', passportInApp: String(e.data.stock || '') };
+        else showPassport(String(e.data.stock || ''), true);
+      } else applyRequest({ passport: String(e.data.stock || '') });
     } else if (e.data.erp === 'passport-data') {
       answerData(String(e.data.stock || ''));
     } else if (e.data.erp === 'passport-close' && typeof closeModal === 'function') {

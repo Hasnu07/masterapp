@@ -135,10 +135,12 @@ const lgWinShell = (no, title, body) => `
   <div class="lgw-body" id="lgw-body">${body}</div>`;
 function lgWinBind(d) {
   d.querySelector('#lgw-close')?.addEventListener('click', () => d.close());
+  // "See it in the logistics app": the Logistics page — the app itself — with this watch's passport in front of it.
   d.querySelector('#lgw-app')?.addEventListener('click', () => {
     const no = lgWin.no;
     d.close();
-    showLogisticsAppWindow(no);
+    location.hash = '#/logistics';
+    setTimeout(() => lgApp.frame?.contentWindow?.postMessage({ erp: 'passport', stock: no, inApp: true }, location.origin), 50);
   });
 }
 
@@ -240,7 +242,7 @@ function lgWinRender(data) {
     place && lgWords(place.accessoriesMissing).length && ['Missing', lgWords(place.accessoriesMissing).join(', ')],
     weOwe.length && ['We owe', weOwe.map(item).join(', ')],
     theyOwe.length && ['Owed to us', theyOwe.map(item).join(', ')],
-    (data.polish || []).some((p) => !p.doneAt && !p.returnedAt) && ['Polish', `with ${(data.polish || []).find((p) => !p.doneAt && !p.returnedAt).sentTo || 'the polisher'}`],
+    rows.some((r) => r.polish) && ['Polish', `with ${rows.find((r) => r.polish).polish.sentTo || 'the polisher'} now`],
   ].filter(Boolean);
 
   // The story, newest first.
@@ -248,8 +250,15 @@ function lgWinRender(data) {
   const add = (t, title, detail = '', pics = [], tone = '') => ev.push({ t: lgWhen(t), title, detail, pics, tone });
   for (const i of data.incomings || []) {
     add(i.createdAt || i.date || i.eta, `Incoming from ${i.supplier || 'a supplier'}`, [i.location, i.eta ? `expected ${lgDay(i.eta)}` : '', i.status ? String(i.status).replace(/_/g, ' ') : ''].filter(Boolean).join(' · '), lgPicsOf(i), 'moving');
-    if (i.arrivedAt) add(i.arrivedAt, 'Arrived', i.arrivalRecord?.notes || '', lgPicsOf(i.arrivalRecord || {}), 'here');
-    if (i.receivedAt || i.inventoryDest) add(i.receivedAt || i.arrivedAt, `Received into ${i.inventoryDest || 'stock'}`, '', [], 'here');
+    const arrived = i.arrivedAt || i.arrivalRecord?.date || i.arrivalRecord?.ts;
+    if (arrived) add(arrived, 'Arrived', i.arrivalRecord?.notes || '', lgPicsOf(i.arrivalRecord || {}), 'here');
+    if (i.receivedAt || i.inventoryDest) add(i.receivedAt || arrived, `Received into ${PLACE[i.inventoryDest] ? `${PLACE[i.inventoryDest]} stock` : i.inventoryDest || 'stock'}`, '', [], 'here');
+  }
+  // Polish, as the app keeps it on the stock row: the one at the polisher now, and the ones done.
+  const polishes = rows.flatMap((r) => [...(r.polish ? [{ ...r.polish, _active: true }] : []), ...(r.polishHistory || [])]);
+  for (const p of polishes) {
+    add(p.sentDate || p.sentAt, `Sent to ${p.sentTo || 'the polisher'} for polish`, [p.itemDescription || '', p.takenBy ? `taken by ${p.takenBy}` : '', p.costAmount > 0 ? lgAmount(p.costAmount, p.costCurrency) : '', p.notes || ''].filter(Boolean).join(' · '), p.sentPhotos || [], 'warn');
+    if (!p._active && (p.returnedDate || p.returnedAt)) add(p.returnedDate || p.returnedAt, 'Back from polish', p.returnNotes || '', p.donePhotos || [], 'here');
   }
   for (const r of rows) {
     add(r.receivedAt || r.createdAt || r.dateAdded, `In ${r._place} stock`, [r.from ? `from ${r.from}` : '', r.status && r.status !== 'current' ? r.status : ''].filter(Boolean).join(' · '), lgPicsOf(r), 'here');
@@ -277,10 +286,6 @@ function lgWinRender(data) {
     const items = t.items || [];
     add(t.date || t.createdAt, `${t.type === 'sold' ? 'Sold to' : 'Bought from'} ${who(t.clientId) || 'a client'}`, items.length ? `${items.filter((x) => x.status === 'pending').length} of ${items.length} accessory item${items.length === 1 ? '' : 's'} still pending` : '', [], '');
   }
-  for (const p of data.polish || []) {
-    add(p.sentDate || p.date || p.createdAt, `Sent to ${p.sentTo || 'the polisher'} for polish`, p.cost ? lgAmount(p.cost, p.currency) : '', [], 'warn');
-    if (p.doneAt || p.returnedAt) add(p.doneAt || p.returnedAt, 'Back from polish', '', [], 'here');
-  }
   for (const t of data.trips || []) add(t.startDate, `Carried by ${t.personName || 'someone'}, ${t.fromLocation || '…'} → ${t.toLocation || '…'}`, [t.purpose, t.status].filter(Boolean).join(' · '), [], 'moving');
   ev.sort((a, b) => (b.t || 0) - (a.t || 0));
 
@@ -296,6 +301,10 @@ function lgWinRender(data) {
   const take = (list, label) => (list || []).forEach((p) => { if (p && !seen.has(p)) { seen.add(p); pics.push({ p, label }); } });
   (data.incomings || []).forEach((r) => take(lgPicsOf(r), 'Incoming'));
   rows.forEach((r) => take(lgPicsOf(r), r._place));
+  polishes.forEach((p) => {
+    take(p.sentPhotos, 'Before polish');
+    take(p.donePhotos, 'After polish');
+  });
   (data.sold || []).forEach((r) => take(lgPicsOf(r), 'Sold'));
   (data.shipments || []).forEach((r) => take(r.deliveryPhotos, 'Delivery'));
   (data.movers || []).forEach((r) => take(lgPicsOf(r), 'Courier'));
