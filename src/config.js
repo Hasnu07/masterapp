@@ -68,13 +68,6 @@ export const config = {
 
   /* Exchange rates for the converter under every price. Public, no key; the
      same two sources InvoiceWEB uses. Held a minute. */
-  /* The logistics app's AI features (route optimizer, AI flights, instructions parsed into a plan, market prices,
-   * Stock Take) ran on a Claude key in the app's settings, never copied here. masterapp's own key: without one the
-   * AI buttons say so and do nothing. */
-  ai: {
-    key: String(process.env.ANTHROPIC_API_KEY || '').trim(),
-    model: String(process.env.ANTHROPIC_MODEL || 'claude-opus-5-5').trim(),
-  },
   rates: {
     liveUrl: process.env.RATES_LIVE_URL || 'https://api.coinbase.com/v2/exchange-rates?currency=USD',
     dailyUrl: process.env.RATES_DAILY_URL || 'https://open.er-api.com/v6/latest/USD',
@@ -109,7 +102,8 @@ export const config = {
    * at a time (a page that shows one first copies it then).
    */
   logistics: {
-    enabled: bool(process.env.LOGISTICS_SYNC, bool(process.env.SYNC, true)),
+    // Off by default since 30 Oct 2026 ("stop the sync for logistics for now"): the app itself is Logistics in the ERP.
+    enabled: bool(process.env.LOGISTICS_SYNC, false),
     pollSec: Number(process.env.LOGISTICS_POLL_SEC ?? 60),
     photosPerPass: Number(process.env.LOGISTICS_PHOTOS_PER_PASS || 400),
     // Where the logistics app itself is (its Vercel address). The ERP serves it from there at /lg-app/, inside the

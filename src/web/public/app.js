@@ -145,11 +145,10 @@ function display(f, w) {
 function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
-  // #/logistics/<tab>/<stock number>: the logistics app's tab, scrolled to that watch.
+  // #/logistics/<tab>/<what>: the logistics app's tab, with a stock number (or, on Clients, a name) found there.
   const [, page, id, more] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics', 'lg-client': 'logistics', 'lg-erp': 'logistics' }[page] || page || 'inventory';
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
-  $('#app').classList.remove('lg-page', 'tabs-open');
   // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
   menu(false);
@@ -161,10 +160,6 @@ function route() {
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
   if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'logistics') return showLogistics(id, more);
-  if (page === 'lg-erp') return showLogisticsPages(id);
-  if (page === 'lg' && id) return showLogisticsItem(Number(id));
-  if (page === 'lg-new' && id) return showNewLogisticsItem(id);
-  if (page === 'lg-client' && id) return showLogisticsClient(Number(id));
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -362,10 +357,9 @@ async function loadList(more = false) {
 /*
  * An Inventory card (asked 26 Oct 2026: "more colour coded and simplify
  * it"). Colour says status only, as everywhere in the console: a band in the
- * status's colour across the top of the text, green for what came with it,
- * red for what is missing, blue for where it is moving. The facts sit in one
- * two-column list — the logistics app's stock card, read at a glance — and
- * the prices stand alone at the foot.
+ * status's colour across the top of the text. The facts sit in one two-column
+ * list, and the prices stand alone at the foot. What the logistics app knows
+ * about the watch is in the app itself now (30 Oct 2026), not on the card.
  */
 function tile(w) {
   // What we paid and, once sold, what it sold for (asked 26 Oct 2026: "instead of B2C show purchase price and sold price").
@@ -373,21 +367,11 @@ function tile(w) {
     w.purchase_price && ['Bought for', money(w.purchase_price, w.purchase_currency, { plain: true }), ''],
     w.sale_price && ['Sold for', money(w.sale_price, w.sale_currency, { plain: true }), 'sold'],
   ].filter(Boolean);
-  const received = w.received && (typeof w.received === 'number' ? dayWords(localDay(w.received)) : dayWords(w.received));
   const facts = [
     ['Ref', [w.reference, w.watch_date].filter(Boolean).join(' · ')],
     ['Serial', w.serial],
-    ['Received', received],
     ['From', w.bought_from],
   ].filter(([, v]) => v);
-  // Where it is moving or held for someone: a status of its own, in the "moving" blue.
-  const moving = [
-    w.in_safe && `In safe${w.in_safe.for ? ` for ${w.in_safe.for}` : ''}${w.in_safe.with_owner ? ', out with its owner' : ''}`,
-    w.hand_carry &&
-      `Hand carry${w.hand_carry.plan ? ` · ${w.hand_carry.plan}` : ''}${w.hand_carry.role ? ` · ${w.hand_carry.role}${w.hand_carry.to ? ` in ${w.hand_carry.to}` : ''}` : ''}${
-        w.hand_carry.date ? `, ${dayWords(w.hand_carry.date)}` : ''
-      }`,
-  ].filter(Boolean);
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
   return `<button class="tile st-${esc(status)}" data-id="${w.id}">
     <div class="pic">${
@@ -399,10 +383,6 @@ function tile(w) {
       <div class="m"><b class="tile-no">${w.stock_no ? `#${esc(w.stock_no)}` : 'No stock number'}</b>${chip(status)}${w.location ? `<span>${esc(w.location)}</span>` : ''}</div>
       <div class="t">${esc(w.title)}</div>
       ${facts.length ? `<div class="tile-facts">${facts.map(([k, v]) => `<div class="f"><span class="k">${k}</span> <span class="v">${esc(v)}</span></div>`).join('')}</div>` : ''}
-      ${w.accessories?.with.length ? `<div class="tile-acc ok"><b>With it</b> ${esc(w.accessories.with.join(', '))}</div>` : ''}
-      ${w.accessories?.missing.length ? `<div class="tile-acc miss"><b>Missing</b> ${esc(w.accessories.missing.join(', '))}</div>` : ''}
-      ${moving.map((t) => `<div class="tile-move">${esc(t)}</div>`).join('')}
-      ${(w.facts || []).map((f) => `<div class="tile-fact ${esc(f.tone || '')}">${esc(f.text)}</div>`).join('')}
       ${prices.length ? `<div class="p">${prices.map(([k, v, cls]) => `<div class="pr ${cls}"><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` : ''}
     </div>
   </button>`;
@@ -414,6 +394,53 @@ function tile(w) {
  * only the vault holds it — and what its Chrono Key page says.
  */
 const VAULT_LIST = { dubaiStock: 'Dubai stock', londonStock: 'London stock', hkStock: 'HK stock', soldStocks: 'sold', incomings: 'incoming' };
+/*
+ * The prices, as the one thing on the page set large (reshaped 30 Oct 2026):
+ * what we paid first, with Chrono Key's euro figure under it, then what we ask.
+ * A price not set is said once, quietly, not as a row of dashes.
+ */
+function priceStrip(w) {
+  const has = (n) => n !== null && n !== undefined && n !== '';
+  const asks = [
+    ['B2B', w.b2b_price, w.b2b_currency],
+    ['B2C', w.b2c_price, w.b2c_currency],
+    ['Chrono24', w.chrono24_price, w.chrono24_currency],
+  ];
+  const set = asks.filter(([, n]) => has(n));
+  const unset = asks.filter(([, n]) => !has(n)).map(([k]) => k);
+  const eur = has(w.purchase_price_eur) && w.purchase_currency !== 'EUR' ? `<small>${money(w.purchase_price_eur, 'EUR')} on Chrono Key</small>` : '';
+  return `<div class="prices">
+    <div class="price main"><span>Bought for</span><b>${money(w.purchase_price, w.purchase_currency) || '<span class="blank">not stated</span>'}</b>${eur}</div>
+    ${has(w.sale_price) ? `<div class="price sold"><span>Sold for</span><b>${money(w.sale_price, w.sale_currency)}</b>${w.sale_date ? `<small>${esc(fmtDate(w.sale_date))}</small>` : ''}</div>` : ''}
+    ${set.map(([k, n, cur]) => `<div class="price"><span>${k}</span><b>${money(n, cur)}</b></div>`).join('')}
+    ${unset.length ? `<div class="price unset"><span>Not priced yet</span><b>${esc(unset.join(', '))}</b></div>` : ''}
+  </div>`;
+}
+
+/*
+ * The watch's own facts in the dossier's head — the Watch and Specification
+ * fields that have something to say, except what the title and the chips say
+ * already; box, papers and service papers as one sentence.
+ */
+const HERO_SKIP = new Set(['stock_no', 'brand', 'model', 'reference', 'title', 'status', 'location', 'box', 'papers', 'service_papers']);
+function heroSpec(w) {
+  const facts = state.meta.fields
+    .filter((f) => (f.group === 'Watch' || f.group === 'Specification') && !HERO_SKIP.has(f.key) && !f.key.endsWith('_currency'))
+    .map((f) => [f.label, display(f, w), lockMarkOf(w, f.key)])
+    .filter(([, v]) => v);
+  const yes = [w.box === true && 'box', w.papers === true && 'papers', w.service_papers === true && 'service papers'].filter(Boolean);
+  const no = [w.box === false && 'box', w.papers === false && 'papers', w.service_papers === false && 'service papers'].filter(Boolean);
+  const comes = yes.length || no.length ? `<p class="with">${yes.length ? `Comes with ${esc(yes.join(', '))}` : 'Comes without'}${no.length ? `${yes.length ? '; no ' : ' '}${esc(no.join(', '))}` : ''}.</p>` : '';
+  return `${facts.length ? `<dl class="spec">${facts.map(([k, v, lock]) => `<div><dt>${esc(k)}</dt><dd>${v}${lock}</dd></div>`).join('')}</dl>` : ''}${comes}`;
+}
+/* A field edited here is kept as set: the mark says so, and an editor can hand it back to Chrono Key. */
+const lockMarkOf = (w, k) =>
+  (w.locked_fields || []).includes(k)
+    ? `<span class="lock" title="Edited in masterapp — the copy from Chrono Key and the vault will not overwrite it">✎ edited here${
+        can('editor') ? ` · <a href="#" data-unlock="${k}">use Chrono Key's</a>` : ''
+      }</span>`
+    : '';
+
 function statusLine(w) {
   const y = w.status_why;
   if (!y || w.origin === 'manual') return '';
@@ -460,41 +487,21 @@ async function showWatch(id, { keepEdit = false } = {}) {
     return;
   }
   const same = current?.w?.id === w.id;
-  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, logistics: same ? current.logistics : null, open: same ? current.open : {} };
+  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, open: same ? current.open : {} };
   renderWatch();
   loadSide(w.id);
-  loadWatchLogistics(w.id);
 }
 
 function renderWatch() {
   const { w } = current;
   const editor = can('editor') && !w.deleted_at;
   const groups = [...new Set(state.meta.fields.map((f) => f.group))];
+  // The dossier (30 Oct 2026): the brand small over the model and reference, as on a certificate; the watch's own
+  // facts beside its picture; the money as one ledger line at the foot. The rest of the record is below.
+  const brand = w.brand && w.display_title.toLowerCase().startsWith(w.brand.toLowerCase()) ? w.brand : '';
+  const title = brand ? w.display_title.slice(brand.length).trim() || brand : w.display_title;
   $('#app').innerHTML = `
-    <div class="watch-head">
-      <div>
-        <a href="#/" class="count" style="text-decoration:none">← Inventory</a>
-        <h1>${esc(w.display_title)}</h1>
-        <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
-          ${w.location ? `<span>${esc(w.location)}</span>` : ''}
-          <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
-        ${statusLine(w)}
-        <div id="lg-now"></div>
-        <div class="figures">${[
-          ['Purchase', w.purchase_price, w.purchase_currency],
-          ['B2B', w.b2b_price, w.b2b_currency],
-          ['B2C', w.b2c_price, w.b2c_currency],
-          ['Chrono24', w.chrono24_price, w.chrono24_currency],
-        ]
-          .map(([k, n, cur]) => `<div><span>${k}</span><b>${money(n, cur) || '<span class="blank">—</span>'}</b></div>`)
-          .join('')}</div>
-        ${w.description ? `<p class="desc">${esc(w.description)}</p>` : ''}
-      </div>
-      <div class="row">
-        ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
-        ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
-      </div>
-    </div>
+    <a href="#/" class="count back">← Inventory</a>
     ${
       w.deleted_at
         ? w.source_gone_at && w.source_gone_at === w.deleted_at
@@ -502,17 +509,35 @@ function renderWatch() {
           : `<p class="note">Deleted ${esc(fmtWhen(w.deleted_at))}. It stays deleted even when Chrono Key still lists it; restore it to bring it back.</p>`
         : ''
     }
+    <section class="panel dossier">
+      <div class="dossier-photo gallery" id="gallery"></div>
+      <div class="dossier-body">
+        <div class="dossier-top">
+          <div>
+            ${brand ? `<div class="brand-line">${esc(brand)}</div>` : ''}
+            <h1>${esc(title)}</h1>
+            <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
+              ${w.location ? `<span>${esc(w.location)}</span>` : ''}
+              <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
+            ${statusLine(w)}
+            ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() ? `<p class="count" style="margin:6px 0 0"><a href="${lgAppLink('dashboard', w.stock_no)}">Find #${esc(w.stock_no)} in Logistics</a></p>` : ''}
+          </div>
+          <div class="row actions">
+            ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
+            ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
+          </div>
+        </div>
+        ${heroSpec(w)}
+        ${w.description ? `<p class="desc">${esc(w.description)}</p>` : ''}
+        ${priceStrip(w)}
+      </div>
+    </section>
     <div class="watch-layout">
+      <form class="panel" id="details"></form>
       <div class="stack">
-        <div class="panel gallery" id="gallery"></div>
         <div class="panel" id="wclients"></div>
         <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
-        <div class="panel" id="lg-panel" hidden></div>
-        <div class="panel" id="acc-panel" hidden></div>
-      </div>
-      <div class="stack">
-        <form class="panel" id="details"></form>
       </div>
     </div>`;
 
@@ -520,7 +545,6 @@ function renderWatch() {
   renderWatchClients();
   renderDetails(groups);
   // Kept on `current`: Edit redraws the page without reading its side panels again.
-  renderWatchLogistics();
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
     renderWatch();
@@ -831,27 +855,43 @@ function renderDetails(groups) {
   const { w } = current;
   const form = $('#details');
   const locked = new Set(w.locked_fields || []);
-  const lockMark = (k) =>
-    locked.has(k)
-      ? `<span class="lock" title="Edited in masterapp — the copy from Chrono Key and the vault will not overwrite it">✎ edited here${
-          can('editor') ? ` · <a href="#" data-unlock="${k}">use Chrono Key's</a>` : ''
-        }</span>`
-      : '';
+  const lockMark = (k) => lockMarkOf(w, k);
 
+  // Reading: the rest of the record — Purchase, Prices, Sale, Notes — two across where the screen allows (.fgroups),
+  // one list down a phone. The Watch and Specification facts are in the dossier's head (heroSpec); the description
+  // too. A field with nothing in it is not a row of dashes but a count at the foot, shown on request.
+  form.classList.toggle('fgroups', !current.editing);
   if (!current.editing) {
-    form.innerHTML = groups
+    let empty = 0;
+    const sections = groups
       .map((g) => {
-        const fs = state.meta.fields.filter((f) => f.group === g && !f.key.endsWith('_currency'));
+        const inHead = g === 'Watch' || g === 'Specification';
+        const fs = state.meta.fields.filter((f) => f.group === g && !f.key.endsWith('_currency') && f.key !== 'description');
         const rows = fs
           .map((f) => {
             const shown = display(f, w);
-            return `<dt>${esc(f.label)}</dt><dd>${shown || '<span class="blank">—</span>'}${lockMark(f.key)}</dd>`;
+            const isEmpty = !shown && !locked.has(f.key);
+            if (isEmpty) empty += 1;
+            // In the head already: only its empty fields can appear here, and only on request.
+            const show = inHead ? current.showEmpty && isEmpty : !isEmpty || current.showEmpty;
+            return show ? `<dt>${esc(f.label)}</dt><dd>${shown || '<span class="blank">—</span>'}${lockMark(f.key)}</dd>` : '';
           })
           .join('');
-        return `<h3 style="margin-top:${g === groups[0] ? 0 : 18}px">${esc(g)}</h3><dl class="fields">${rows}</dl>`;
+        return rows ? `<section class="fgroup"><h3>${esc(g)}</h3><dl class="fields">${rows}</dl></section>` : '';
       })
       .join('');
-    $$('[data-unlock]', form).forEach((a) =>
+    form.innerHTML =
+      sections +
+      (empty
+        ? `<p class="fempty"><button type="button" class="linkish" id="show-empty">${
+            current.showEmpty ? 'Hide the empty fields' : `Show ${empty} empty field${empty === 1 ? '' : 's'}`
+          }</button></p>`
+        : '');
+    $('#show-empty')?.addEventListener('click', () => {
+      current.showEmpty = !current.showEmpty;
+      renderDetails(groups);
+    });
+    $$('#app [data-unlock]').forEach((a) =>
       a.addEventListener('click', async (e) => {
         e.preventDefault();
         if (!confirm('Hand this field back to Chrono Key? Its value will be replaced on the next sync.')) return;
@@ -1019,7 +1059,6 @@ async function loadClients(more = false) {
 }
 
 async function showClient(id) {
-  lcOurs.r = null; // each visit reads the logistics situation afresh (Edit and Cancel reuse it)
   let c;
   try {
     c = await api(`/api/clients/${id}`);
@@ -1043,7 +1082,7 @@ function renderClient(c, editing) {
           ${w.photo_id ? `<img src="/api/photos/${w.photo_id}?thumb=1" alt="" loading="lazy">` : '<span class="cw-none"></span>'}
           <span class="cw-main"><b>${esc(w.stock_no || '')}</b> ${esc(w.title)}<span class="count" style="display:block;margin:0">${chip(w.status)} ${esc(
             fmtDate(side === 'bought' ? w.purchase_date : w.sale_date)
-          )} <span class="cw-now" data-stock="${esc(w.stock_no || '')}"></span></span></span>
+          )}</span></span>
           <span class="cw-price">${dealPrice(w, side) || '<span class="blank">—</span>'}</span>
         </a>`
       )
@@ -1072,7 +1111,11 @@ function renderClient(c, editing) {
         <div class="panel"><h3>Sold to them · ${c.sold.length}</h3><div class="cw" id="cw-sold">${watchRows(c.sold, 'sold')}</div></div>
       </div>
       <div class="stack">
-        <div class="panel" id="c-logistics"><h3>Logistics</h3><p class="count">Reading the logistics app…</p></div>
+        ${
+          typeof lgAppOn === 'function' && lgAppOn()
+            ? `<div class="panel"><h3>Logistics</h3><p class="count" style="margin:0"><a href="${lgAppLink('contacts', c.name)}">See ${esc(c.name)} in Logistics →</a></p></div>`
+            : ''
+        }
         ${
           editing
             ? `<form class="panel" id="cform"><h3>Client</h3><div class="form-grid">${F.map((f) =>
@@ -1100,7 +1143,6 @@ function renderClient(c, editing) {
   });
   $('#cedit')?.addEventListener('click', () => renderClient(c, true));
   $('#ccancel')?.addEventListener('click', () => renderClient(c, false));
-  loadClientLogistics(c);
   $('#cform')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const patch = {};

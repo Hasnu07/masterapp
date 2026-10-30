@@ -35,19 +35,15 @@ copies go straight to R2. Move finished 23 Oct 2026, ~16:30 PKT.
 **Logins for the services** (Cloudflare, DigitalOcean, GitHub) are Hasnain's
 own accounts — with two-factor sign-in.
 
-**Logistics (from 24 Oct 2026).** The same `VAULT_TOKEN` now also copies the
-logistics app's records (CLAUDE.md, "Logistics"). Nothing new to set:
-`LOGISTICS_SYNC` follows `SYNC`. To stop only the logistics copy, set
-`LOGISTICS_SYNC=off`; `LOGISTICS_POLL_SEC=0` keeps it to the 15-minute pass.
-Its pictures go to the same R2 bucket.
-
-**The logistics app inside the ERP (from 30 Oct 2026).** The Logistics menu
-shows the app itself, read from its Vercel address (`LOGISTICS_APP_URL`,
-default `https://purosangue-watches.vercel.app` — nothing to set) and served
-at `/lg-app/` behind the sign-in, editors only. Its data stays on its own
-worker, so nothing moves and nothing is backed up here for it. If the app moves
-to another address, set `LOGISTICS_APP_URL`; `off` takes it out of the menu
-(the ERP's own logistics pages come back).
+**Logistics (from 30 Oct 2026).** The Logistics menu is the logistics app
+itself, read from its Vercel address (`LOGISTICS_APP_URL`, default
+`https://purosangue-watches.vercel.app` — nothing to set) and served at
+`/lg-app/` behind the sign-in, editors only. Its data stays on its own worker,
+so nothing moves and nothing is backed up here for it. If the app moves to
+another address, set `LOGISTICS_APP_URL`; `off` takes it out of the menu.
+The copy of its records into the ERP (24–30 Oct 2026, the same `VAULT_TOKEN`)
+is **off by default** now; `LOGISTICS_SYNC=on` copies again, into the same R2
+bucket for its pictures.
 
 ---
 
