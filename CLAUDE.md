@@ -348,9 +348,12 @@ the logistics app on our own"):
   one serif line where the watch is (sold → waiting for delivery → on its way
   → on consignment → checked out → in a place → incoming), then its story
   newest first with the pictures taken, the shipments, what moving it cost
-  per currency, every picture, and "See it in the logistics app" — the app's
-  own passport laid over the page in the same frame (`showLogisticsAppWindow`,
-  `#lg-app-host.as-window`, the bridge's `body.erp-window`). Asked again
+  per currency, every picture, and "See it in the logistics app" — the
+  Logistics page itself (the app) with the app's own passport in front of it
+  (the bridge's `passport` with `inApp`; the chrome-hidden window version,
+  `showLogisticsAppWindow` / `body.erp-window`, stays for the frame route).
+  Polish is read off the stock row (`polish`, `polishHistory`), as the app
+  keeps it; an incoming's arrival off `arrivalRecord`. Asked again
   every two seconds until the frame has loaded. The client page's "See <name> in Logistics →"
   (`#/logistics/contacts/<name>`) opens the app's Clients tab. The
   Inventory card shows Ref, Serial and From (our client by Chrono Key's id,
