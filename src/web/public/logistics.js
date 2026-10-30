@@ -395,7 +395,7 @@ function lgHeader(active, note = '') {
     }${lgGroups()
       .map(
         (g) =>
-          `<a href="#/logistics${g.key === 'overview' ? '' : `/${esc(g.key)}`}" data-g="${esc(g.key)}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${lgIcon(g.app)}${lgTabLabel(g)}</a>`
+          `<a href="${lgAppOn() ? '#/lg-erp' : '#/logistics'}${g.key === 'overview' ? '' : `/${esc(g.key)}`}" data-g="${esc(g.key)}" class="${g.key === active ? 'on' : ''}"${g.key === active ? ' aria-current="page"' : ''}>${lgIcon(g.app)}${lgTabLabel(g)}</a>`
       )
       .join('')}</nav>`;
 }
@@ -452,7 +452,66 @@ function lgCountBadges(active) {
 
 let lgSeq = 0;
 let lgShown = [];
-async function showLogistics(group) {
+
+/*
+ * Logistics IS the logistics app (asked 30 Oct 2026: "put the whole logistics
+ * app on the ERP, same how it already is"): the app's own page, served by the
+ * ERP at /lg-app/ behind the sign-in, in one frame under the bar. The frame is
+ * made once and kept while other pages show, so coming back costs nothing;
+ * #/logistics/<tab>/<stock number> opens the app's tab and scrolls to that
+ * watch (the bridge inside the frame does both — lgapp-bridge.js). The ERP's
+ * own logistics pages stay at #/lg-erp/<tab>, and a tab's plain lists at
+ * #/logistics/<tab>-all.
+ */
+const lgApp = { frame: null };
+const lgAppOn = () => Boolean(state.meta?.logistics?.app_embedded);
+const lgAppHost = () => document.getElementById('lg-app-host');
+/* The frame fills the screen under the bar, whatever height the bar wraps to. */
+function lgAppFit() {
+  const host = lgAppHost();
+  if (!host || host.classList.contains('hide')) return;
+  const bar = document.getElementById('bar');
+  host.style.height = `${Math.max(240, window.innerHeight - (bar ? bar.getBoundingClientRect().bottom : 0))}px`;
+}
+window.addEventListener('resize', lgAppFit);
+function lgAppHide() {
+  lgAppHost()?.classList.add('hide');
+  $('#app').classList.remove('hide');
+}
+/* Signed out: the app goes too — its page holds the key to its records. */
+function lgAppDrop() {
+  lgAppHide();
+  lgApp.frame?.remove();
+  lgApp.frame = null;
+}
+function showLogisticsApp(group, stock) {
+  if (!can('editor')) {
+    $('#app').innerHTML = `<h1>Logistics</h1><p class="count" style="max-width:560px">The logistics app saves straight into its own records, so it is for editors. Ask an admin for the editor role.</p>`;
+    return;
+  }
+  const g = lgGroups().find((x) => x.key === group);
+  const tab = g?.app || group || 'dashboard'; // a tab of ours, or the app's own tab name
+  const host = lgAppHost();
+  $('#app').classList.add('hide');
+  $('#app').innerHTML = '';
+  host.classList.remove('hide');
+  lgAppFit();
+  if (!lgApp.frame) {
+    lgApp.frame = document.createElement('iframe');
+    lgApp.frame.title = 'Purosangue Watches Logistics';
+    lgApp.frame.src = `/lg-app/#tab=${encodeURIComponent(tab)}${stock ? `&stock=${encodeURIComponent(stock)}` : ''}`;
+    host.appendChild(lgApp.frame);
+  } else {
+    lgApp.frame.contentWindow?.postMessage({ erp: 'tab', tab, stock: stock || '' }, location.origin);
+  }
+}
+async function showLogistics(group, more) {
+  if (lgAppOn() && !/-all$/.test(group || '')) return showLogisticsApp(group, more);
+  return showLogisticsPages(group);
+}
+
+/* The ERP's own logistics pages — every tab of the app drawn in the console's look (27 Oct 2026), now at #/lg-erp. */
+async function showLogisticsPages(group) {
   // "<tab>-all" is a tab's records as plain lists, one link from the tab's own page.
   const lists = /-all$/.test(group || '');
   if (lists) group = group.replace(/-all$/, '');

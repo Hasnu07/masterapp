@@ -112,7 +112,8 @@ export const config = {
     enabled: bool(process.env.LOGISTICS_SYNC, bool(process.env.SYNC, true)),
     pollSec: Number(process.env.LOGISTICS_POLL_SEC ?? 60),
     photosPerPass: Number(process.env.LOGISTICS_PHOTOS_PER_PASS || 400),
-    // Where the logistics app itself is (its Vercel address): the tabs' "Watch Vault ↗" link opens its vault page. None: no link.
-    appUrl: String(process.env.LOGISTICS_APP_URL || '').replace(/\/+$/, ''),
+    // Where the logistics app itself is (its Vercel address). The ERP serves it from there at /lg-app/, inside the
+    // Logistics menu (asked 30 Oct 2026), and its vault page is the tabs' "Watch Vault ↗" link. `off`: neither.
+    appUrl: (process.env.LOGISTICS_APP_URL ?? 'https://purosangue-watches.vercel.app').trim().replace(/^off$/i, '').replace(/\/+$/, ''),
   },
 };

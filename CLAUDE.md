@@ -744,6 +744,35 @@ masterapp copies it, the way it copies Chrono Key. `src/logistics`,
   Where the app writes no activity line, one is written in its toast's
   words. Pictures and documents go on after a record exists (the upload
   control `lgUploadCtl`, act-accessories.js, one for every tab).
+- **The logistics app itself IS the Logistics menu** (asked 30 Oct 2026: "put
+  the whole logistics app on the ERP same how it already is same ui same
+  buttons … linked with my clients and stock"; chosen: keep both apps running,
+  the app replaces the ERP's own tabs). `src/web/lgapp.js` reads the app's page
+  from its Vercel address (`LOGISTICS_APP_URL`, default
+  `https://purosangue-watches.vercel.app`; `off` = the ERP's pages back in the
+  menu) and serves it at `/lg-app/` — editors only (the app has no roles, and
+  its page holds its worker key), its own CSP (`appPolicy`: inline scripts,
+  cdnjs, its worker, OpenAI / Anthropic / GitHub, `frame-ancestors 'self'`), a
+  copy held a minute then re-asked with its ETag, the held copy served when
+  Vercel is down. Its own Vercel functions (`fetch('/api/claude')`, whatsapp,
+  dhl-track, app-version …) are rewritten to `/lg-app/api/…` and passed on
+  whole — method, query, body up to 30 MB, never the ERP's cookie; a write
+  must come from our own origin. Its worker calls (`CF_URL + '/api/state'`)
+  are untouched: **the app still saves to its worker**, and the ERP keeps
+  copying it — the ERP's own 171 actions and pages stay at `#/lg-erp/<tab>`
+  and the record pages, unlisted. Safe on a fresh origin: the app reads the
+  worker before it is allowed to write (`_cloudStateSeen`), so an empty
+  localStorage never pushes over the live document (its own pitfall 10).
+  `public/lgapp-bridge.js` goes first in its `<head>`: hides the app's own
+  sign-in (the ERP's stands in), opens the tab the ERP asks for
+  (`#tab=…&stock=…` on the frame, or a `postMessage`) and scrolls to the stock
+  number, and marks every stock number ("#1461", a cell that is only the
+  number) and client name (a cell that is only the name) with a small "ERP"
+  link to OUR watch / OUR client — `POST /api/lg-app/links` decides by the
+  standing rule (`oursByNumber`, `linksByName`). Console: `showLogistics` →
+  `showLogisticsApp` (one iframe in `#lg-app-host`, kept while other pages
+  show, dropped at sign-out), `#/logistics/<tab>/<stock>`; tabs map through
+  `GROUPS[].app`. `test/lgapp.test.js` against a stand-in Vercel.
 - First copy of the June snapshot (on a stand-in worker): 699 records, 18
   lists, 59 pictures. `npm run import -- logistics` runs it by hand.
 - **Found in the logistics app, for its owner** (not ours to fix): its

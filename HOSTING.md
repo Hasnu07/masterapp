@@ -41,6 +41,14 @@ logistics app's records (CLAUDE.md, "Logistics"). Nothing new to set:
 `LOGISTICS_SYNC=off`; `LOGISTICS_POLL_SEC=0` keeps it to the 15-minute pass.
 Its pictures go to the same R2 bucket.
 
+**The logistics app inside the ERP (from 30 Oct 2026).** The Logistics menu
+shows the app itself, read from its Vercel address (`LOGISTICS_APP_URL`,
+default `https://purosangue-watches.vercel.app` — nothing to set) and served
+at `/lg-app/` behind the sign-in, editors only. Its data stays on its own
+worker, so nothing moves and nothing is backed up here for it. If the app moves
+to another address, set `LOGISTICS_APP_URL`; `off` takes it out of the menu
+(the ERP's own logistics pages come back).
+
 ---
 
 Decided 22 Oct 2026. Photos, PDFs and documents go to **Cloudflare R2**; the
