@@ -13,6 +13,8 @@ import * as logistics from '../logistics/index.js';
 import * as lgClients from '../logistics/clients.js';
 import * as lgPages from '../logistics/pages/index.js';
 import * as lgActions from '../logistics/actions/index.js';
+import * as lgShared from '../logistics/shared.js';
+import { mountLogisticsApp } from './lgapp.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -167,7 +169,9 @@ export function createServer() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '1mb' }));
+  // The logistics app's own calls (/lg-app/api/…) are passed on whole, as they came — not read here.
+  const json = express.json({ limit: '1mb' });
+  app.use((req, res, next) => (req.path.startsWith('/lg-app/') ? next() : json(req, res, next)));
 
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
@@ -206,6 +210,9 @@ export function createServer() {
     if (!auth.can(req.user, role)) return res.status(403).json({ error: `This needs the ${role} role` });
     next();
   };
+
+  /* The logistics app itself, at /lg-app/ (lgapp.js). */
+  mountLogisticsApp(app, need);
 
   /* ── sign-in ─────────────────────────────────────────────────── */
 
@@ -585,6 +592,25 @@ export function createServer() {
   app.post('/api/logistics/items/:id/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.run(String(req.params.key), Number(req.params.id) || 0, req.body || {}, req.user, req.query))));
   // The tabs added 27 Oct 2026, one module each (src/logistics/pages).
   app.get('/api/logistics/page/:name', need('viewer'), wrap(async (req, res) => res.json(await lgPages.page(String(req.params.name)))));
+
+  /*
+   * The ERP's bridge inside the logistics app (lgapp-bridge.js) asks which of
+   * the stock numbers and client names the app shows are ours: a stock number
+   * is our watch of that number; a typed name is our client only as the
+   * Clients tab links it.
+   */
+  app.post(
+    '/api/lg-app/links',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const list = (v, max) => (Array.isArray(v) ? v : []).slice(0, max).map((x) => String(x ?? '').trim()).filter(Boolean);
+      const [ours, people] = await Promise.all([lgShared.oursByNumber(list(req.body?.stock, 5000)), lgClients.linksByName(list(req.body?.clients, 2000))]);
+      res.json({
+        watches: Object.fromEntries([...ours].map(([no, w]) => [no, { id: w.id, title: w.title, status: w.status }])),
+        clients: Object.fromEntries([...people].filter(([, l]) => l.client_id).map(([name, l]) => [name, { id: l.client_id, name: l.client_name }])),
+      });
+    })
+  );
   /* Search everything: our watches and clients, and the logistics records — nothing twice. */
   app.get(
     '/api/logistics/search',

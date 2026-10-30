@@ -34,6 +34,8 @@ export function catalog() {
   return {
     photoPrefix: photoPrefix(),
     app_url: config.logistics.appUrl ? `${config.logistics.appUrl}/watch-vault` : '',
+    // The app itself is served at /lg-app/ when its address is known: the Logistics menu then shows it (asked 30 Oct 2026).
+    app_embedded: Boolean(config.logistics.appUrl),
     groups: GROUPS,
     kinds: KINDS.map((k) => ({ key: k.key, label: k.label, group: k.group, fields: fieldsOf(k), place: k.place || '', theirs: Boolean(k.theirs) })),
   };

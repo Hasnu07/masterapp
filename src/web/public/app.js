@@ -145,10 +145,13 @@ function display(f, w) {
 function route() {
   if (!state.user) return showLogin();
   const hash = location.hash.replace(/^#/, '') || '/';
-  const [, page, id] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics', 'lg-client': 'logistics' }[page] || page || 'inventory';
+  // #/logistics/<tab>/<stock number>: the logistics app's tab, scrolled to that watch.
+  const [, page, id, more] = hash.split('/');
+  const section = { watch: 'inventory', client: 'clients', expense: 'expenses', lg: 'logistics', 'lg-new': 'logistics', 'lg-client': 'logistics', 'lg-erp': 'logistics' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   $('#app').classList.remove('lg-page', 'tabs-open');
+  // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
+  if (typeof lgAppHide === 'function') lgAppHide();
   menu(false);
   window.scrollTo(0, 0);
   if (!page) return showInventory();
@@ -157,7 +160,8 @@ function route() {
   if (page === 'client' && id) return showClient(Number(id));
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
   if (page === 'expense' && id) return showExpense(Number(id));
-  if (page === 'logistics') return showLogistics(id);
+  if (page === 'logistics') return showLogistics(id, more);
+  if (page === 'lg-erp') return showLogisticsPages(id);
   if (page === 'lg' && id) return showLogisticsItem(Number(id));
   if (page === 'lg-new' && id) return showNewLogisticsItem(id);
   if (page === 'lg-client' && id) return showLogisticsClient(Number(id));
@@ -194,6 +198,8 @@ document.addEventListener('keydown', (e) => {
 function showLogin() {
   menu(false);
   $('#bar').classList.add('hide');
+  // The logistics app's frame goes with the session: its page holds the key to its records.
+  if (typeof lgAppDrop === 'function') lgAppDrop();
   $('#app').innerHTML = `
     <div class="login panel">
       <h1>Purosangue ERP</h1>
