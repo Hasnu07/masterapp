@@ -30,11 +30,11 @@ src/
   import/chronokey/         client (ported), page parsers, sync
   import/vault/sync.js      the Watch vault → watches
   import/logistics/sync.js  the logistics app (same worker document) → logistics_items
-  logistics/                its lists (kinds.js), "right now" / history / costs (situation.js), the API's reads and edits
-  logistics/pages/          the app's pages, one module each (page() + forStock()); shared.js what they share
+  logistics/                the app's lists (kinds.js), moments and stages (situation.js), which client of ours a logistics client is (clients.js), our watch by stock number (shared.js)
   import/jobs.js            the timer, and the one-job-at-a-time lock
   web/server.js             the API
-  web/public/               the console — no build step, served raw; lg/<tab>.js + .css, one per logistics page
+  web/lgapp.js              the logistics app itself, served inside the ERP at /lg-app/
+  web/public/               the console — no build step, served raw; lgapp-bridge.js runs inside the logistics app
 test/                       node:test against stand-ins and a real Postgres
 ```
 
@@ -272,509 +272,98 @@ method, description, payment copy. `src/expenses`,
   is retried a day later, not never. First run on the live site: ~915 pages
   over the first five passes.
 
-## Logistics (24 Oct 2026)
+## Logistics (24 Oct 2026; the app itself since 30 Oct 2026)
 
-Asked for: copy the logistics app (Purosangue Watches Logistics, repo
-`11muhammadharis11-cloud/purosangue-watches`, private) into masterapp, with
-editing — "we all will switch to the masterapp as whole … no one will use
-either the logistic app or watch vault or even chronokey". Until then
-masterapp copies it, the way it copies Chrono Key. `src/logistics`,
-`import/logistics/sync.js`, migration 009.
+The logistics app (Purosangue Watches Logistics, repo
+`11muhammadharis11-cloud/purosangue-watches`, private, live on Vercel at
+`https://purosangue-watches.vercel.app`) is Jhonny's too. Its whole state is
+ONE JSON document on the puro-sync worker — the same `/api/state` the vault
+sync reads: about 35 lists (shipments, incomings, londonStock / dubaiStock /
+hkStock / safeStock / checkoutStock / hkSituation, readyForDelivery,
+soldStocks, personTrips, kashanPlans, thirdPartyMovers / thirdPartyShipments,
+logisticCosts, transactions, accCollect / accGive, externalPolish,
+driverDeliveries, clients, activity …), stock numbers as typed (split on
+`, ; newline`; "-" and "SHIP-…" are no watch; a trip names ROW ids with a list
+prefix), clients mostly as typed names (only transactions and shipments carry
+its client ids), pictures inline as base64, and its `settings` holding Chrono
+Key's password, FedEx and AI keys, the worker's key and the vault PIN.
 
-- **Its whole state is ONE JSON document** on the puro-sync worker — the
-  same `/api/state` the vault sync reads for its five stock lists. One
-  download per pass serves both steps (`fetchState({ reuse })`). About 35
-  lists: shipments, incomings, londonStock / dubaiStock / hkStock /
-  safeStock / checkoutStock / hkSituation, readyForDelivery, soldStocks,
-  personTrips, kashanPlans, thirdPartyMovers / thirdPartyShipments,
-  logisticCosts, transactions, accCollect / accGive, externalPolish,
-  driverDeliveries, clients, activity … (`src/logistics/kinds.js` names
-  them; a list it does not know yet is copied too, under its own name).
-- **Kept as documents, one row per record** (`logistics_items.data` jsonb),
-  not a table per list: the shapes keep changing. Same three layers:
-  `logistics_records` (as read), `logistics_items` (ours, `locked_fields` =
-  top-level keys edited here), `logistics_events`. Pictures inside records
-  (inline base64 — 90% of the document's bytes) are stored once each in
-  `logistics_files` and the record keeps `lgfile:<id>`; the worker's own
-  `/photos/` are copied too, a hundred a pass — the worker goes when the app
-  does. Served only behind the sign-in (`/api/logistics/files/:id`).
-- **Its `settings` are never copied**: they hold Chrono Key's username and
-  password, FedEx and AI keys, the worker's key and the vault PIN. Fields
-  that look like secrets are dropped at any depth (`isSecret`). **One
-  exception, asked 26 Oct 2026 ("rates and salaries")**: the travel
-  allowance's part, `settings.perDiem`, by NAMED keys only (`currency`,
-  `rates`, `travelDay`, `majorityHours`, `places`, `geo`, `salaries` —
-  `perDiemOf`), kept as the one record `perDiem` / `settings`, still
-  scrubbed. Nothing else in settings is ever read.
-- Same rules as the other copies: the app wins until the switch-over except
-  a field edited here; a record it drops is deleted softly and comes back
-  with it; a person's deletion stands; a list losing more than 3% (and ten)
-  at once is refused; `activity` (the app keeps its last 200 lines) never
-  mirrors a deletion. Never written back.
-- **About a minute behind, not fifteen**: the worker's `/api/version` (a few
-  bytes) is checked every `LOGISTICS_POLL_SEC` (60) and the document read
-  again when it moved; unchanged records are skipped by hash, and a pass
-  that found nothing new leaves no `import_runs` row. `LOGISTICS_SYNC` is
-  its own switch and follows `SYNC` when unset.
-- **Stock numbers join everything** (`stock_nos`, GIN-indexed): split on
-  `, ; newline` (the app's own rule), "-" and "SHIP-…" are no watch, and a
-  trip names its watches by ROW ids with a list prefix (`lon-`, `dubai-`,
-  `hk-`, `inc-`, `sold-`, `ready-`). Clients are mostly typed names there;
-  only transactions and shipments carry client ids — not linked to our
-  clients (by id only, never by name).
-- **"Right now" on the watch page** (`situation.now`): sold (and delivered)
-  → sold, waiting for delivery → checked out → in a place (London, Dubai,
-  Hong Kong, the safe — a client's), maybe on consignment or at polish → the
-  HK list → on its way in; and on top, what is moving it — a shipment not
-  delivered (the carrier's stage first: FedEx's codes, then the words — the
-  app's own `shpStageFrom`), a mover, a trip, a driver, accessories still to
-  give or collect. Under the photos: its logistics history, what moving it
-  cost, its records. Refreshed every minute while open. **Tracking is only as
-  fresh as the logistics app's open tabs**: its worker's cron does not save
-  carrier results into the document.
-- **Costs = the app's own `costsForStock`, line for line** — logistic costs
-  split evenly over the watches they name (a trip's lines counted with the
-  trip), a shipment's own cost unless a cost line stands for it, trip lines
-  split over its watches, the purchase from the incoming. Checked on the
-  June snapshot: all 172 watches equal to the app's function run on the same
-  data. Amounts stay in their own currency.
-- **The console**: one Logistics entry in the menu; its tabs across the top
-  (Overview first), a tab's lists in a row under them. Every record has its
-  page: its fields (typed ones with proper controls, the rest as plain
-  fields), its lists and pictures, its history, edit / delete / restore /
-  "use the logistics app's".
-- **The Overview is the logistics app's dashboard** (asked 24 Oct 2026):
-  its counters and deliveries donut, accessories, logistic cost per currency
-  and in ONE currency at the converter's rates (not the app's fixed table;
-  waits at most 1.5 s for them, then the last table, marked not fresh), Need
-  Polish with Send / Done (Send writes the polish and its cost line, as the
-  app does; locked here), and what is moving now. A delivery date counts as
-  late only when written YYYY-MM-DD or DD/MM/YYYY. Refreshed every minute; a
-  failed refresh keeps the figures and says so.
-- **Search everything, nothing twice** ("aligned with our stock and clients,
-  not making duplicates"): a watch is OUR watch — also when found through its
-  logistics row — shown once with where it is now; a stock row of a watch we
-  hold is not listed again; one we do not hold is ONE record (the row that
-  says where it is). A bare number is a stock number exactly ("1668" never
-  finds 11668 or a timestamp). A logistics contact is hidden only when our
-  client of that name is in the same answer. Chips: the HK list by its
-  section; the safe (clients' watches) only under All; moved copies never.
-- **In Safe** (asked 26 Oct 2026): a Logistics tab, the logistics app's own
-  In Safe page — clients' watches we hold, NOT our stock, never priced. Its
-  `safeStock` rows still in the safe (a row a move left behind is history),
-  each with who it is for (the row's `from`, the app's Owner), out with its
-  owner (`withClient`), polish, what is missing; and "Accessories in the safe":
-  `accGive` rows ticked `inSafe`. Cards or a list, searched and sorted in the
-  page; a card opens its record, and our watch of that number is linked
-  (`inSafe()`, `/api/logistics/in-safe`). The tab shows how many watches. On
-  the Inventory tiles a watch in the safe says "In safe · for <name>"
-  (`listWatches` → `in_safe`), and the watch page's "right now" names them.
-  The app's Give / Move / Sold buttons are not here: Give and the rest write
-  into the logistics records, so open the record and edit it. The owner (a
-  typed name) links to the logistics client of that name, and to OUR client
-  only as that one is linked — by its watches, the Clients tab's rule
-  (`linksByName`); a name no logistics client carries links nowhere.
-- **Checked out** (asked 26 Oct 2026, "same rule that each client and stock
-  should be linked"): a Logistics tab, the app's Checkout page — watches held
-  somewhere for a while, not sold (`checkoutStock`; a row with status
-  returned / moved / sold / done is history). Each linked to our watch of that
-  number and through it to OUR clients — bought from, sold to, Chrono Key's
-  ids — never from the typed reason ("Given back to Khawar"). The app lists a
-  watch again each time it is checked out without a return (1439 three
-  times): one entry here, the earlier rows under it; "-" and "xxxxxx" are no
-  number and never merged. The HK rows' description repeats the number and
-  brand ("1508 · Patek Philippe · 5396R-016"): stripped for the model. From
-  (Hong Kong / Dubai / London) as chips, days out, list or cards
-  (`checkedOut()`, `/api/logistics/checked-out`). The tab shows how many.
-  Return / delete are the record's edit and delete, not buttons here.
-- **Hand carry** (asked 26 Oct 2026, "same rules, same linking shown against
-  a watch stock on main"; "make sure the ui remains consistent" — the
-  console's look, not the app's): a Logistics tab, the app's Hand Carry /
-  Mission Plan page (`kashanPlans`). A plan = `name`, `currentCity` (the
-  start), `legs` (stops: `toCity`, `date`, `time`, `flightInfo`,
-  `flightCost` + `flightCostCurrency`) with `deliveries` (from Ready for
-  delivery: `readyId`, the buyer `clientName`), `collections` (incomings:
-  `incId`, `supplier`) and `stockMoves`; `status: 'completed'` +
-  `completedAt` = Plans History. Read from the app's own code, not guessed.
-  Every watch linked to ours and its clients by id; the typed buyer /
-  supplier via `linksByName`. Open plans, history, and "Waiting for a plan"
-  — the app's two side lists (Ready for delivery not shipped, incomings
-  pending / in transit), each saying which open plan has it (by its row id,
-  as the app assigns). On our watch: the Inventory tile ("Hand carry ·
-  Cristian · deliver in UAE, 25 Aug 2026", `listWatches` → `hand_carry`),
-  "right now" and the history (`situation.planStops`; `forWatch` passes the
-  stock number). `handCarry()`, `/api/logistics/hand-carry`. Adding stops,
-  assigning, AI flights, optimise, send to movements: the record's edit.
-- **Transactions** (asked 26 Oct 2026: "same rules, don't show this in card
-  but under the stock of a watch where logistic tab is"): a Logistics tab,
-  the app's All Transactions page (`transactions`: `type` bought / sold,
-  `date`, `clientId` — the APP's client id, `stockNumber`, `brand`,
-  `reference`, `items` [`accessory`, `qty`, `direction` give / get, `status`
-  pending / done]; `settlements` by `txId` + `itemIds`, `direction` give /
-  receive — read from the app's code). Filters as the app: type, country
-  (the logistics client's), client. "n/m pending", what we give and what
-  they give. Linked: the watch to ours and its clients; `clientId` → the
-  logistics client → ours as that one is (`linksByClientId`). On the WATCH
-  PAGE, a "Transactions" section beside What it cost / History / Records
-  (`forWatch` → `transactions`, `txViews`); not on the Inventory tile.
-  Give / settle / edit: the record's edit. An item's way is the app's own
-  rule (its Accessories page): `direction: 'give'` is ours to give,
-  anything else the client's to give us.
-- **Accessories** (asked 26 Oct 2026, "same rule show against each
-  watch"): the Logistics → Accessories tab is now the app's Accessories
-  Management page (`accessoriesSummary()`, `/api/logistics/accessories`),
-  counted as the app counts — pending items by quantity; by accessory
-  exactly as typed ("Links" / "links" two lines, as there); by brand (we
-  owe / owed to us / transactions); by client grouped by the client's
-  country, one row per transaction and direction, each row linked to our
-  watch and the client. A client the app does not list shows, not dropped.
-  Its old lists (To collect, To give, Settlements, Swaps) are at
-  `#/logistics/accessories-all`. **On the watch page**, an Accessories
-  panel under Logistics ("what is missing against that watch and what we
-  have"): Has (Chrono Key's box / papers / service papers / accessories, the
-  place row's `accessoriesPresent`, what a client handed over), Missing
-  (Chrono Key's "no", the row's `accessoriesMissing`, what a client still
-  owes us, `accCollect`), We owe (pending give, `accGive`, in our safe),
-  Given. `forWatch` → `accessories` (`accessoriesOf`).
-- **Incoming** (asked 26 Oct 2026, "the same tab, the same features, the
-  same way"): the Logistics → Incoming tab is the app's Incomings page,
-  rules read from its code (`incomingPage()`, `/api/logistics/incoming`):
-  location / supplier / destination (`inventoryDest` London · Dubai · Hong
-  Kong is the firm answer, else the typed `destination`), status, the
-  owner's decision (`ownerDecisionId` → `ownerDecisions`; none = Decision
-  needed, `fromFob` = Not asked yet; its words as the app's `odDescribe`);
-  history = arrived / cancelled / shipped / taken into stock, its day the
-  stock row's `receivedAt` else `arrivedAt`. Head line, four counters,
-  Needs attention (in transit, arriving this week, no destination), By
-  location / By supplier, List / Map (the app's route board into Dubai; the
-  countries also as buttons, the drawn names hidden on narrow screens), five
-  filters + search, cards per country → supplier → rows, "7 to decide · 1
-  with owner", Received & past, Picked from Chrono Key (`fobPicked`, shown).
-  Rows linked to our watch and its clients; the typed client via
-  `linksByName`. **Its record-changing buttons wait for the switch-over**
-  (asked: Add, Import CSV, Mark Arrived, Receive to inventory, Create
-  shipment, Mark sold, Add cost, Ask Owner, Plan Collections, Pick from FOB
-  — masterapp never writes back): a row opens its record. Old lists at
-  `#/logistics/incoming-all`.
-- **Movement** (asked 26 Oct 2026, "the same tab … our rule of stock no
-  and clients stays"): the Logistics → Movement tab (key `trips`, was "Trips") is the app's Movement tab,
-  person travel cost (`movementPage()`, `/api/logistics/movement`): filters
-  (from / to, person, status, search), the trip summary (dollars at the
-  converter's rates — not the app's fixed `FX_TO_USD`, as the Overview —
-  per person, and each currency's own total), By trip (grouped by person)
-  or Combined (every cost line, by category / person / route). A trip: its
-  route chain, dates, status, purpose, the watches it carried (ours, with
-  their clients), the **travel allowance** and its expenses by leg. The
-  allowance is the app's own `tripAllowance` ported line for line into the
-  console (`pd…` in logistics.js): computed in the BROWSER by its clock, as
-  the app does, from the copied `perDiem` settings — regions and rates, a
-  place mapped by hand first, one-slip names ("Blogna"), the day to a place
-  held more than `majorityHours` else where he landed last (or the app's
-  other two rules), overrides and extras, By place, Time there, the date
-  warnings, the salary note. Checked against the app's own figures (Ben
-  London → Dubai 17 Jun: 1 day EUR 100 "over 12h in Dubai"; Boss Dubai → HK
-  → Dubai: HK 15 Jul + Dubai 16 Jul, EUR 200). Allowance rates shown
-  read-only. Add trip, complete, add allowance to expenses, edit, delete:
-  wait for the switch-over; Open shows the record, Copy details copies it.
-  Old lists at `#/logistics/trips-all`.
-- **3rd party movers** (asked 27 Oct 2026, "the same tab … our rule of
-  stock no and clients stays"): a Logistics tab, the app's 3rd Party Movers
-  page (`moversPage()`, `/api/logistics/movers`; `thirdPartyMovers` +
-  `thirdPartyShipments`, read from its code). Movers table (shipments, how
-  many with customs, value of watches, customs paid in USD and AED, mover
-  cost = `amount` in dollars unless `notPayable`, and the total across
-  movers); Shipments summary (mover cost, value of watches moved, paid to
-  movers, still to pay = pending + partial, each currency); Shipments with
-  the app's filters (mover, from / to country, status, payment, ownership,
-  from / to date, search) and sort (its custom `sortOrder`, date, country,
-  mover). A shipment's mover by the app's `moverId`, else its typed name.
-  `isOurStock` → the stock number links to our watch and its clients; a
-  friend's watch is only its description, never linked by number; the typed
-  `fromClientName` via `linksByName`. Dollars at the converter's rates.
-  Read-only outputs kept: Copy, Export (a .csv Excel opens), Print, the
-  Customs sheet (valued shipments by mover, printable) and each mover's
-  "Coming to them" (not landed yet, with documents). Add / import / edit /
-  delete / not payable / templates: wait for the switch-over.
-- **Shipments** (asked 26 Oct 2026, "the same tab … make sure our rule of
-  stock no and clients stays"): the Logistics → Shipments tab is the app's
-  Live Shipments + Need to Give and Collect (`shippingPage()`,
-  `/api/logistics/shipping`), read from its code. Live: shipments pending /
-  in transit, one card per shipment however many stock numbers it carries;
-  the stage = `situation.stage` (the app's `shpState`: no tracking, pending,
-  booked → picked up → in transit → customs → delivered, exception from the
-  carrier); from / to = the app's client by `fromClientId` / `toClientId`
-  (name + country) else the typed place, its country picked out of the words
-  (`shpCountryIn`); cost = `costAmount` + `costCurrency` else the old typed
-  "USD 1,200"; a watch we do not hold is described from its logistics row
-  (`lookupStockMeta`). Counters (active, in transit, needs attention =
-  exception or no tracking, delivered this week, cost per currency), the
-  carrier's latest word as a still strip (not the app's moving ticker), four
-  filters + search, the exception alert, a card opened shows progress, its
-  watches (ours linked) and the details; Delivered this week under them.
-  Give & collect: Ready for delivery (sold, awaiting handover or its
-  shipment's status; the total in dollars), Accessories to collect (`accCollect`),
-  the client situation report = the logistics client's own page (printable),
-  Need to give to clients (`accGive`, "In our safe"). Every watch → ours and
-  its clients; a client id → ours as the logistics client is; a typed buyer
-  / client via `linksByName`. **The buttons that change records wait for the
-  switch-over** (as for Incoming); read-only ones stay: open the record,
-  track with the carrier (FedEx / DHL / 17TRACK page), copy the tracking
-  number, print. Old lists at `#/logistics/shipments-all`.
-- **The Inventory card = the logistics app's stock card too** (asked 26 Oct
-  2026, "show these same things on card"): Ref · watch date, SN, Received
-  (the place row's `receivedAt` — milliseconds shown on the browser's own
-  calendar), From (our client by Chrono Key's id, else the typed purchased
-  from, else the row's `from`), ✓ what came with it (`accessoriesPresent`)
-  and Missing (`accessoriesMissing`) — from the London / Dubai / HK row it
-  is in now, never one a move left behind (`listWatches` → `received`,
-  `bought_from`, `accessories`). The app's "Add cost price" is not here.
-  Colour-coded and simplified (asked the same day): a band in the status's
-  colour over the text (green in stock, blue incoming, gold sold, red
-  deleted), the facts in one two-column list (one line each on a phone), a
-  green "With it" and a red "Missing" box, blue for in safe / hand carry,
-  the photo count on the picture. At the foot **Bought for** and, once sold,
-  **Sold for** — not B2C ("instead of B2C show purchase price and sold
-  price"); a purchase with no currency stated shows the bare figure.
-- **Each client's logistics situation** (asked 24 Oct 2026): the Logistics
-  tab "Clients" (was Contacts) lists every logistics client, which of OUR
-  clients it is, and what is open; a client's page (`#/lg-client/<id>`) adds
-  up what the app's own client page shows — with them now, accessories owed
-  either way (the transactions' pending items, plus what a watch bought from
-  them arrived without), their watches with where each is now, shipments,
-  what was given and collected. Our client's page has the same in a Logistics
-  panel, and "now: …" on each of their watches. `src/logistics/clients.js`.
-- **Which of ours it is — by the watches, not the name.** Live: 197 logistics
-  clients, 107 match one of our 647 by name, 87 none, 30 names twice there.
-  So the stock numbers the app ties to the client (purchases by its client
-  id, incomings by supplier, sales by buyer, a place row's "bought from")
-  vote for who OUR watch with that number was bought from / sold to
-  (Chrono Key's ids). A shipment only backs a match up, never makes one (a
-  forwarder in Belfast sent three watches bought from a dealer in Spain); ONE
-  watch alone links only when the names look alike ("Victor" / "viktor",
-  "Shouaib" / "suhaib" — `namesAlike`), and a place or placeholder typed as a
-  client ("HK", "Need to confirm") is never linked on its own — first live
-  read: 144 linked by watches, 15 by name, 30 not, and these slipped through
-  (the polisher "Sina Star", "HK" → robin casanova) until this rule; a
-  full name decides only when no watch does. Worked out each time it is shown
-  (held 30 s); a person's choice (`logistics_client_links`, migration 010,
-  NULL = "none of ours") always wins and goes in the record's history.
-- **Every tab of the app, in its own order** (asked 27 Oct 2026: "all these
-  tabs in my logistic side tabs … keep each page how it is in the logistic
-  vercel app … the client and watch rule stays intact"). `GROUPS` in
-  `kinds.js` is the app's sidebar, entry for entry (its `app` key names the
-  app's tab, for anyone reading its code); `#/logistics` with no tab is the
-  Dashboard. The console draws them as the app does — a column down the left
-  on a wide screen (`#app.lg-page`, a grid; the app's own icons, `lg/icons.js`),
-  behind a button naming the tab shown on a narrow one (never a sideways
-  scroll). `LOGISTICS_APP_URL` adds the app's "Watch Vault ↗" link at the top.
-  Each page added that day is **one module each side**:
-  `src/logistics/pages/<key>.js` — `page()` behind
-  `GET /api/logistics/page/<key>`, and `forStock(stockNo, rows, ctx)`: what
-  the page knows about one watch, as short facts — and
-  `src/web/public/lg/<key>.js` + `.css`, registering `LG_PAGES.<key>`
-  (`showLogistics` dispatches to it; `#/logistics/<key>-all` is the tab's
-  records as plain lists). What every page shares — the kinds, the logistics
-  clients by id, the readers of the app's loosely typed values, and the link
-  from a stock number to OUR watch and its clients (`oursByNumber`) — is in
-  `src/logistics/shared.js`. **The facts reach the watch** through
-  `pages/index.js` `factsFor(stockNos)` (one read for a page of tiles):
-  `listWatches` puts them on each Inventory card (`.tile-fact`, in the fact's
-  tone) and `forWatch` under "Right now" on the watch page, each a tag opening
-  its tab — so a stock number says where the app has it (on consignment, at
-  polish, with a driver, its pickup code …) without opening every tab. On a
-  PC being worked on the console page is fingerprinted on each request, so an
-  edited script shows on reload; in production once, at start-up.
-  The pages, each read from the app's own render code and checked on the live
-  copy (27 Oct 2026); on every one, the buttons that CHANGE the app's records
-  (add, edit, mark, send, assign, delete) wait for the switch-over — a row
-  opens its record — and anything needing the app's AI / WhatsApp / carrier
-  keys says so in a line:
-  - **London / Dubai / HK Stock** — one engine, three places (the app's
-    `renderLondonStock`): in stock = status current or consignment, list or
-    cards, the stock card per row, chips (shelf, consignment either way,
-    polish, the place's corners, not ours), History (moved rows), Spares, and
-    on HK the app's situation board too (`hkSituation`: in hand / incoming /
-    outgoing / sold, holders — the app reaches it without a nav entry).
-    Live: London 21 in / 71 moved, Dubai 120 / 17, HK 4, board 11.
-  - **In Consignment** — stock rows with status consignment (`consignment`:
-    direction to_client / from_client, with, date, returnDate) and incomings
-    with status consignment; a row a sold/ready record names as its origin is
-    left out, as the app does. Live 6 + 8 + 0.
-  - **Sold Stocks** — the app's revenue / costs / profit / margin in dollars,
-    here at the converter's rates (the app's fixed table is why its revenue
-    reads $21.98M and ours $22.10M); costs = `situation.costs` lines INCLUDING
-    the purchase, as the app sums them; our sale price and sold-to client (by
-    id) beside the app's typed buyer; a sale opens in place. Export CSV added.
-  - **Refinement** — need / at polish / completed / spend; Send and Back use
-    the one write already allowed (`polishAction`). A row on consignment at
-    the polisher is shown (the app hides it: live "00000").
-  - **Missing Accessories** — the app's parser and canonical names ported
-    verbatim (`links` → Link, `manual` → Booklet …); counted by location →
-    brand → accessory, what clients still owe us (pending `receive` items),
-    the printable sheet; plus "Chrono Key says" (our box / papers = false).
-    Live: 30 rows, 79 items / 29 types, 210 owed by 33 clients — identical.
-  - **Accessory History** — every transaction newest first with its items
-    (we owe / they owe) and settlements (`settlements` by `txId`+`itemIds`,
-    proof photos). **Swaps** — the app's `saveSwap` shape (give / receive tx
-    + item, both marked done by the swap's id); 0 live.
-  - **Logistic Cost** — the ledger with the app's totals per currency (301
-    lines: AED 158,437.83 … = the SQL sums), filters, a Source tag (a line the
-    app wrote for a shipment / mover shipment / trip / polish opens it), and
-    the whole in dollars at the converter's rates. **Route Optimizer** —
-    everything but the two AI calls: available watches by place, the cargo
-    summary, "historical costs on this route" (shipments by carrier, movers,
-    cost lines, completed trips' legs — a cost line written FOR a shipment is
-    not counted twice, which the app does).
-  - **Owner Decisions** — the `od*` family ported line for line (statuses incl.
-    `fromFob` → not asked, review due, stale, execution queue, consolidations,
-    the brief's text with Copy). Live: 21 decision needed + 2 sent. A tab
-    badge counts decisions waiting. Also lists every decision record (the app
-    shows one only while its incoming is live) and the briefs sent.
-  - **Driver Deliveries** (out / delivered / money collected, dollars at the
-    converter's rates; live 6 delivered, AED 400,000), **Pickup Codes** (the
-    app's `buildPickupMessage` word for word, Copy message A / B; address read
-    live from the saved one), **Logistics Addresses** (uses by pickup codes, a
-    map link only for a street address — 4 of the 17 are e-mails, 2 links;
-    two hold what looks like an e-mail password, the app's own data),
-    **Gold Souk** (open / completed, by person and shop, Copy all tasks = the
-    app's text; WhatsApp share needs its settings).
-  - **Companies** (firms we ship / invoice through — `state.companies`; the
-    client list's `isCompany` rows are OUR places, shown apart), **Shipment
-    Documents** (the app's filters and four orders; the 9 live files are on the
-    app's Supabase bucket, never on the worker, so they open there — not
-    embedded, CSP), **Activity** (the last 200 lines grouped by day, a line's
-    stock number read in the app's own wordings — `stockNosInLine` in
-    kinds.js, so the sync gives activity rows `stock_nos` too; to-dos belong
-    to its notepad, not here), **Watch Vault Activity** (notifications read as
-    the app reads them + who holds which watch from `vaultTracking`, which
-    vault.html writes keyed by the stock row's id — 11 of 19 live keys are rows
-    the app dropped, named through the row's last copy here), **Other
-    Receiving Pics** (passports etc., behind the sign-in).
-  - **Stock numbers in words**: gold souk tasks and pickup codes have no stock
-    field — `stockField: 'words'` reads "Stock # 1229" / "#1229" out of named
-    fields (never a bare figure); `STOCK_RULE` in the sync's hash makes a
-    changed rule re-apply every record once. A fact two pages agree on (the
-    place's row and Refinement both know it is at polish) is said once.
-  - Still on this PC's copy only: `purchased_from_client_id` / `sold_to…` are
-    NULL here (the client sync has not run locally), so no logistics client
-    resolves to one of ours; live data does.
-- **The app's workflows, done here** (asked 27 Oct 2026: "all the features
-  in the logistic side in the erp system to do entries … keeping our same
-  rule"). Every button of the app that changes records — Add Row, Import
-  CSV, Move, Consign, Sold, Checkout, Cost, Polish, Mark Arrived, Receive,
-  Ask Owner, New Plan, Give to driver … — is an ACTION in
-  `src/logistics/actions/<domain>.js` (stock, sales, incoming, decisions,
-  shipping, movers, costs, plans, dubai, accessories, records): `{ key,
-  label, kinds | page, form, prefill, run }`, each ported from the app's own
-  function record for record (which list gets a row, which row its status
-  and `movements` entry, which cost line with which ids, the `logActivity`
-  line), inside ONE transaction on `src/logistics/write.js` — `insertItem`
-  (origin manual, the app's `id` shape, stock_nos as the sync reads them),
-  `patchItem` (every changed top-level field on an app copy is LOCKED
-  against the sync — the standing rule), `softDelete`, `logActivity`, the
-  typed-field checks (`clean`). Routes: `GET/POST /api/logistics/act/:key`
-  (page-level), `GET/POST /api/logistics/items/:id/act/:key`,
-  `GET …/act/:key/template` (a CSV import's template),
-  `POST /api/logistics/items/:id/files?field=photos` (pictures / PDFs into
-  `logistics_files`, named `lgfile:<id>` in the record's list). Editors only.
-  The console: any `[data-act]` button opens the action's form (from the
-  GET) in a dialog and runs it (`lgRunAction`); the record page draws every
-  action of its kind beside Edit; a tab draws its page-level actions with
-  `lgActionBar('<tab>')` and its rows' with `lgRowActs('<tab>', row)`, which
-  the domain scripts `lg/act-<domain>.js` fill (`LG_ACTION_BARS`,
-  `LG_ROW_ACTIONS`). The catalog is `meta.logistics.actions`; a kind's
-  extra typed fields from the modules (`FIELDS`) reach its Add / Edit form.
-  **AI**: the app's route optimizer, AI flights, "Parse & Add", market prices
-  and Stock Take ran on a Claude key in its settings (never copied); here
-  `src/logistics/ai.js` uses masterapp's own `ANTHROPIC_API_KEY`
-  (`@anthropic-ai/sdk`, model `ANTHROPIC_MODEL`, default claude-opus-5-5);
-  without one an `ai` action's button is greyed and its run refused.
-  **WhatsApp** sending (Ask Owner, pickup codes, gold souk share) is not
-  here: the text is built as the app builds it, with Copy and "Mark as sent".
-  Nothing is written back to the app, as before.
-  The domains, 171 actions, each with its test file (`test/lg-act-*.test.js`,
-  every action through the API as an editor, a viewer refused):
-  - **stock** (`stock-…`): Add row / Import CSV + template per place, Move
-    (movements, the destination row, spares left, a shipment or trip
-    attached), Move back, Checkout and Return, notes, Show / hide from the
-    Watch Vault, Delete, spares, the HK board's Add / Move / Cancel sale
-    (restored into the section it left — never another list), the safe's
-    Give; Stock Take by AI (`ai`, with the photos). Polish stays the one
-    endpoint `…/polish`. Reset (the app's re-seed) is not ported.
-  - **sales** (`sale-…`, `cons-…`, `ref-…`): Set delivery date, Hold in safe,
-    Cancel sale (back into the list it came from — an HK sale into hkStock
-    or hkSituation by its snapshot), Delete, Mark delivered (finalises a
-    Ready row as sold), Link to shipment; Our watch → client / Client's
-    watch → us, Move back, Mark sold (ONE Sold for every stock list:
-    `cons-sold`, `soldPriceUsd` at the converter's rates), Delete; external
-    polish Add / Done / Edit / Delete (no cost line — the app writes none).
-  - **incoming** (`inc-…`) and **decisions** (`od-…`): Add / Import CSV /
-    Edit / Mark arrived (the arrival record and the supplier-owes
-    transaction) / Receive to inventory (the stock row in London, Dubai or
-    HK) / Create shipment / Plan collections / Mark sold / Add cost / Date
-    received / Vault / Cancel / Delete; Pick from Chrono Key = OUR watches
-    with status incoming (not the app's FOB read); Decision, Status, Start,
-    Done, Assign collector, Mark arranged, the brief (`odBriefText` ported;
-    Mark as sent writes `ownerBriefs` and SENT_TO_OWNER), Delete. A decision
-    made here is named by its own `data.id` (`source_id || data.id` wherever
-    a record names another).
-  - **shipping** (`ship-…`), **movers** (`tpm-…`), **costs** (`cost-…`),
-    the optimizer's AI (`route-…`): Add / Edit shipment with the app's
-    tail (the cost line, the HK situation auto-row, the customs mirror),
-    status changes, Mark delivered (missing items → a transaction; a linked
-    Ready row finalised as sold), Delete; mover shipments and movers with
-    both CSV imports and templates, payment / status / not payable; the cost
-    ledger's Add (linked to a shipment as the app's form), Edit, Delete;
-    market prices and the AI recommendation with the app's prompts.
-  - **plans** (`plan-…`, `trip-…`) and **dubai** (`dd-…`, `pc-…`, `addr-…`,
-    `gs-…`): New plan, Add / Edit / Remove stop, Assign / Unassign a ready
-    sale, an incoming or a stock move, Clear, Delete, Complete, Send to
-    movements, Parse & Add / AI flights / Optimise (`ai`); trips with legs,
-    watches, cost lines, the allowance (lines computed in the browser, as
-    the app), Complete (one ledger line per cost); Give to driver / Mark
-    delivered / Returned; pickup codes (the app's code generator and
-    messages, persons typed, Mark sent, Done); addresses; gold souk tasks.
-  - **accessories** (`tx-…`, `swap-…`, `acc-…`) and **records** (`cl-…`,
-    `co-…`, `doc-…`, `pic-…`, `va-…`): transactions with items, Settle
-    (`settlements`) and Undo, swaps, To collect / To give with the watch
-    row's `movements` entry as the app records it, Edit what is missing;
-    logistics clients, company locations, companies, shipment documents
-    (the file through the files route, then `doc-attach`), receiving
-    pictures, vault notifications Approve / Dismiss, Set holder.
-  Where the app writes no activity line, one is written in its toast's
-  words. Pictures and documents go on after a record exists (the upload
-  control `lgUploadCtl`, act-accessories.js, one for every tab).
-- **The logistics app itself IS the Logistics menu** (asked 30 Oct 2026: "put
-  the whole logistics app on the ERP same how it already is same ui same
-  buttons … linked with my clients and stock"; chosen: keep both apps running,
-  the app replaces the ERP's own tabs). `src/web/lgapp.js` reads the app's page
-  from its Vercel address (`LOGISTICS_APP_URL`, default
-  `https://purosangue-watches.vercel.app`; `off` = the ERP's pages back in the
-  menu) and serves it at `/lg-app/` — editors only (the app has no roles, and
-  its page holds its worker key), its own CSP (`appPolicy`: inline scripts,
-  cdnjs, its worker, OpenAI / Anthropic / GitHub, `frame-ancestors 'self'`), a
-  copy held a minute then re-asked with its ETag, the held copy served when
-  Vercel is down. Its own Vercel functions (`fetch('/api/claude')`, whatsapp,
-  dhl-track, app-version …) are rewritten to `/lg-app/api/…` and passed on
-  whole — method, query, body up to 30 MB, never the ERP's cookie; a write
-  must come from our own origin. Its worker calls (`CF_URL + '/api/state'`)
-  are untouched: **the app still saves to its worker**, and the ERP keeps
-  copying it — the ERP's own 171 actions and pages stay at `#/lg-erp/<tab>`
-  and the record pages, unlisted. Safe on a fresh origin: the app reads the
-  worker before it is allowed to write (`_cloudStateSeen`), so an empty
-  localStorage never pushes over the live document (its own pitfall 10).
-  `public/lgapp-bridge.js` goes first in its `<head>`: hides the app's own
-  sign-in (the ERP's stands in), opens the tab the ERP asks for
-  (`#tab=…&stock=…` on the frame, or a `postMessage`) and scrolls to the stock
-  number, and marks every stock number ("#1461", a cell that is only the
-  number) and client name (a cell that is only the name) with a small "ERP"
-  link to OUR watch / OUR client — `POST /api/lg-app/links` decides by the
-  standing rule (`oursByNumber`, `linksByName`). Console: `showLogistics` →
-  `showLogisticsApp` (one iframe in `#lg-app-host`, kept while other pages
-  show, dropped at sign-out), `#/logistics/<tab>/<stock>`; tabs map through
-  `GROUPS[].app`. `test/lgapp.test.js` against a stand-in Vercel.
-- First copy of the June snapshot (on a stand-in worker): 699 records, 18
-  lists, 59 pictures. `npm run import -- logistics` runs it by hand.
+**Decided 30 Oct 2026** ("delete the old logistics of the ERP … in the ERP
+only the new one stays that we copied; stop the sync for logistics for now;
+the logistics app performs as usual; next step is the linking and setting up
+the logistics app on our own"):
+
+- **Logistics in the ERP IS the logistics app.** `src/web/lgapp.js` reads the
+  app's page from its Vercel address (`LOGISTICS_APP_URL`, default
+  `https://purosangue-watches.vercel.app`; `off` = no Logistics) and serves it
+  at `/lg-app/` — editors only (the app has no roles, and its page holds its
+  worker key), its own CSP (`appPolicy`: inline scripts, cdnjs, its worker,
+  OpenAI / Anthropic / GitHub, `frame-ancestors 'self'`), a copy held a minute
+  then re-asked with its ETag, the held copy served when Vercel is down. Its
+  own Vercel functions (`fetch('/api/claude')`, whatsapp, dhl-track,
+  app-version …) are rewritten to `/lg-app/api/…` and passed on whole —
+  method, query, body up to 30 MB, never the ERP's cookie; a write must come
+  from our own origin. Its worker calls (`CF_URL + '/api/state'`) are
+  untouched: **the app still saves to its worker**, exactly as on Vercel. Safe
+  on a fresh origin: the app reads the worker before it is allowed to write
+  (`_cloudStateSeen`), so an empty localStorage never pushes over the live
+  document (its own pitfall 10). `public/lgapp-bridge.js` goes first in its
+  `<head>`: hides the app's own sign-in (the ERP's stands in), opens the tab
+  the ERP asks for and finds what it names (`#tab=…&q=…` on the frame, or a
+  `postMessage`: a stock number's row scrolled to and marked, else the app's
+  dashboard search on it; on Clients the name searched and the profile opened
+  when one matches), and marks every stock number ("#1461", a cell that is
+  only the number) and client name (a cell that is only the name) with a small
+  "ERP" link to OUR watch / OUR client — `POST /api/lg-app/links` decides by
+  the standing rule (`oursByNumber`, `linksByName`). Console: `logistics.js`
+  is only this — one iframe in `#lg-app-host`, kept while other pages show,
+  dropped at sign-out; `#/logistics/<tab>/<what>`; tabs map through
+  `GROUPS[].app` (kinds.js, the app's sidebar in its order).
+  `test/lgapp.test.js` against a stand-in Vercel.
+- **From our pages into the app, nothing of the copy shown.** The watch page's
+  "Find #1461 in Logistics →" (`#/logistics/dashboard/1461`) and the client
+  page's "See <name> in Logistics →" (`#/logistics/contacts/<name>`). The
+  Inventory card shows Ref, Serial and From (our client by Chrono Key's id,
+  else as typed) — nothing from the logistics copy.
+- **The ERP's own logistics pages are gone.** 24–27 Oct 2026 had built every
+  tab of the app in the console's look (Overview, In Safe, Checked out, Hand
+  carry, Transactions, Accessories, Incoming, Shipments, Movement, 3rd party
+  movers, then every page of the app in its order), 171 actions writing into
+  the copied records, the client situation pages, and facts from the copy on
+  the Inventory cards, the watch page and the client page. All removed 30 Oct
+  2026 — `src/logistics/pages`, `actions`, `write.js`, `ai.js` (and the
+  `@anthropic-ai/sdk` dependency), `public/lg/`, `/api/logistics/*`, their
+  tests. Last whole at the merge of PR #22 (`10125c6`), if a piece is ever
+  wanted back. The ERP's own logistics, on its own records, is the next step
+  — not started.
+- **The copy is kept, switched off.** `import/logistics/sync.js` still copies
+  the document (`LOGISTICS_SYNC=on`, or `npm run import -- logistics` by hand;
+  off by default since 30 Oct 2026, so the tables hold what was copied up to
+  then) into the same three layers — `logistics_records` (as read),
+  `logistics_items` (ours; `locked_fields` = keys once edited here),
+  `logistics_events`; pictures once each in `logistics_files` (`lgfile:<id>`);
+  `stock_nos` GIN-indexed (migrations 009, 010). Its rules stand: settings
+  never copied (`isSecret` at any depth; the one exception `settings.perDiem`
+  by named keys — `perDiemOf`), a list the app does not know yet copied under
+  its own name, deletions mirrored softly (a person's deletion stands; a list
+  losing more than 3% and ten at once refused; `activity` never mirrors a
+  deletion), `/api/version` polled every `LOGISTICS_POLL_SEC` (60) and the
+  document read only when it moved, nothing ever written back.
+- **What still reads the copy: which of OUR clients a logistics client is**
+  (`src/logistics/clients.js`, `linksByName` / `linksByClientId`, for the
+  bridge's marks) — by the watches, not the name: the stock numbers the app
+  ties to the client (purchases by its client id, incomings by supplier, sales
+  by buyer, a place row's "bought from") vote for who OUR watch with that
+  number was bought from / sold to (Chrono Key's ids); a shipment only backs a
+  match up, never makes one (a forwarder in Belfast sent three watches bought
+  from a dealer in Spain); ONE watch alone links only when the names look
+  alike (`namesAlike`); a place or placeholder typed as a client ("HK", "Need
+  to confirm") never links on its own; a full name decides only when no watch
+  does; a person's choice (`logistics_client_links`, NULL = "none of ours")
+  always wins. Live, 27 Oct 2026: 197 logistics clients, 144 linked by
+  watches, 15 by name, 30 not. `shared.js` `oursByNumber`: our watch of a
+  stock number with its clients by id. `situation.js` stays for the sync
+  (`happenedAt`) and the shared readers.
 - **Found in the logistics app, for its owner** (not ours to fix): its
   worker key is written in its public page (`index.html:2445`), and its
   settings — with the passwords above — travel in the document, so anyone

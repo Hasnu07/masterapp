@@ -11,8 +11,6 @@ import * as clients from '../clients/index.js';
 import * as expenses from '../expenses/index.js';
 import * as logistics from '../logistics/index.js';
 import * as lgClients from '../logistics/clients.js';
-import * as lgPages from '../logistics/pages/index.js';
-import * as lgActions from '../logistics/actions/index.js';
 import * as lgShared from '../logistics/shared.js';
 import { mountLogisticsApp } from './lgapp.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
@@ -61,10 +59,9 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-// The logistics app's pages, one script each, after logistics.js (which they register on).
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js', 'lg/icons.js', 'lg/ownerdecisions.js', 'lg/hkstock.js', 'lg/vaultactivity.js', 'lg/otherreceiving.js', 'lg/history.js', 'lg/costs.js', 'lg/routeoptimizer.js', 'lg/consignment.js', 'lg/londonstock.js', 'lg/dubaistock.js', 'lg/refinement.js', 'lg/missingacc.js', 'lg/soldstocks.js', 'lg/driverdeliveries.js', 'lg/pickupcodes.js', 'lg/addresses.js', 'lg/goldsouk.js', 'lg/companies.js', 'lg/shipmentdocs.js', 'lg/swaps.js', 'lg/log.js', 'lg/act-stock.js', 'lg/act-sales.js', 'lg/act-incoming.js', 'lg/act-shipping.js', 'lg/act-movers.js', 'lg/act-plans.js', 'lg/act-decisions.js', 'lg/act-accessories.js', 'lg/act-dubai.js', 'lg/act-records.js', 'lg/act-costs.js'];
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js'];
 // Each page's own stylesheet, versioned with the scripts.
-const CONSOLE_STYLES = ['lg/ownerdecisions.css', 'lg/hkstock.css', 'lg/vaultactivity.css', 'lg/otherreceiving.css', 'lg/history.css', 'lg/costs.css', 'lg/routeoptimizer.css', 'lg/consignment.css', 'lg/londonstock.css', 'lg/dubaistock.css', 'lg/refinement.css', 'lg/missingacc.css', 'lg/soldstocks.css', 'lg/driverdeliveries.css', 'lg/pickupcodes.css', 'lg/addresses.css', 'lg/goldsouk.css', 'lg/companies.css', 'lg/shipmentdocs.css', 'lg/swaps.css', 'lg/log.css'];
+const CONSOLE_STYLES = [];
 function consolePage() {
   const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
   const hash = crypto.createHash('sha256').update(html);
@@ -265,7 +262,7 @@ export function createServer() {
       clientFields: clients.CLIENT_FIELDS,
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
-      logistics: { ...logistics.catalog(), actions: lgActions.catalog() },
+      logistics: logistics.catalog(),
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
@@ -563,35 +560,7 @@ export function createServer() {
     })
   );
 
-  /* ── logistics ───────────────────────────────────────────────── */
-
-  app.get('/api/logistics/overview', need('viewer'), wrap(async (req, res) => res.json(await logistics.overview())));
-  app.get('/api/logistics/in-safe', need('viewer'), wrap(async (req, res) => res.json(await logistics.inSafe())));
-  app.get('/api/logistics/checked-out', need('viewer'), wrap(async (req, res) => res.json(await logistics.checkedOut())));
-  app.get('/api/logistics/hand-carry', need('viewer'), wrap(async (req, res) => res.json(await logistics.handCarry())));
-  app.get('/api/logistics/transactions', need('viewer'), wrap(async (req, res) => res.json(await logistics.transactionsList())));
-  app.get('/api/logistics/accessories', need('viewer'), wrap(async (req, res) => res.json(await logistics.accessoriesSummary())));
-  app.get('/api/logistics/incoming', need('viewer'), wrap(async (req, res) => res.json(await logistics.incomingPage())));
-  app.get('/api/logistics/shipping', need('viewer'), wrap(async (req, res) => res.json(await logistics.shippingPage())));
-  app.get('/api/logistics/movement', need('viewer'), wrap(async (req, res) => res.json(await logistics.movementPage())));
-  app.get('/api/logistics/movers', need('viewer'), wrap(async (req, res) => res.json(await logistics.moversPage())));
-  // A picture or a PDF added to a record here (the app's handover / proof / document photos): stored once, named in the record's list.
-  app.post(
-    '/api/logistics/items/:id/files',
-    need('editor'),
-    photoUpload.array('files', 20),
-    wrap(async (req, res) => res.json(await logistics.addFiles(req.params.id, String(req.query.field || req.body?.field || 'photos'), req.files || [], req.user)))
-  );
-  // The logistics app's workflows done here (src/logistics/actions): the form to show, then the run — editors only.
-  app.get('/api/logistics/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.describe(String(req.params.key), null, req.query))));
-  app.get('/api/logistics/act/:key/template', need('editor'), wrap(async (req, res) => {
-    res.type('text/csv').attachment(`${req.params.key}-template.csv`).send(lgActions.template(String(req.params.key)));
-  }));
-  app.post('/api/logistics/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.run(String(req.params.key), null, req.body || {}, req.user, req.query))));
-  app.get('/api/logistics/items/:id/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.describe(String(req.params.key), Number(req.params.id) || 0, req.query))));
-  app.post('/api/logistics/items/:id/act/:key', need('editor'), wrap(async (req, res) => res.json(await lgActions.run(String(req.params.key), Number(req.params.id) || 0, req.body || {}, req.user, req.query))));
-  // The tabs added 27 Oct 2026, one module each (src/logistics/pages).
-  app.get('/api/logistics/page/:name', need('viewer'), wrap(async (req, res) => res.json(await lgPages.page(String(req.params.name)))));
+  /* ── logistics: the app itself is served at /lg-app/ (lgapp.js); here only what its bridge asks ── */
 
   /*
    * The ERP's bridge inside the logistics app (lgapp-bridge.js) asks which of
@@ -611,101 +580,6 @@ export function createServer() {
       });
     })
   );
-  /* Search everything: our watches and clients, and the logistics records — nothing twice. */
-  app.get(
-    '/api/logistics/search',
-    need('viewer'),
-    wrap(async (req, res) => res.json(await logistics.search({ q: String(req.query.q || '').slice(0, 200), scope: String(req.query.scope || 'all') })))
-  );
-  app.post(
-    '/api/logistics/items/:id/polish',
-    need('editor'),
-    wrap(async (req, res) => res.json(await logistics.polishAction(req.params.id, req.body || {}, req.user)))
-  );
-  app.get('/api/logistics/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await logistics.clientChoices() })));
-  app.get('/api/logistics/items', need('viewer'), wrap(async (req, res) => res.json(await logistics.listItems(req.query))));
-  app.get('/api/logistics/items/:id', need('viewer'), wrap(async (req, res) => res.json(await logistics.getItem(req.params.id))));
-  app.get(
-    '/api/logistics/items/:id/events',
-    need('viewer'),
-    wrap(async (req, res) => res.json({ events: await logistics.itemEvents(req.params.id) }))
-  );
-  app.post(
-    '/api/logistics/items',
-    need('editor'),
-    wrap(async (req, res) => res.status(201).json({ id: await logistics.createItem(String(req.body?.kind || ''), req.body?.data || {}, req.user) }))
-  );
-
-  // A client's logistics situation: the Logistics → Clients tab, one logistics client, and who of ours it is.
-  app.get('/api/logistics/client-list', need('viewer'), wrap(async (req, res) => res.json(await lgClients.listLogisticsClients({ q: String(req.query.q || '') }))));
-  app.get('/api/logistics/client-view/:id', need('viewer'), wrap(async (req, res) => res.json(await lgClients.logisticsClient(req.params.id))));
-  app.put(
-    '/api/logistics/client-view/:id/link',
-    need('editor'),
-    wrap(async (req, res) => {
-      const v = req.body?.client_id;
-      if (!(v === null || v === 'auto' || (Number.isInteger(v) && v > 0))) return res.status(400).json({ error: 'client_id must be one of our clients, null (none of ours) or "auto"' });
-      res.json({ link: await lgClients.setClientLink(req.params.id, v, req.user) });
-    })
-  );
-  app.get('/api/clients/:id/logistics', need('viewer'), wrap(async (req, res) => res.json(await lgClients.forOurClient(req.params.id))));
-  app.patch(
-    '/api/logistics/items/:id',
-    need('editor'),
-    wrap(async (req, res) => res.json(await logistics.updateItem(req.params.id, req.body || {}, req.user)))
-  );
-  app.post(
-    '/api/logistics/items/:id/unlock',
-    need('editor'),
-    wrap(async (req, res) => {
-      await logistics.unlockField(req.params.id, String(req.body?.field || ''), req.user);
-      res.json({ ok: true });
-    })
-  );
-  app.delete(
-    '/api/logistics/items/:id',
-    need('editor'),
-    wrap(async (req, res) => {
-      await logistics.deleteItem(req.params.id, req.user);
-      res.json({ ok: true });
-    })
-  );
-  app.post(
-    '/api/logistics/items/:id/restore',
-    need('editor'),
-    wrap(async (req, res) => {
-      await logistics.deleteItem(req.params.id, req.user, { restore: true });
-      res.json({ ok: true });
-    })
-  );
-  /* Behind the sign-in: customs papers, passports and serials are in these. */
-  app.get(
-    '/api/logistics/files/:fid',
-    need('viewer'),
-    wrap(async (req, res) => {
-      const f = await logistics.file(req.params.fid, { thumb: req.query.thumb === '1' });
-      if (!f) return res.status(404).json({ error: 'No such file' });
-      res.set('Content-Type', f.type);
-      res.set('Cache-Control', 'private, max-age=604800, immutable');
-      res.set('X-Content-Type-Options', 'nosniff');
-      if (req.query.download === '1') res.attachment(`logistics-${Number(req.params.fid)}.${f.type.split('/')[1]}`);
-      res.send(f.buffer);
-    })
-  );
-  /* A picture still on the logistics app's worker: copied here on first sight, then served like the rest. */
-  app.get(
-    '/api/logistics/worker-file',
-    need('viewer'),
-    wrap(async (req, res) => {
-      const f = await logistics.workerFile(String(req.query.u || ''), { thumb: req.query.thumb === '1' });
-      if (!f) return res.status(404).json({ error: 'No such file' });
-      res.set('Content-Type', f.type);
-      res.set('Cache-Control', 'private, max-age=604800, immutable');
-      res.set('X-Content-Type-Options', 'nosniff');
-      res.send(f.buffer);
-    })
-  );
-  app.get('/api/watches/:id/logistics', need('viewer'), wrap(async (req, res) => res.json(await logistics.forWatch(req.params.id))));
 
   /* ── import ──────────────────────────────────────────────────── */
 

@@ -3,9 +3,11 @@
  * the app at /lg-app/ and puts this script first in its <head>, so it runs
  * before the app's own:
  *  - the app's own sign-in screen is hidden — the ERP's sign-in stands in for it;
- *  - the tab the ERP asks for is opened (#tab=…&stock=… on the frame's address,
- *    or a message from the ERP's page), and the stock number named is scrolled
- *    to and marked for a moment;
+ *  - the tab the ERP asks for is opened (#tab=…&q=… on the frame's address, or
+ *    a message from the ERP's page), and what it names is found there: a stock
+ *    number's row scrolled to and marked for a moment (else the app's own
+ *    search on it), or on Clients a client's name searched and its profile
+ *    opened;
  *  - every stock number and client name the app shows gets a small "ERP" mark
  *    that opens OUR watch or OUR client — by the ERP's own rule: a stock number
  *    is our watch of that number; a typed name is our client only as the
@@ -169,18 +171,21 @@
     scanTimer = setTimeout(scan, 200);
   }
 
-  /* ── what the ERP asks for: a tab, and a stock number on it ── */
+  /* ── what the ERP asks for: a tab, and something to find on it — a stock number, or a client's name on Clients ── */
   function parseRequest(hash) {
     var p = new URLSearchParams(String(hash || '').replace(/^#/, ''));
-    return { tab: p.get('tab') || '', stock: p.get('stock') || '' };
+    return { tab: p.get('tab') || '', q: p.get('q') || p.get('stock') || '' };
   }
   var pending = null;
   function applyRequest(r) {
     if (!r || !r.tab) return;
     if (!window._bootstrapDone) { pending = r; return; }
     if (typeof showTab === 'function' && document.getElementById('tab-' + r.tab)) showTab(r.tab);
-    if (r.stock) setTimeout(function () { highlight(r.stock); }, 350);
+    if (!r.q) return;
+    if (r.tab === 'clients') findClient(r.q);
+    else setTimeout(function () { if (!highlight(r.q)) searchFor(r.q); }, 350);
   }
+  /* The row carrying this stock number on the tab shown: scrolled to and marked for a moment. */
   function highlight(no) {
     scan();
     var hit = null;
@@ -188,17 +193,38 @@
       hit = root.querySelector('[data-erp-stock="' + CSS.escape(no) + '"]');
       return Boolean(hit);
     });
-    if (!hit) return;
+    if (!hit) return false;
     var row = hit.closest('tr, li, [class*="card"], [class*="row"]') || hit.parentNode;
     row.scrollIntoView({ block: 'center', behavior: 'smooth' });
     row.classList.add('erp-hit');
     setTimeout(function () { row.classList.add('erp-fade'); }, 1800);
     setTimeout(function () { row.classList.remove('erp-hit', 'erp-fade'); }, 3500);
+    return true;
+  }
+  /* Not on this tab: the app's own search on the dashboard, which looks everywhere. */
+  function searchFor(q) {
+    var input = document.getElementById('dashSearchInput');
+    if (!input || typeof dashSearchLive !== 'function') return;
+    if (typeof showTab === 'function') showTab('dashboard');
+    input.value = q;
+    dashSearchLive(q);
+    input.focus();
+  }
+  /* A client by name: the Clients tab searched for it, and the client's own profile when exactly one carries the name. */
+  function findClient(name) {
+    var input = document.getElementById('clientSearch');
+    if (input) {
+      input.value = name;
+      if (typeof renderClients === 'function') renderClients();
+    }
+    var s = typeof state !== 'undefined' ? state : null;
+    var same = ((s && s.clients) || []).filter(function (c) { return String(c.name || '').trim().toLowerCase() === name.trim().toLowerCase(); });
+    if (same.length === 1 && typeof openClientDetail === 'function') setTimeout(function () { openClientDetail(same[0].id); }, 250);
   }
   window.addEventListener('hashchange', function () { applyRequest(parseRequest(location.hash)); });
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin || !e.data || e.data.erp !== 'tab') return;
-    applyRequest({ tab: String(e.data.tab || ''), stock: String(e.data.stock || '') });
+    applyRequest({ tab: String(e.data.tab || ''), q: String(e.data.q || e.data.stock || '') });
   });
 
   /* ── start, once the app has loaded its data ── */

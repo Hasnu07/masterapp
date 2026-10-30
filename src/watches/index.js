@@ -3,7 +3,6 @@ import { FIELDS, FIELD, cleanValue, displayTitle, parseMoney } from './fields.js
 import { savePhoto, storage, fingerprint, dhashDistance, samePicture } from '../storage/index.js';
 import { leftBlank } from '../import/productlist.js';
 import { isPlaceholder } from '../import/chronokey/parse.js';
-import { factsFor } from '../logistics/pages/index.js';
 
 /*
  * Our record of every watch: reading it, and every way a person changes it.
@@ -105,31 +104,6 @@ export async function listWatches(opts = {}) {
             (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL
               ORDER BY p.sort, p.id LIMIT 1) AS photo_id,
             (SELECT count(*)::int FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL) AS photo_count,
-            -- In the logistics app's safe now, and for whom (its row's "from"): a client's, held here.
-            (SELECT jsonb_build_object('for', i.data->>'from', 'out', i.data->>'withClient') FROM logistics_items i
-              WHERE i.kind = 'safeStock' AND i.deleted_at IS NULL AND i.stock_nos @> ARRAY[w.stock_no]
-                AND COALESCE(i.data->>'status', '') IN ('', 'current', 'consignment')
-              ORDER BY i.updated_at DESC, i.id DESC LIMIT 1) AS in_safe,
-            -- On an open hand-carry plan (the logistics app's kashanPlans): whose, the first stop carrying it, and what is done there.
-            (SELECT jsonb_build_object('plan', i.data->>'name', 'to', s.leg->>'toCity', 'date', s.leg->>'date', 'role', s.part)
-               FROM logistics_items i
-               CROSS JOIN LATERAL (
-                 SELECT e.leg, p.part
-                   FROM jsonb_array_elements(CASE jsonb_typeof(i.data->'legs') WHEN 'array' THEN i.data->'legs' ELSE '[]'::jsonb END) WITH ORDINALITY AS e(leg, n),
-                        (VALUES ('deliveries', 1), ('collections', 2), ('stockMoves', 3)) AS p(part, o)
-                  WHERE jsonb_typeof(e.leg->p.part) = 'array'
-                    AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.leg->p.part) x
-                                 WHERE w.stock_no = ANY(regexp_split_to_array(trim(COALESCE(x->>'stockNumber', '')), '\\s*[,;\\n]+\\s*')))
-                  ORDER BY e.n, p.o LIMIT 1) s
-              WHERE i.kind = 'kashanPlans' AND i.deleted_at IS NULL AND COALESCE(i.data->>'status', '') <> 'completed'
-                AND i.stock_nos @> ARRAY[w.stock_no]
-              ORDER BY i.id LIMIT 1) AS hand_carry,
-            -- Where the logistics app holds it now (London, Dubai, Hong Kong): when it came in, and what came with it — its own stock card.
-            (SELECT jsonb_build_object('received', i.data->'receivedAt', 'with', i.data->'accessoriesPresent', 'missing', i.data->'accessoriesMissing', 'from', i.data->>'from')
-               FROM logistics_items i
-              WHERE i.kind IN ('londonStock', 'dubaiStock', 'hkStock') AND i.deleted_at IS NULL AND i.stock_nos @> ARRAY[w.stock_no]
-                AND COALESCE(i.data->>'status', '') IN ('', 'current', 'consignment')
-              ORDER BY i.updated_at DESC, i.id DESC LIMIT 1) AS lg_place,
             -- Who it was bought from: Chrono Key's link to our client (by id), as the Clients panel names them.
             (SELECT COALESCE(NULLIF(trim(concat_ws(' ', c.forename, c.surname)), ''), NULLIF(c.nickname, ''), NULLIF(c.company, ''))
                FROM clients c WHERE c.id = w.purchased_from_client_id AND c.deleted_at IS NULL) AS bought_from_name
@@ -139,19 +113,12 @@ export async function listWatches(opts = {}) {
     params
   );
 
-  // What each logistics page knows about the watch (on consignment, at polish, with a driver, its pickup code …): one read for the page of tiles.
-  const facts = await factsFor(rows.map((r) => r.stock_no)).catch(() => new Map());
   return {
     total: rows[0]?.total ?? 0,
-    watches: rows.map((r) => ({ ...summary(r), facts: facts.get(r.stock_no) || [] })),
+    watches: rows.map(summary),
     facets: { status: byStatus, location: byLocation, brand: byBrand.slice(0, 40) },
   };
 }
-
-/* A list as the logistics app writes it: an array, or words split on commas and new lines. */
-const words = (v) => (Array.isArray(v) ? v : String(v ?? '').split(/[,\n]+/)).map((x) => String(x ?? '').trim()).filter(Boolean);
-/* The day it came in: the app keeps milliseconds or a day; milliseconds are left for the browser's own calendar. */
-const receivedOf = (v) => (typeof v === 'number' || /^\d{10,13}$/.test(String(v ?? '')) ? Number(v) : /^\d{4}-\d{2}-\d{2}/.test(String(v ?? '')) ? String(v).slice(0, 10) : null);
 
 const summary = (w) => ({
   id: w.id,
@@ -176,19 +143,8 @@ const summary = (w) => ({
   purchase_currency: w.purchase_currency,
   photo_id: w.photo_id,
   photo_count: w.photo_count,
-  // The logistics app's stock card on ours: who from (our client by Chrono Key's id, else as typed), when it came in, what came with it.
-  bought_from: w.bought_from_name || String(w.purchased_from || '').trim() || String(w.lg_place?.from || '').trim() || null,
-  received: w.lg_place ? receivedOf(w.lg_place.received) : null,
-  accessories: w.lg_place ? { with: words(w.lg_place.with), missing: words(w.lg_place.missing) } : null,
-  hand_carry: w.hand_carry
-    ? {
-        plan: String(w.hand_carry.plan || '').trim(),
-        to: String(w.hand_carry.to || '').trim(),
-        date: String(w.hand_carry.date || '').slice(0, 10),
-        role: { deliveries: 'deliver', collections: 'collect', stockMoves: 'move' }[w.hand_carry.role] || '',
-      }
-    : null,
-  in_safe: w.in_safe ?{ for: String(w.in_safe.for || '').trim(), with_owner: /^(true|✓|✔|yes|y|x|1)$/i.test(String(w.in_safe.out || '').trim()) } : null,
+  // Who from: our client by Chrono Key's id, else as typed.
+  bought_from: w.bought_from_name || String(w.purchased_from || '').trim() || null,
   origin: w.origin,
   deleted_at: w.deleted_at,
 });
