@@ -26,7 +26,7 @@ export const HOLD = { ms: 60_000 };
 const UPSTREAM_TIMEOUT_MS = 30_000;
 const BODY_LIMIT = 30 * 1024 * 1024;
 
-const workerOrigin = () => {
+export const workerOrigin = () => {
   try {
     return new URL(config.vault.url).origin;
   } catch {

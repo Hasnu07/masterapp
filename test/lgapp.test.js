@@ -214,15 +214,39 @@ test("the app's own functions are passed on whole — method, query, body — ne
   assert.equal((await editor.call('GET', '/lg-app/api/not-there')).status, 404, "Vercel's answer, as it is");
 });
 
-test('the bridge asks which stock numbers and client names are ours', async () => {
-  const made = await editor.call('POST', '/api/watches', { brand: 'Tudor', reference: '79000B', stock_no: '1461' });
+test('the bridge asks which stock numbers and client names are ours; a typed stock number fills the watch in', async () => {
+  const made = await editor.call('POST', '/api/watches', { brand: 'Tudor', model: 'Black Bay', reference: '79000B', serial: 'J12345', watch_date: '03/2024', stock_no: '1461' });
   assert.equal(made.status, 201, JSON.stringify(made.body));
-  const r = await editor.call('POST', '/api/lg-app/links', { stock: ['1461', '9999', ''], clients: ['Nobody Known'] });
+  const robin = await editor.call('POST', '/api/clients', { forename: 'Robin', surname: 'Casanova', type: 'dealer' });
+  assert.equal(robin.status, 201, JSON.stringify(robin.body));
+  // Two of ours with one name: neither is "the" one.
+  for (let i = 0; i < 2; i++) assert.equal((await editor.call('POST', '/api/clients', { forename: 'Sam', surname: 'Twice', type: 'retail' })).status, 201);
+
+  const r = await editor.call('POST', '/api/lg-app/links', { stock: ['1461', '9999', ''], clients: ['Nobody Known', 'Robin Casanova', 'robin  casanova', 'Sam Twice'] });
   assert.equal(r.status, 200);
   assert.deepEqual(Object.keys(r.body.watches), ['1461']);
   assert.equal(r.body.watches['1461'].id, made.body.id);
   assert.match(r.body.watches['1461'].title, /Tudor/);
-  assert.deepEqual(r.body.clients, {}, 'a name no logistics client carries links nowhere');
+  assert.deepEqual(r.body.clients, {
+    'Robin Casanova': { id: robin.body.id, name: 'Robin Casanova' },
+    'robin  casanova': { id: robin.body.id, name: 'Robin Casanova' },
+  }, 'a name that is exactly one of ours links to ours, however it is spelt; an unknown name or a shared one links nowhere');
   assert.equal((await viewer.call('POST', '/api/lg-app/links', { stock: ['1461'] })).status, 200, 'reading is for every role');
   assert.equal((await client().call('POST', '/api/lg-app/links', { stock: ['1461'] })).status, 401);
+
+  // The watch for the app's forms: what to fill in when its stock number is typed.
+  const w = await editor.call('GET', '/api/lg-app/watch?no=1461');
+  assert.equal(w.status, 200);
+  assert.deepEqual(
+    { brand: w.body.watch.brand, model: w.body.watch.model, reference: w.body.watch.reference, serial: w.body.watch.serial, watch_date: w.body.watch.watch_date, id: w.body.watch.id },
+    { brand: 'Tudor', model: 'Black Bay', reference: '79000B', serial: 'J12345', watch_date: '03/2024', id: made.body.id }
+  );
+  assert.equal((await editor.call('GET', '/api/lg-app/watch?no=9999')).status, 404);
+  assert.equal((await client().call('GET', '/api/lg-app/watch?no=1461')).status, 401);
+
+  // Our clients' names, for the app's own name lists.
+  const names = await editor.call('GET', '/api/lg-app/clients');
+  assert.equal(names.status, 200);
+  assert.ok(names.body.clients.some((c) => c.id === robin.body.id && c.name === 'Robin Casanova'));
+  assert.equal(names.body.clients.filter((c) => c.name === 'Sam Twice').length, 2);
 });

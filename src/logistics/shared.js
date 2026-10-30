@@ -75,7 +75,7 @@ export async function oursByNumber(list) {
     `(SELECT jsonb_build_object('id', c.id, 'forename', c.forename, 'surname', c.surname, 'nickname', c.nickname, 'company', c.company)
         FROM clients c WHERE c.id = w.${col} AND c.deleted_at IS NULL)`;
   const { rows: ours } = await query(
-    `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.status,
+    `SELECT w.id, w.stock_no, w.brand, w.model, w.reference, w.serial, w.watch_date, w.status,
             (SELECT p.id FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL ORDER BY p.sort, p.id LIMIT 1) AS photo_id,
             ${person('purchased_from_client_id')} AS bought_from, ${person('sold_to_client_id')} AS sold_to
        FROM watches w WHERE w.stock_no = ANY($1) AND w.deleted_at IS NULL`,
@@ -92,6 +92,8 @@ export async function oursByNumber(list) {
         brand: w.brand || '',
         model: w.model || '',
         reference: w.reference || '',
+        serial: w.serial || '',
+        watch_date: w.watch_date || '',
         status: w.status,
         photo_id: w.photo_id,
         bought_from: who(w.bought_from),
