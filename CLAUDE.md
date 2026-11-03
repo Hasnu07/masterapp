@@ -377,10 +377,11 @@ the logistics app on our own"):
   tests. Last whole at the merge of PR #22 (`10125c6`), if a piece is ever
   wanted back. The ERP's own logistics, on its own records, is the next step
   — not started.
-- **The copy is kept, switched off.** `import/logistics/sync.js` still copies
-  the document (`LOGISTICS_SYNC=on`, or `npm run import -- logistics` by hand;
-  off by default since 30 Oct 2026, so the tables hold what was copied up to
-  then) into the same three layers — `logistics_records` (as read),
+- **The copy runs again** (asked 3 Nov 2026: "sync with the logistics app";
+  it was off by default 30 Oct – 3 Nov, so the tables held what was copied up
+  to the 30th). `import/logistics/sync.js` copies the document — it follows
+  `SYNC` unless `LOGISTICS_SYNC` says otherwise, or `npm run import --
+  logistics` by hand — into the same three layers — `logistics_records` (as read),
   `logistics_items` (ours; `locked_fields` = keys once edited here),
   `logistics_events`; pictures once each in `logistics_files` (`lgfile:<id>`);
   `stock_nos` GIN-indexed (migrations 009, 010). Its rules stand: settings

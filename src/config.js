@@ -102,8 +102,9 @@ export const config = {
    * at a time (a page that shows one first copies it then).
    */
   logistics: {
-    // Off by default since 30 Oct 2026 ("stop the sync for logistics for now"): the app itself is Logistics in the ERP.
-    enabled: bool(process.env.LOGISTICS_SYNC, false),
+    // Follows SYNC when not set. Off by default 30 Oct – 3 Nov 2026 ("stop the sync for logistics for now", while the
+    // app itself became Logistics in the ERP); asked back on 3 Nov ("sync with the logistics app").
+    enabled: bool(process.env.LOGISTICS_SYNC, bool(process.env.SYNC, true)),
     pollSec: Number(process.env.LOGISTICS_POLL_SEC ?? 60),
     photosPerPass: Number(process.env.LOGISTICS_PHOTOS_PER_PASS || 400),
     // Where the logistics app itself is (its Vercel address). The ERP serves it from there at /lg-app/, inside the
