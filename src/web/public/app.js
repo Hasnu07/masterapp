@@ -388,20 +388,26 @@ async function loadList(more = false) {
   if (seq !== listSeq || !$('#grid')) return; // a newer search has answered, or the page changed
   shown = more ? [...shown, ...r.watches] : r.watches;
 
+  // The pills in a fixed order (asked 3 Nov 2026): In stock, Incoming, Sold …, and Dubai, UK, Europe, HK …; "All" last.
+  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'] };
+  const rank = (key, k) => {
+    const i = (ORDER[key] || []).indexOf(k);
+    return i === -1 ? 99 : i;
+  };
   const pills = (el, key, facet, label) => {
     const total = facet.reduce((a, f) => a + f.n, 0);
     el.innerHTML =
-      `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>` +
       facet
         .filter((f) => f.k)
+        .sort((a, b) => rank(key, a.k) - rank(key, b.k) || b.n - a.n)
         .map(
           (f) =>
             `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(key === 'status' ? statusLabel(f.k) : f.k)}<b>${f.n}</b></button>`
         )
-        .join('');
+        .join('') + `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>`;
     // A filter in force that now has no watches keeps its pill, so it can be lifted.
     if (L[key] && !facet.some((f) => f.k === L[key])) {
-      el.insertAdjacentHTML('beforeend', `<button class="pill on" data-v="${esc(L[key])}">${esc(L[key])}<b>0</b></button>`);
+      el.lastElementChild.insertAdjacentHTML('beforebegin', `<button class="pill on" data-v="${esc(L[key])}">${esc(L[key])}<b>0</b></button>`);
     }
     $$('.pill', el).forEach((b) =>
       b.addEventListener('click', () => {
