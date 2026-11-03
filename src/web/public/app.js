@@ -202,6 +202,23 @@ function menu(open, { focus = false } = {}) {
 }
 phone.addEventListener('change', () => menu(false));
 
+/* Inventory's parts, behind the arrow on its row: shown when tapped, remembered in this browser. */
+const INV_KEY = 'masterapp.inventoryOpen';
+function inventoryParts(open) {
+  $('#subnav').classList.toggle('open', open);
+  $('#inv-toggle').setAttribute('aria-expanded', String(open));
+  try {
+    localStorage.setItem(INV_KEY, open ? '1' : '');
+  } catch {}
+}
+try {
+  inventoryParts(localStorage.getItem(INV_KEY) === '1');
+} catch {}
+$('#inv-toggle').addEventListener('click', (e) => {
+  e.stopPropagation(); // not a page picked: the phone drawer stays open
+  inventoryParts(!$('#subnav').classList.contains('open'));
+});
+
 /* Folded to its icons or open, remembered in this browser. */
 const FOLD_KEY = 'masterapp.sidebar';
 try {
