@@ -12,6 +12,7 @@ import * as expenses from '../expenses/index.js';
 import * as logistics from '../logistics/index.js';
 import * as lgClients from '../logistics/clients.js';
 import * as lgShared from '../logistics/shared.js';
+import { workerFile } from '../import/logistics/sync.js';
 import { mountLogisticsApp, workerOrigin } from './lgapp.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
@@ -599,6 +600,25 @@ export function createServer() {
   );
   /* Every client of ours by name, for the app's own name lists. */
   app.get('/api/lg-app/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await lgClients.ourClientNames() })));
+  /*
+   * The app's pictures, for the watch's Logistics window (asked 3 Nov 2026:
+   * "loads very late and images don't show up"). The window used to point
+   * straight at the worker's full-size originals — 100–200 KB each, two or
+   * three seconds away, in 88px boxes. Now each is copied here once (the
+   * pass's own code) and served as its 480px thumbnail from our storage;
+   * the browser keeps it, since a file never changes under its name there.
+   */
+  app.get(
+    '/api/lg-app/photo',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await workerFile(String(req.query.u || ''), { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'The logistics app has no such picture' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.send(f.buffer);
+    })
+  );
 
   /* ── import ──────────────────────────────────────────────────── */
 

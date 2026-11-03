@@ -112,16 +112,24 @@ function showLogisticsWindow(stockNo, title = '') {
   if (!d.open) d.showModal();
   lgWinBind(d);
   // The frame answers from the app's data; made now, hidden, if it is not there yet — and asked again until it has loaded.
-  if (!lgApp.frame) {
-    lgApp.frame = document.createElement('iframe');
-    lgApp.frame.title = 'Purosangue Watches Logistics';
-    lgApp.frame.src = '/lg-app/#tab=dashboard';
-    lgAppHost().appendChild(lgApp.frame);
-  }
+  lgAppWarm();
   const ask = () => lgApp.frame?.contentWindow?.postMessage({ erp: 'passport-data', stock: stockNo }, location.origin);
   ask();
   clearInterval(lgWin.timer);
-  lgWin.timer = setInterval(ask, 2000);
+  lgWin.timer = setInterval(ask, 500);
+}
+/*
+ * The frame, hidden, loading the app before anyone asks for it (asked 3 Nov
+ * 2026: the window "loads very late"): the app is 2 MB and reads its whole
+ * document from its worker before it can answer, so app.js starts it a
+ * moment after sign-in, for editors, and the first window finds it ready.
+ */
+function lgAppWarm() {
+  if (!lgAppOn() || !can('editor') || lgApp.frame) return;
+  lgApp.frame = document.createElement('iframe');
+  lgApp.frame.title = 'Purosangue Watches Logistics';
+  lgApp.frame.src = '/lg-app/#tab=dashboard';
+  lgAppHost().appendChild(lgApp.frame);
 }
 const lgWinShell = (no, title, body) => `
   <div class="lgw-head">
@@ -172,9 +180,11 @@ const lgAmount = (n, cur) => {
   if (!x) return '';
   return `${cur ? `${esc(String(cur).toUpperCase())} ` : ''}${x.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
 };
+// A picture on the worker is shown as the ERP's own thumbnail of it (/api/lg-app/photo); one inline in the record as it is.
+const lgThumb = (p) => (/^(data:|blob:)/.test(p) ? p : `/api/lg-app/photo?u=${encodeURIComponent(p)}&thumb=1`);
 const lgPics = (list, label = '') =>
   (list || []).length
-    ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener" class="lgw-pic"><img loading="lazy" src="${esc(p)}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
+    ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener" class="lgw-pic"><img src="${esc(lgThumb(p))}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
     : '';
 const lgPicsOf = (r) => Object.keys(r || {}).filter((k) => /photo|image|pic|doc/i.test(k) && Array.isArray(r[k])).flatMap((k) => r[k]);
 
@@ -345,6 +355,8 @@ function lgWinRender(data) {
     }
     ${pics.length ? `<h3>Pictures</h3>${lgPics(pics.map((x) => x.p))}` : ''}
     <p class="lgw-foot"><button type="button" class="linkish" id="lgw-app">See it in the logistics app</button></p>`;
+  // A picture the app no longer has says so, instead of an empty box.
+  body.querySelectorAll('.lgw-pic img').forEach((i) => i.addEventListener('error', () => i.closest('.lgw-pic').classList.add('gone')));
   lgWinBind(d);
 }
 /* Signed out: the app goes too — its page holds the key to its records. */

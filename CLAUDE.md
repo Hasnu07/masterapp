@@ -354,7 +354,15 @@ the logistics app on our own"):
   `showLogisticsAppWindow` / `body.erp-window`, stays for the frame route).
   Polish is read off the stock row (`polish`, `polishHistory`), as the app
   keeps it; an incoming's arrival off `arrivalRecord`. Asked again
-  every two seconds until the frame has loaded. The client page's "See <name> in Logistics →"
+  every half second until the frame has loaded — and the frame is started
+  hidden two seconds after an editor signs in (`lgAppWarm`), so the first
+  window finds the app ready (3 Nov 2026: "loads very late"). Its pictures
+  are the worker's full-size originals (100–200 KB each, seconds away), so
+  the window shows them through `GET /api/lg-app/photo?u=&thumb=1`: the
+  file copied here once by the pass's own code (`workerFile` in
+  `import/logistics/sync.js`, no refusal memory) and served as its 480px
+  thumbnail, immutable; one the app no longer has says "picture missing".
+  The client page's "See <name> in Logistics →"
   (`#/logistics/contacts/<name>`) opens the app's Clients tab. The
   Inventory card shows Ref, Serial and From (our client by Chrono Key's id,
   else as typed) — nothing from the logistics copy.
