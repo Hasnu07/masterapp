@@ -233,7 +233,12 @@ export async function workerFile(url, { thumb = false } = {}) {
     if (!buffer) return null;
     id = await storeFile(buffer, url);
   }
-  const { rows } = await query('SELECT storage_key, thumb_key, content_type FROM logistics_files WHERE id = $1', [id]);
+  return fileById(id, { thumb });
+}
+
+/** One of the copied files by its id — what a record holds as "lgfile:<id>" — or its thumbnail; null when there is none. */
+export async function fileById(id, { thumb = false } = {}) {
+  const { rows } = await query('SELECT storage_key, thumb_key, content_type FROM logistics_files WHERE id = $1', [Number(id) || 0]);
   const f = rows[0];
   if (!f) return null;
   const key = thumb && f.thumb_key ? f.thumb_key : f.storage_key;

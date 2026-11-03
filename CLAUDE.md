@@ -363,6 +363,13 @@ the logistics app on our own"):
   file copied here once by the pass's own code (`workerFile` in
   `import/logistics/sync.js`, no refusal memory) and served as its 480px
   thumbnail, immutable; one the app no longer has says "picture missing".
+  Still too slow from a cold frame (3 Nov 2026, 9 s here), so the window
+  first draws from OUR copy of the app's records — `GET
+  /api/lg-app/passport?no=` (`logistics/passport.js`, the bridge's shape
+  from `logistics_items` by `stock_nos`, 100 ms), its pictures and papers as
+  `lgfile:<id>` through `/api/lg-app/file/:id` — with a line saying so, and
+  the app's own answer replaces it when the frame has loaded. The copy must
+  be running for that (`LOGISTICS_SYNC`, on with `SYNC` since 3 Nov).
   The client page's "See <name> in Logistics →"
   (`#/logistics/contacts/<name>`) opens the app's Clients tab. The
   Inventory card shows Ref, Serial and From (our client by Chrono Key's id,

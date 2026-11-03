@@ -12,7 +12,8 @@ import * as expenses from '../expenses/index.js';
 import * as logistics from '../logistics/index.js';
 import * as lgClients from '../logistics/clients.js';
 import * as lgShared from '../logistics/shared.js';
-import { workerFile } from '../import/logistics/sync.js';
+import { workerFile, fileById } from '../import/logistics/sync.js';
+import { passport } from '../logistics/passport.js';
 import { mountLogisticsApp, workerOrigin } from './lgapp.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
@@ -611,19 +612,46 @@ export function createServer() {
    * pass's own code) and served as its 480px thumbnail from our storage;
    * the browser keeps it, since a file never changes under its name there.
    */
+  const sendLgFile = (req, res, f) => {
+    res.set('Content-Type', f.type);
+    res.set('Cache-Control', 'private, max-age=604800, immutable');
+    // ?download=<name>: saved under the name the app gave it (a customs paper, an invoice), the name kept plain.
+    if (req.query.download) res.attachment(String(req.query.download).replace(/[^\w .()\-]+/g, '_').slice(0, 120) || 'document');
+    // The window's PDF viewer frames a paper from our own page: DENY (set on everything above) would refuse even that.
+    res.set('X-Frame-Options', 'SAMEORIGIN');
+    res.send(f.buffer);
+  };
   app.get(
     '/api/lg-app/photo',
     need('viewer'),
     wrap(async (req, res) => {
       const f = await workerFile(String(req.query.u || ''), { thumb: req.query.thumb === '1' });
       if (!f) return res.status(404).json({ error: 'The logistics app has no such picture' });
-      res.set('Content-Type', f.type);
-      res.set('Cache-Control', 'private, max-age=604800, immutable');
-      // ?download=<name>: saved under the name the app gave it (a customs paper, an invoice), the name kept plain.
-      if (req.query.download) res.attachment(String(req.query.download).replace(/[^\w .()\-]+/g, '_').slice(0, 120) || 'document');
-      // The window's PDF viewer frames a paper from our own page: DENY (set on everything above) would refuse even that.
-      res.set('X-Frame-Options', 'SAMEORIGIN');
-      res.send(f.buffer);
+      sendLgFile(req, res, f);
+    })
+  );
+  /* A picture or paper the pass has copied, as a record holds it ("lgfile:<id>"). */
+  app.get(
+    '/api/lg-app/file/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await fileById(req.params.id, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      sendLgFile(req, res, f);
+    })
+  );
+  /*
+   * The watch's logistics from our copy of the app's records, for the window
+   * to draw at once (asked 3 Nov 2026: "this is still too slow") — the app's
+   * own answer, live, replaces it when the frame has loaded.
+   */
+  app.get(
+    '/api/lg-app/passport',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const p = await passport(String(req.query.no || '').trim());
+      if (!p) return res.status(400).json({ error: 'Which stock number?' });
+      res.json(p);
     })
   );
 

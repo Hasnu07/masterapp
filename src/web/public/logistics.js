@@ -67,6 +67,7 @@ window.addEventListener('message', (e) => {
   if (e.data.erp === 'passport-closed') lgAppHide();
   if (e.data.erp === 'passport-data' && e.data.stock === lgWin.no) {
     clearInterval(lgWin.timer);
+    lgWin.live = true;
     lgWinRender(e.data.data);
   }
 });
@@ -111,6 +112,13 @@ function showLogisticsWindow(stockNo, title = '') {
   d.innerHTML = lgWinShell(stockNo, title, '<p class="count lgw-wait">Reading the logistics app…</p>');
   if (!d.open) d.showModal();
   lgWinBind(d);
+  lgWin.live = false;
+  // At once, from our copy of the app's records (a minute behind) — unless the app has answered first (3 Nov 2026: "still too slow").
+  api(`/api/lg-app/passport?no=${encodeURIComponent(stockNo)}`)
+    .then((p) => {
+      if (lgWin.no === stockNo && !lgWin.live && p && !p.empty) lgWinRender(p);
+    })
+    .catch(() => {});
   // The frame answers from the app's data; made now, hidden, if it is not there yet — and asked again until it has loaded.
   lgAppWarm();
   const ask = () => lgApp.frame?.contentWindow?.postMessage({ erp: 'passport-data', stock: stockNo }, location.origin);
@@ -180,11 +188,14 @@ const lgAmount = (n, cur) => {
   if (!x) return '';
   return `${cur ? `${esc(String(cur).toUpperCase())} ` : ''}${x.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
 };
-// A picture on the worker is shown as the ERP's own thumbnail of it (/api/lg-app/photo); one inline in the record as it is.
-const lgThumb = (p) => (/^(data:|blob:)/.test(p) ? p : `/api/lg-app/photo?u=${encodeURIComponent(p)}&thumb=1`);
+// A picture on the worker is shown as the ERP's own thumbnail of it (/api/lg-app/photo); one the pass has copied
+// ("lgfile:<id>", from our copy of the records) from the copy; one inline in the record as it is.
+const lgFile = (p) => p.match(/^lgfile:(\d+)$/)?.[1];
+const lgThumb = (p) => (/^(data:|blob:)/.test(p) ? p : lgFile(p) ? `/api/lg-app/file/${lgFile(p)}?thumb=1` : `/api/lg-app/photo?u=${encodeURIComponent(p)}&thumb=1`);
+const lgFull = (p) => (lgFile(p) ? `/api/lg-app/file/${lgFile(p)}` : p);
 const lgPics = (list, label = '') =>
   (list || []).length
-    ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener" class="lgw-pic"><img src="${esc(lgThumb(p))}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
+    ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(lgFull(p))}" target="_blank" rel="noopener" class="lgw-pic"><img src="${esc(lgThumb(p))}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
     : '';
 /*
  * A record's pictures: the addresses in its photo lists, and a picture among
@@ -210,7 +221,7 @@ const lgDocs = (list) =>
     ? `<div class="lgw-docs">${list
         .map(
           (d) =>
-            `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.type)}" ${lgIsPdf(d) ? `data-pdf="${esc(d.url)}" data-name="${esc(d.name)}"` : ''}>${esc(d.name)}</a>`
+            `<a href="${esc(lgFull(d.url))}" target="_blank" rel="noopener" title="${esc(d.type)}" ${lgIsPdf(d) ? `data-pdf="${esc(d.url)}" data-name="${esc(d.name)}"` : ''}>${esc(d.name)}</a>`
         )
         .join('')}</div>`
     : '';
@@ -236,8 +247,9 @@ function lgDocOpen(url, name) {
     document.body.appendChild(d);
   }
   // &view=1 says nothing to the server; it keeps the viewer off a copy the browser cached before frames were allowed.
-  let src = `/api/lg-app/photo?u=${encodeURIComponent(url)}&view=1`;
-  let download = `/api/lg-app/photo?u=${encodeURIComponent(url)}&download=${encodeURIComponent(name)}`;
+  const at = lgFile(url) ? `/api/lg-app/file/${lgFile(url)}?` : `/api/lg-app/photo?u=${encodeURIComponent(url)}&`;
+  let src = `${at}view=1`;
+  let download = `${at}download=${encodeURIComponent(name)}`;
   const m = url.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
   if (m) {
     const bytes = m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3]));
@@ -455,7 +467,9 @@ function lgWinRender(data) {
         : ''
     }
     ${pics.length ? `<h3>Pictures</h3>${lgPics(pics.map((x) => x.p))}` : ''}
-    <p class="lgw-foot"><button type="button" class="linkish" id="lgw-app">See it in the logistics app</button></p>`;
+    <p class="lgw-foot"><button type="button" class="linkish" id="lgw-app">See it in the logistics app</button>${
+      data.copied ? `<span class="count lgw-copied" style="margin:0 0 0 14px">From the ERP’s copy${data.copiedAt ? `, ${esc(fmtWhen(data.copiedAt))}` : ''} · the app itself is still loading…</span>` : ''
+    }</p>`;
   // A picture the app no longer has says so, instead of an empty box.
   body.querySelectorAll('.lgw-pic img').forEach((i) => i.addEventListener('error', () => i.closest('.lgw-pic').classList.add('gone')));
   // A PDF opens in the viewer; any other paper in its own tab, as the link says.
