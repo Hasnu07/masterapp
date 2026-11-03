@@ -12,6 +12,7 @@
   --paper: #f6f3ee; --card: #ffffff; --ink: #1d1b18; --muted: #6f685d; --line: #e3ddd2;
   --gold: #8a6a2f; --gold-soft: #f3ead8; --good: #2f6b4f; --good-soft: #e3f0e8;
   --warn: #9a5b13; --warn-soft: #fbefdc; --bad: #a3332b; --bad-soft: #f8e3e1; --blue: #2d5f9a; --blue-soft: #e4edf8;
+  --side-bg: #1b1a1f; --side-ink: #cfcbc3; --side-on: #ffffff; --side-w: 232px; --side-w-min: 64px;
   --radius: 10px; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.04);
   --serif: "EB Garamond", Georgia, serif; --sans: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -22,35 +23,70 @@ a { color: var(--gold); }
 button, input, select, textarea { font: inherit; color: inherit; }
 .hide { display: none !important; }
 
-header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.94); backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--line); }
-.bar-in { padding: 10px 20px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-.brand { font: 600 21px/1 var(--serif); letter-spacing: .2px; margin-right: 6px; white-space: nowrap; }
-.brand small { font: 500 11px var(--sans); color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; margin-left: 6px; }
-/* The menu: a ☰ in the bar, the pages in a drawer from the left. */
+svg.i { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* The shell (asked 3 Nov 2026, "a sticky open side bar … like chronokey"): the menu as a dark column down the left,
+   sticky, that folds to its icons and remembers it; the bar and the page beside it. On a phone the same column is a
+   drawer from the ☰ in the bar (menu() in app.js), closed by the scrim, × or Esc. */
+.shell { display: flex; min-height: 100vh; }
+aside.side { position: sticky; top: 0; height: 100vh; width: var(--side-w); flex: none; background: var(--side-bg); color: var(--side-ink);
+  display: flex; flex-direction: column; transition: width .18s ease; overflow: hidden; z-index: 30; }
+.side-head { display: flex; align-items: center; gap: 10px; padding: 14px 12px 14px 16px; border-bottom: 1px solid rgba(255,255,255,.08); min-height: 64px; }
+.side-head .brand { color: #fff; font: 600 20px/1 var(--serif); white-space: nowrap; overflow: hidden; flex: 1; }
+.side-head .brand small { display: block; font: 500 10px var(--sans); color: var(--side-ink); letter-spacing: 1.4px; text-transform: uppercase; margin-top: 4px; }
+.side-head .mark { width: 32px; height: 32px; flex: none; border-radius: 8px; background: var(--gold); color: #fff; display: grid; place-items: center;
+  font: 600 17px/1 var(--serif); }
+.fold, .drawer-x { border: 0; background: transparent; color: var(--side-ink); cursor: pointer; border-radius: 8px; padding: 6px; display: grid; place-items: center; }
+.fold:hover, .drawer-x:hover { background: rgba(255,255,255,.08); color: #fff; }
+.drawer-x { display: none; font-size: 24px; line-height: 1; padding: 2px 8px; }
+.side nav { display: flex; flex-direction: column; gap: 2px; padding: 10px 8px; }
+.side nav a { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; color: var(--side-ink); text-decoration: none;
+  font-size: 12.5px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; }
+.side nav a:hover { background: rgba(255,255,255,.07); color: #fff; }
+.side nav a.on { background: rgba(255,255,255,.1); color: var(--side-on); box-shadow: inset 3px 0 0 var(--gold); }
+.side nav a .lbl { overflow: hidden; text-overflow: ellipsis; }
+.side-foot { margin-top: auto; padding: 12px; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 8px; }
+.side-foot .who { font-size: 12.5px; color: var(--side-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot .who b { display: block; color: #fff; font-weight: 600; }
+.side-foot .btn { background: transparent; color: var(--side-ink); border-color: rgba(255,255,255,.18); justify-content: center; }
+.side-foot .btn:hover { color: #fff; border-color: rgba(255,255,255,.4); }
+/* Folded: the icons alone, each named on hover. */
+body.folded aside.side { width: var(--side-w-min); }
+body.folded .side-head { padding: 14px 0; justify-content: center; }
+body.folded .side-head .brand, body.folded .side-head .mark, body.folded .side nav a .lbl, body.folded .side-foot .who, body.folded .side-foot .btn .lbl { display: none; }
+body.folded .side nav a { justify-content: center; padding: 11px 0; }
+body.folded .side-foot .btn { padding: 6px; }
+/* Signed out: the sign-in form alone. */
+body.out aside.side, body.out header.bar { display: none; }
+@media (prefers-reduced-motion: reduce) { aside.side { transition: none; } }
+
+.page { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255,.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.bar-in { padding: 12px 20px; display: flex; gap: 14px; align-items: center; min-height: 58px; }
+.crumb { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.crumb h1 { font: 600 17px/1 var(--sans); letter-spacing: 1.6px; text-transform: uppercase; margin: 0; white-space: nowrap; }
+.crumb .path { font-size: 11px; color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; border-left: 1px solid var(--line); padding-left: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .burger { width: 38px; height: 38px; margin-left: -6px; border: 0; border-radius: 8px; background: none; cursor: pointer;
-  display: grid; place-items: center; flex: none; }
+  display: none; place-items: center; flex: none; }
 .burger:hover { background: var(--gold-soft); }
 .burger span, .burger span::before, .burger span::after { display: block; width: 18px; height: 2px; border-radius: 2px;
   background: var(--ink); position: relative; content: ''; }
 .burger span::before { position: absolute; top: -6px; }
 .burger span::after { position: absolute; top: 6px; }
 .scrim { position: fixed; inset: 0; z-index: 55; background: rgba(29,27,24,.28); }
-.drawer { position: fixed; top: 0; bottom: 0; left: 0; z-index: 60; width: min(270px, 84vw); background: var(--card);
-  border-right: 1px solid var(--line); box-shadow: 4px 0 24px rgba(0,0,0,.08); display: flex; flex-direction: column;
-  padding: 10px 12px 16px; transform: translateX(-102%); transition: transform .18s ease; }
-.drawer.open { transform: none; }
-.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 14px; }
-.drawer-x { border: 0; background: none; font-size: 24px; line-height: 1; color: var(--muted); cursor: pointer; padding: 4px 8px; border-radius: 8px; }
-.drawer-x:hover { background: var(--gold-soft); color: var(--ink); }
-nav { display: flex; flex-direction: column; gap: 2px; }
-nav a { text-decoration: none; color: var(--muted); padding: 10px 12px; border-radius: 8px; font-weight: 500; }
-nav a:hover { color: var(--ink); background: var(--paper); }
-nav a.on { color: var(--ink); background: var(--gold-soft); }
-.who { margin-top: auto; padding: 14px 4px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; align-items: center;
-  justify-content: space-between; color: var(--muted); font-size: 13px; }
-.who span { min-width: 0; overflow-wrap: anywhere; }
-@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
+@media (max-width: 760px) {
+  aside.side { position: fixed; left: 0; top: 0; bottom: 0; height: auto; width: var(--side-w) !important; z-index: 60; transform: translateX(-102%);
+    transition: transform .18s ease; box-shadow: 4px 0 24px rgba(0,0,0,.2); }
+  aside.side.open { transform: none; }
+  body.folded .side-head { padding: 14px 12px 14px 16px; justify-content: flex-start; }
+  body.folded .side-head .brand, body.folded .side-head .mark, body.folded .side nav a .lbl, body.folded .side-foot .who, body.folded .side-foot .btn .lbl { display: revert; }
+  body.folded .side nav a { justify-content: flex-start; padding: 10px 12px; }
+  .fold { display: none; }
+  .drawer-x { display: grid; }
+  .burger { display: grid; }
+  .crumb .path { display: none; }
+}
 
 /* The console fills the screen (asked 27 Oct 2026: "wide screen the whole app instead of aligned at middle"). */
 main { width: 100%; padding: 18px 20px 60px; }
@@ -152,41 +188,37 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 
 .filters { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 12px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
-/* The Inventory: five watches a row at most (asked 30 Oct 2026, "way too much watches per tile"), fewer as the screen narrows. */
-#grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-@media (max-width: 1100px) { #grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 900px) { #grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* The Inventory card as Chrono Key's (asked 3 Nov 2026, "the cards to be this size and have buttons as info"): ~200px
+   wide, as many a row as fit; the picture with the status over it, the facts one under the other, a row of buttons.
+   Colour still says status only — the badge, and the line along the foot. */
+#grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 @media (max-width: 640px) { #grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
 @media (max-width: 420px) { #grid { grid-template-columns: minmax(0, 1fr); } }
-.tile { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; cursor: pointer;
-  text-align: left; padding: 0; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.tile { background: var(--card); border: 1px solid var(--line); border-bottom: 3px solid var(--line); border-radius: 4px; overflow: hidden; cursor: pointer;
+  text-align: left; padding: 0; box-shadow: var(--shadow); display: flex; flex-direction: column; position: relative; }
 .tile:hover { border-color: #cdbf9f; }
-.tile:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.tile.st-in_stock { border-bottom-color: var(--good); }
+.tile.st-incoming { border-bottom-color: var(--blue); }
+.tile.st-sold { border-bottom-color: var(--gold); }
+.tile.st-deleted { border-bottom-color: var(--bad); }
 .tile .pic { aspect-ratio: 1 / 1; background: #f1ede6; display: grid; place-items: center; color: var(--muted); font-size: 13px; overflow: hidden; position: relative; }
-.tile .pic img { width: 100%; height: 100%; object-fit: cover; }
-.tile .pic-n { position: absolute; top: 8px; right: 8px; background: rgba(29, 27, 24, .78); color: #fff; font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 999px; }
-/* The status's colour across the top of the text: green in stock, blue incoming, gold sold, grey returned / other, red deleted. */
-.tile .body { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-top: 3px solid var(--line); flex: 1; }
-.tile.st-in_stock .body { border-top-color: var(--good); }
-.tile.st-incoming .body { border-top-color: var(--blue); }
-.tile.st-sold .body { border-top-color: var(--gold); }
-.tile.st-deleted .body { border-top-color: var(--bad); }
-.tile .t { font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tile .m { color: var(--muted); font-size: 13px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-/* Three weights on the card: 400, and 600 for the title, the stock number, the labels and the prices. */
-.tile b { font-weight: 600; }
-.tile .tile-no { color: var(--ink); }
-.tile-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 8px; font-size: 13px; }
-.tile-facts .k { color: var(--muted); }
-.tile-facts .v { color: var(--ink); overflow-wrap: anywhere; }
-.tile-facts .f { display: contents; }
-/* Two cards across a phone: too narrow for two columns, so each fact reads as one line. */
-@media (max-width: 480px) { .tile-facts { display: block; } .tile-facts .f { display: block; margin-bottom: 4px; } }
-/* The prices at the foot: what we paid, and — once sold — what it sold for. */
-.tile .p { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); display: grid; gap: 4px; }
-.tile .p .pr { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 600; font-size: 15px; }
-.tile .p .k { font-size: 12px; font-weight: 400; color: var(--muted); }
-.tile .p .pr.sold { color: var(--gold); }
+.tile .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile .pic-n { position: absolute; top: 8px; right: 8px; background: rgba(29, 27, 24, .78); color: #fff; font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 999px; }
+.tile .badge { position: absolute; top: 8px; left: 8px; font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; padding: 3px 7px; border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.tile .body { padding: 10px 11px 8px; display: grid; gap: 3px; }
+.tile .t { font-weight: 700; font-size: 13px; line-height: 1.25; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.tile .f { font-size: 10.5px; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.55; }
+.tile .f span { color: var(--ink); font-weight: 500; }
+.tile .f.strong, .tile .f.strong span { color: var(--ink); font-weight: 700; }
+.tile .f.sold, .tile .f.sold span { color: var(--gold); font-weight: 700; }
+.tile .f .days { display: inline-block; border: 1px solid var(--good); color: var(--good); border-radius: 999px; padding: 0 6px; font-weight: 700; line-height: 1.4; font-style: normal; }
+.tile .acts { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 11px 10px; margin-top: auto; }
+.tile .acts a, .tile .acts button { width: 30px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 5px;
+  background: #fff; color: var(--muted); cursor: pointer; padding: 0; text-decoration: none; }
+.tile .acts a:hover, .tile .acts button:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-soft); }
+.tile .acts a:focus-visible, .tile .acts button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.tile .acts svg.i { width: 15px; height: 15px; }
 .count { color: var(--muted); font-size: 13px; margin: 6px 0 12px; }
 
 /* the watch page */
@@ -345,9 +377,11 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
   dl.fields { grid-template-columns: minmax(110px, 42%) 1fr; }
   /* Used in the field, by thumb: every button on the watch page is tall enough to hit. */
   .dossier .btn, .photo-tools .btn, .wc-act .btn { min-height: 44px; }
+  .tile .acts a, .tile .acts button { width: 38px; height: 36px; }
   h1 { font-size: 25px; }
   input, select, textarea { font-size: 16px !important; }
   .bar-in { gap: 8px; padding: 6px 12px; }
+  main { padding: 14px 14px 60px; }
 }
 
 /* The converter under every price (fxchip.js), as in InvoiceWEB. BLUE, and
@@ -379,31 +413,56 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 </style>
 </head>
 <body>
-<header class="bar hide" id="bar">
-  <div class="bar-in">
-    <button class="burger" id="menu" type="button" aria-label="Open the menu" aria-controls="drawer" aria-expanded="false"><span></span></button>
-    <div class="brand">Purosangue <small>ERP</small></div>
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-fold" viewBox="0 0 24 24"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></symbol>
+  <symbol id="i-inventory" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></symbol>
+  <symbol id="i-clients" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></symbol>
+  <symbol id="i-expenses" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></symbol>
+  <symbol id="i-logistics" viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-new" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.5a5 5 0 016 5.5"/></symbol>
+  <symbol id="i-out" viewBox="0 0 24 24"><path d="M10 4H5a1 1 0 00-1 1v14a1 1 0 001 1h5M15 8l5 4-5 4M20 12H9"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5a2 2 0 000-2.8l-1.2-1.2a2 2 0 00-2.8 0L4 16v4z"/><path d="M13 7l4 4"/></symbol>
+  <symbol id="i-photos" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 16l-5-5-8 8"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 011-1h10"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1h5"/></symbol>
+</svg>
+<div class="shell">
+  <aside class="side" id="drawer" aria-label="Menu">
+    <div class="side-head">
+      <div class="mark">P</div>
+      <div class="brand">Purosangue <small>ERP</small></div>
+      <button class="fold" id="fold" type="button" title="Fold the menu to its icons" aria-label="Fold the menu"><svg class="i"><use href="#i-fold"/></svg></button>
+      <button class="drawer-x" id="menu-close" type="button" aria-label="Close the menu">×</button>
+    </div>
+    <nav id="nav">
+      <a href="#/" data-nav="inventory" title="Inventory"><svg class="i"><use href="#i-inventory"/></svg><span class="lbl">Inventory</span></a>
+      <a href="#/clients" data-nav="clients" title="Clients"><svg class="i"><use href="#i-clients"/></svg><span class="lbl">Clients</span></a>
+      <a href="#/expenses" data-nav="expenses" title="Expenses"><svg class="i"><use href="#i-expenses"/></svg><span class="lbl">Expenses</span></a>
+      <a href="#/logistics" data-nav="logistics" title="Logistics"><svg class="i"><use href="#i-logistics"/></svg><span class="lbl">Logistics</span></a>
+      <a href="#/new" data-nav="new" data-role="editor" title="New watch"><svg class="i"><use href="#i-new"/></svg><span class="lbl">New watch</span></a>
+      <a href="#/import" data-nav="import" title="Import"><svg class="i"><use href="#i-import"/></svg><span class="lbl">Import</span></a>
+      <a href="#/users" data-nav="users" data-role="admin" title="Users"><svg class="i"><use href="#i-users"/></svg><span class="lbl">Users</span></a>
+    </nav>
+    <div class="side-foot">
+      <div class="who" id="who"></div>
+      <button class="btn small" id="logout" title="Sign out"><svg class="i"><use href="#i-out"/></svg><span class="lbl">Sign out</span></button>
+    </div>
+  </aside>
+  <div class="page">
+    <header class="bar hide" id="bar">
+      <div class="bar-in">
+        <button class="burger" id="menu" type="button" aria-label="Open the menu" aria-controls="drawer" aria-expanded="false"><span></span></button>
+        <div class="crumb"><h1 id="crumb-title">Inventory</h1><span class="path" id="crumb-path">Home · Inventory</span></div>
+      </div>
+    </header>
+    <main id="app"></main>
+    <div id="lg-app-host" class="hide"></div>
   </div>
-</header>
+</div>
 <div class="scrim hide" id="scrim"></div>
-<aside class="drawer" id="drawer" aria-label="Menu" inert>
-  <div class="drawer-head">
-    <div class="brand">Purosangue <small>ERP</small></div>
-    <button class="drawer-x" id="menu-close" type="button" aria-label="Close the menu">×</button>
-  </div>
-  <nav id="nav">
-    <a href="#/" data-nav="inventory">Inventory</a>
-    <a href="#/clients" data-nav="clients">Clients</a>
-    <a href="#/expenses" data-nav="expenses">Expenses</a>
-    <a href="#/logistics" data-nav="logistics">Logistics</a>
-    <a href="#/new" data-nav="new" data-role="editor">New watch</a>
-    <a href="#/import" data-nav="import">Import</a>
-    <a href="#/users" data-nav="users" data-role="admin">Users</a>
-  </nav>
-  <div class="who"><span id="who"></span><button class="btn small" id="logout">Sign out</button></div>
-</aside>
-<main id="app"></main>
-<div id="lg-app-host" class="hide"></div>
 <script src="/app.js"></script>
 <script src="/logistics.js"></script>
 <script src="/fxchip.js"></script>

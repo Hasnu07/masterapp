@@ -149,12 +149,18 @@ function route() {
   const [, page, id, more] = hash.split('/');
   const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  crumb(section, page, id);
   // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
   menu(false);
   window.scrollTo(0, 0);
   if (!page) return showInventory();
-  if (page === 'watch' && id) return showWatch(Number(id));
+  if (page === 'watch' && id) {
+    // `#/watch/12/edit` (the card's pencil) opens the form straight away; the
+    // address is then tidied so a reload shows the watch, not the form again.
+    if (more === 'edit') history.replaceState(null, '', `#/watch/${Number(id)}`);
+    return showWatch(Number(id), { edit: more === 'edit' });
+  }
   if (page === 'clients') return id === 'new' ? showNewClient() : showClients();
   if (page === 'client' && id) return showClient(Number(id));
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
@@ -167,15 +173,41 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 
-/* The menu drawer, from the ☰. Closed by picking a page, the scrim, × or Esc;
-   `inert` while closed, so its links are not tabbed to off screen. */
+/* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
+const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', new: 'New watch', import: 'Import', users: 'Users' };
+function crumb(section, page, id) {
+  const name = SECTION_NAMES[section] || 'Purosangue';
+  const leaf = { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] || (section === 'logistics' && id ? id : '');
+  $('#crumb-title').textContent = name;
+  $('#crumb-path').textContent = `Home · ${name}${leaf ? ` · ${leaf}` : ''}`;
+}
+
+/* The menu is the sidebar (3 Nov 2026). On a phone it is a drawer from the ☰,
+   closed by picking a page, the scrim, × or Esc, and `inert` while closed so
+   its links are not tabbed to off screen; on a wider screen it is always
+   there, and this does nothing to it. */
+const phone = matchMedia('(max-width: 760px)');
 function menu(open, { focus = false } = {}) {
   $('#drawer').classList.toggle('open', open);
-  $('#drawer').inert = !open;
+  $('#drawer').inert = !open && phone.matches;
   $('#scrim').classList.toggle('hide', !open);
   $('#menu').setAttribute('aria-expanded', String(open));
   if (open && focus) ($('#nav a.on') || $('#nav a:not(.hide)'))?.focus();
 }
+phone.addEventListener('change', () => menu(false));
+
+/* Folded to its icons or open, remembered in this browser. */
+const FOLD_KEY = 'masterapp.sidebar';
+try {
+  if (localStorage.getItem(FOLD_KEY) === 'folded') document.body.classList.add('folded');
+} catch {}
+$('#fold').addEventListener('click', () => {
+  const folded = document.body.classList.toggle('folded');
+  $('#fold').title = folded ? 'Open the menu' : 'Fold the menu to its icons';
+  try {
+    localStorage.setItem(FOLD_KEY, folded ? 'folded' : 'open');
+  } catch {}
+});
 // Into the menu only when it was opened from the keyboard (a click's detail is 0 then).
 $('#menu').addEventListener('click', (e) => menu(true, { focus: e.detail === 0 }));
 $('#menu-close').addEventListener('click', () => menu(false));
@@ -193,6 +225,7 @@ document.addEventListener('keydown', (e) => {
 function showLogin() {
   menu(false);
   $('#bar').classList.add('hide');
+  document.body.classList.add('out');
   // The logistics app's frame goes with the session: its page holds the key to its records.
   if (typeof lgAppDrop === 'function') lgAppDrop();
   $('#app').innerHTML = `
@@ -221,7 +254,9 @@ async function signedIn(user) {
   state.user = user;
   state.meta = await api('/api/meta');
   $('#bar').classList.remove('hide');
-  $('#who').textContent = `${user.name || user.email} · ${user.role}`;
+  document.body.classList.remove('out');
+  $('#who').innerHTML = `<b>${esc(user.name || user.email)}</b>${esc(user.role)}`;
+  $('#who').title = `${user.name || user.email} · ${user.role}`;
   $$('#nav [data-role]').forEach((a) => a.classList.toggle('hide', !can(a.dataset.role)));
   route();
 }
@@ -350,42 +385,101 @@ async function loadList(more = false) {
 
   $('#count').textContent = `${shown.length} of ${r.total} watch${r.total === 1 ? '' : 'es'}${L.deleted ? ' (deleted)' : ''}`;
   $('#grid').innerHTML = shown.length ? shown.map(tile).join('') : '<p class="sub">Nothing matches.</p>';
-  $$('#grid .tile').forEach((t) => t.addEventListener('click', () => (location.hash = `#/watch/${t.dataset.id}`)));
+  $$('#grid .tile').forEach((t) =>
+    t.addEventListener('click', (e) => {
+      if (e.target.closest('.acts')) return; // a button on the card does its own thing
+      location.hash = `#/watch/${t.dataset.id}`;
+    })
+  );
+  $$('#grid [data-copy]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.copy));
+      try {
+        await navigator.clipboard.writeText(cardText(w));
+        flash(`Copied stock ${w.stock_no || w.id}`);
+      } catch {
+        flash('Could not copy — the browser refused', true);
+      }
+    })
+  );
   $('#more').classList.toggle('hide', shown.length >= r.total);
 }
 
+/* Days from the purchase to the sale, or to today while it is still here. */
+function daysInStock(w) {
+  if (!w.purchase_date) return null;
+  const from = new Date(w.purchase_date + 'T00:00:00');
+  const to = w.sale_date ? new Date(w.sale_date + 'T00:00:00') : new Date();
+  const d = Math.floor((to - from) / 86400000);
+  return Number.isFinite(d) && d >= 0 ? d : null;
+}
+
 /*
- * An Inventory card (asked 26 Oct 2026: "more colour coded and simplify
- * it"). Colour says status only, as everywhere in the console: a band in the
- * status's colour across the top of the text. The facts sit in one two-column
- * list, and the prices stand alone at the foot. What the logistics app knows
- * about the watch is in the app itself now (30 Oct 2026), not on the card.
+ * An Inventory card, laid out like Chrono Key's (asked 3 Nov 2026: "the cards
+ * to be this size and have buttons as info like this"): the picture with the
+ * status over it, the facts one under the other — reference, serial, stock
+ * number, watch date, owner, category, who from, the prices, days in stock —
+ * and a row of buttons: open, edit, photos, copy, the watch on Chrono Key.
+ * Colour still says status only: the badge, and the line along the foot.
+ * What we paid and, once sold, what it sold for are the prices in bold (asked
+ * 26 Oct 2026). What the logistics app knows is in the app itself (30 Oct).
  */
 function tile(w) {
-  // What we paid and, once sold, what it sold for (asked 26 Oct 2026: "instead of B2C show purchase price and sold price").
-  const prices = [
-    w.purchase_price && ['Bought for', money(w.purchase_price, w.purchase_currency, { plain: true }), ''],
-    w.sale_price && ['Sold for', money(w.sale_price, w.sale_currency, { plain: true }), 'sold'],
-  ].filter(Boolean);
-  const facts = [
-    ['Ref', [w.reference, w.watch_date].filter(Boolean).join(' · ')],
-    ['Serial', w.serial],
-    ['From', w.bought_from],
-  ].filter(([, v]) => v);
+  const icon = (id) => `<svg class="i"><use href="#i-${id}"/></svg>`;
+  const plain = (n, cur) => money(n, cur, { plain: true });
+  const f = (label, html, cls = '') => `<div class="f ${cls}">${label}: <span>${html || ''}</span></div>`;
+  const days = daysInStock(w);
+  const ckUrl = w.ck_id && state.meta?.chronokeyUrl ? `${state.meta.chronokeyUrl}/Stock/InstockDetailPage/${encodeURIComponent(w.ck_id)}` : '';
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
-  return `<button class="tile st-${esc(status)}" data-id="${w.id}">
+  return `<article class="tile st-${esc(status)}" data-id="${w.id}" title="${esc(w.title)}">
     <div class="pic">${
       w.photo_id
         ? `<img loading="lazy" src="/api/photos/${w.photo_id}?thumb=1" alt="">`
         : `<span>${esc(w.reference || 'No photo')}</span>`
     }${w.photo_count > 1 ? `<span class="pic-n">${w.photo_count} photos</span>` : ''}</div>
+    <span class="badge chip ${esc(status)}">${esc(status === 'in_stock' ? 'Available' : statusLabel(status))}</span>
     <div class="body">
-      <div class="m"><b class="tile-no">${w.stock_no ? `#${esc(w.stock_no)}` : 'No stock number'}</b>${chip(status)}${w.location ? `<span>${esc(w.location)}</span>` : ''}</div>
       <div class="t">${esc(w.title)}</div>
-      ${facts.length ? `<div class="tile-facts">${facts.map(([k, v]) => `<div class="f"><span class="k">${k}</span> <span class="v">${esc(v)}</span></div>`).join('')}</div>` : ''}
-      ${prices.length ? `<div class="p">${prices.map(([k, v, cls]) => `<div class="pr ${cls}"><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` : ''}
+      ${f('Reference', esc(w.reference))}
+      ${f('Serial number', esc(w.serial))}
+      ${f('Stock number', esc(w.stock_no))}
+      ${f('Watch date', esc(w.watch_date))}
+      ${f('Owner', esc(w.order_type))}
+      ${f('Category', esc(w.location))}
+      ${f('From', esc(w.bought_from))}
+      ${f('Retail price', plain(w.retail_price, w.retail_currency))}
+      ${f('Website price', plain(w.website_price, w.website_currency))}
+      ${f('Purchase price', plain(w.purchase_price, w.purchase_currency), 'strong')}
+      ${w.sale_price ? f('Sold for', plain(w.sale_price, w.sale_currency), 'sold') : ''}
+      ${f(w.sale_date ? 'Days to sell' : 'Days in stock', days === null ? '' : `<i class="days">${days}</i>`)}
     </div>
-  </button>`;
+    <div class="acts">
+      <a href="#/watch/${w.id}" title="Open the watch">${icon('eye')}</a>
+      ${can('editor') && !w.deleted_at ? `<a href="#/watch/${w.id}/edit" title="Edit">${icon('edit')}</a>` : ''}
+      <a href="#/watch/${w.id}" title="${w.photo_count ? `${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}` : 'No photos'}">${icon('photos')}</a>
+      <button type="button" data-copy="${w.id}" title="Copy the details">${icon('copy')}</button>
+      ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="Open on Chrono Key">${icon('link')}</a>` : ''}
+    </div>
+  </article>`;
+}
+
+/* What the copy button puts on the clipboard: the card as text, for a WhatsApp message. */
+function cardText(w) {
+  const plain = (n, cur) => (n === null || n === undefined ? '' : money(n, cur, { plain: true }));
+  const lines = [
+    w.title,
+    ['Reference', w.reference],
+    ['Serial', w.serial],
+    ['Stock number', w.stock_no],
+    ['Watch date', w.watch_date],
+    ['Location', w.location],
+    ['Retail price', plain(w.retail_price, w.retail_currency)],
+    ['Website price', plain(w.website_price, w.website_currency)],
+  ];
+  return lines
+    .map((l) => (Array.isArray(l) ? (l[1] ? `${l[0]}: ${l[1]}` : '') : l))
+    .filter(Boolean)
+    .join('\n');
 }
 
 /*
@@ -478,7 +572,7 @@ function statusLine(w) {
 /* ── one watch ────────────────────────────────────────────────────── */
 
 let current = null;
-async function showWatch(id, { keepEdit = false } = {}) {
+async function showWatch(id, { keepEdit = false, edit = false } = {}) {
   let w;
   try {
     w = await api(`/api/watches/${id}`);
@@ -487,7 +581,8 @@ async function showWatch(id, { keepEdit = false } = {}) {
     return;
   }
   const same = current?.w?.id === w.id;
-  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, open: same ? current.open : {} };
+  const editing = (edit && can('editor') && !w.deleted_at) || (keepEdit && current?.editing);
+  current = { w, selected: same ? current.selected : 0, editing, open: same ? current.open : {} };
   renderWatch();
   loadSide(w.id);
 }
