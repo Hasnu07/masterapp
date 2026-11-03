@@ -288,6 +288,7 @@ async function showInventory() {
   const L = state.list;
   const about = {
     in_stock: 'On the shelf now — as Chrono Key’s Inventory tab lists them.',
+    incoming: 'Bought and on their way — Chrono Key’s To-be-shipped list.',
     sold: 'Sold, newest sale first by stock number.',
     returned: 'Returned to their clients, as Chrono Key’s Returned consignments list them.',
     other: 'On none of Chrono Key’s lists, or held only by the Watch vault.',
@@ -316,7 +317,14 @@ async function showInventory() {
     </div>
     <div class="row" style="justify-content:space-between">
       <div class="count" id="count"></div>
-      <label class="count" style="cursor:pointer"><input type="checkbox" id="deleted" ${L.deleted ? 'checked' : ''}> Show deleted</label>
+      <div class="row">
+        ${
+          L.status === 'in_stock'
+            ? `<label class="count" style="cursor:pointer" title="What is on its way to the shelf, beside what is on it"><input type="checkbox" id="also-incoming" ${L.alsoIncoming ? 'checked' : ''}> Also incoming</label>`
+            : ''
+        }
+        <label class="count" style="cursor:pointer"><input type="checkbox" id="deleted" ${L.deleted ? 'checked' : ''}> Show deleted</label>
+      </div>
     </div>
     <div class="grid" id="grid"></div>
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="more">Load more</button></div>`;
@@ -342,9 +350,20 @@ async function showInventory() {
     L.deleted = e.target.checked;
     loadList();
   });
+  // In stock with what is on its way (asked 3 Nov 2026) — remembered in this browser.
+  $('#also-incoming')?.addEventListener('change', (e) => {
+    L.alsoIncoming = e.target.checked;
+    try {
+      localStorage.setItem('masterapp.alsoIncoming', L.alsoIncoming ? '1' : '');
+    } catch {}
+    loadList();
+  });
   $('#more').addEventListener('click', () => loadList(true));
   loadList();
 }
+try {
+  state.list.alsoIncoming = localStorage.getItem('masterapp.alsoIncoming') === '1';
+} catch {}
 
 let shown = [];
 async function loadList(more = false) {
@@ -352,7 +371,7 @@ async function loadList(more = false) {
   const seq = ++listSeq;
   const params = new URLSearchParams({
     q: L.q,
-    status: L.status,
+    status: L.status === 'in_stock' && L.alsoIncoming ? 'in_stock,incoming' : L.status,
     location: L.location,
     brand: L.brand,
     sort: L.sort,
