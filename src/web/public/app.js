@@ -259,6 +259,8 @@ async function signedIn(user) {
   $('#who').title = `${user.name || user.email} · ${user.role}`;
   $$('#nav [data-role]').forEach((a) => a.classList.toggle('hide', !can(a.dataset.role)));
   route();
+  // The logistics app, loading hidden behind the first page, so a watch's Logistics window answers at once (lgAppWarm).
+  setTimeout(() => typeof lgAppWarm === 'function' && lgAppWarm(), 2000);
 }
 
 $('#logout').addEventListener('click', async () => {

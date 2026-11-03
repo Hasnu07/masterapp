@@ -6,7 +6,7 @@ import { startRun, finishRun, progressRun } from '../listimport.js';
 import { GONE_LIMIT } from '../gone.js';
 import { KIND, NEVER_COPIED, isSecret, stockOf } from '../../logistics/kinds.js';
 import { happenedAt } from '../../logistics/situation.js';
-import { savePhoto, saveDocument } from '../../storage/index.js';
+import { savePhoto, saveDocument, storage } from '../../storage/index.js';
 
 /*
  * The logistics app (the puro-sync document) → logistics_items.
@@ -210,6 +210,35 @@ export async function copyWorkerFile(url, now = Date.now()) {
   refused.set(url, now);
   if (refused.size > 20_000) refused.clear();
   return null;
+}
+
+/**
+ * One of the worker's pictures for a page — the watch's Logistics window
+ * (asked 3 Nov 2026: "loads very late and images don't show up"): the file
+ * as copied here, fetched now and kept when the pass has not reached it, or
+ * its 480px thumbnail. null: not the worker's, not a picture, gone. Unlike
+ * the pass, a failure is not remembered: the next view tries again.
+ *
+ * @returns {{buffer: Buffer, type: string} | null}
+ */
+export async function workerFile(url, { thumb = false } = {}) {
+  let id = (await copiedMap([url])).get(url);
+  if (!id) {
+    let buffer = null;
+    try {
+      buffer = await getWorkerFile(url);
+    } catch (err) {
+      console.warn(`[logistics] file ${url}: ${err.message}`);
+    }
+    if (!buffer) return null;
+    id = await storeFile(buffer, url);
+  }
+  const { rows } = await query('SELECT storage_key, thumb_key, content_type FROM logistics_files WHERE id = $1', [id]);
+  const f = rows[0];
+  if (!f) return null;
+  const key = thumb && f.thumb_key ? f.thumb_key : f.storage_key;
+  const buffer = await (await storage()).get(key);
+  return buffer ? { buffer, type: thumb && f.thumb_key ? 'image/jpeg' : f.content_type } : null;
 }
 
 /*

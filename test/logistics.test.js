@@ -348,3 +348,28 @@ test('a trip keeps the watches it carried after one of them is sold (its row id 
   await m.sync.syncLogistics();
   assert.deepEqual((await item('personTrips', 'T1')).stock_nos.sort(), ['1668', '1700']);
 });
+
+/* ── the watch's Logistics window ── */
+
+test('the window’s pictures come as our thumbnails: the worker’s file copied once; a dead one, or another host’s, refused', async () => {
+  const headers = { 'X-Requested-With': 'masterapp', 'Content-Type': 'application/json' };
+  const login = await fetch(`${api}/api/login`, { method: 'POST', headers, body: JSON.stringify({ email: 'boss@example.com', password: 'admin-password-1' }) });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const get = (q) => fetch(`${api}/api/lg-app/photo?${q}`, { headers: { Cookie: cookie } });
+  const u = encodeURIComponent(`${base}/photos/p2.jpg`);
+  const before = hits['/photos/p2.jpg'] || 0;
+  const t = await get(`u=${u}&thumb=1`);
+  assert.equal(t.status, 200);
+  assert.equal(t.headers.get('content-type'), 'image/jpeg');
+  assert.match(t.headers.get('cache-control'), /immutable/, 'kept by the browser: a file never changes under its name on the worker');
+  const meta = await sharp(Buffer.from(await t.arrayBuffer())).metadata();
+  assert.ok(meta.width <= 480 && meta.height <= 480, 'the thumbnail');
+  const full = Buffer.from(await (await get(`u=${u}`)).arrayBuffer());
+  const original = Buffer.from(await (await fetch(`${base}/photos/p2.jpg`)).arrayBuffer());
+  assert.ok(full.equals(original), 'the original in full');
+  assert.equal(hits['/photos/p2.jpg'], before + 2, 'fetched from the worker once by the ERP (and once by this test), then served from the copy');
+  assert.equal((await get(`u=${encodeURIComponent(`${base}/photos/dead.jpg`)}&thumb=1`)).status, 404, 'a picture the app no longer has');
+  assert.equal((await get(`u=${encodeURIComponent('https://elsewhere.example/photos/p2.jpg')}&thumb=1`)).status, 404, 'only the worker’s own');
+  assert.equal((await fetch(`${api}/api/lg-app/photo?u=${u}&thumb=1`, { headers: { 'X-Requested-With': 'masterapp' } })).status, 401, 'behind the sign-in');
+});
