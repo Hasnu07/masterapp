@@ -204,10 +204,62 @@ const lgDocsOf = (r) =>
     .flatMap((k) => r[k])
     .filter((x) => x && typeof x === 'object' && typeof x.data === 'string' && !/^image\//.test(x.type || ''))
     .map((x) => ({ url: x.data, name: x.name || 'document', type: x.type || '' }));
+const lgIsPdf = (d) => /pdf/i.test(d.type) || /\.pdf$/i.test(d.name);
 const lgDocs = (list) =>
   (list || []).length
-    ? `<div class="lgw-docs">${list.map((d) => `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.type)}">${esc(d.name)}</a>`).join('')}</div>`
+    ? `<div class="lgw-docs">${list
+        .map(
+          (d) =>
+            `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.type)}" ${lgIsPdf(d) ? `data-pdf="${esc(d.url)}" data-name="${esc(d.name)}"` : ''}>${esc(d.name)}</a>`
+        )
+        .join('')}</div>`
     : '';
+
+/*
+ * A PDF among a shipment's papers opens in a viewer over the window, with
+ * Download under it (asked 3 Nov 2026). One on the worker is shown through
+ * /api/lg-app/photo (same origin, so the browser's own viewer may frame it);
+ * one held inline in the app's record (data:) is handed over as a blob.
+ */
+let lgDocUrl = null;
+function lgDocOpen(url, name) {
+  let d = document.getElementById('lg-doc');
+  if (!d) {
+    d = document.createElement('dialog');
+    d.id = 'lg-doc';
+    d.className = 'lgdoc';
+    d.addEventListener('close', () => {
+      d.querySelector('iframe')?.remove();
+      if (lgDocUrl) URL.revokeObjectURL(lgDocUrl);
+      lgDocUrl = null;
+    });
+    document.body.appendChild(d);
+  }
+  // &view=1 says nothing to the server; it keeps the viewer off a copy the browser cached before frames were allowed.
+  let src = `/api/lg-app/photo?u=${encodeURIComponent(url)}&view=1`;
+  let download = `/api/lg-app/photo?u=${encodeURIComponent(url)}&download=${encodeURIComponent(name)}`;
+  const m = url.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (m) {
+    const bytes = m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3]));
+    lgDocUrl = URL.createObjectURL(new Blob([bytes], { type: m[1] || 'application/pdf' }));
+    src = download = lgDocUrl;
+  }
+  d.innerHTML = `
+    <div class="lgdoc-head">
+      <b>${esc(name)}</b>
+      <span class="row">
+        <a class="btn small" href="${esc(download)}" download="${esc(name)}">Download</a>
+        <a class="btn small" href="${esc(src)}" target="_blank" rel="noopener">Open in a tab</a>
+        <button type="button" class="btn small" id="lgdoc-close">Close</button>
+      </span>
+    </div>
+    <iframe src="${esc(src)}" title="${esc(name)}"></iframe>`;
+  d.querySelector('#lgdoc-close').addEventListener('click', () => d.close());
+  d.addEventListener('click', (e) => {
+    if (e.target === d) d.close();
+  });
+  if (!d.open) d.showModal();
+}
 
 /* ── the window's content ── */
 function lgWinRender(data) {
@@ -379,6 +431,13 @@ function lgWinRender(data) {
     <p class="lgw-foot"><button type="button" class="linkish" id="lgw-app">See it in the logistics app</button></p>`;
   // A picture the app no longer has says so, instead of an empty box.
   body.querySelectorAll('.lgw-pic img').forEach((i) => i.addEventListener('error', () => i.closest('.lgw-pic').classList.add('gone')));
+  // A PDF opens in the viewer; any other paper in its own tab, as the link says.
+  body.querySelectorAll('.lgw-docs a[data-pdf]').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      lgDocOpen(a.dataset.pdf, a.dataset.name);
+    })
+  );
   lgWinBind(d);
 }
 /* Signed out: the app goes too — its page holds the key to its records. */

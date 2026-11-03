@@ -89,6 +89,9 @@ const PAGE_POLICY = [
   // The logistics app's pictures, shown in the watch's Logistics window, live on its worker.
   `img-src 'self' data: blob: ${workerOrigin()}`,
   "connect-src 'self'",
+  // Frames: the logistics app at /lg-app/, and the Logistics window's PDF viewer — a paper through /api/lg-app/photo,
+  // or one held inline in the app's record, handed to the viewer as a blob.
+  "frame-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'self'",
@@ -616,6 +619,10 @@ export function createServer() {
       if (!f) return res.status(404).json({ error: 'The logistics app has no such picture' });
       res.set('Content-Type', f.type);
       res.set('Cache-Control', 'private, max-age=604800, immutable');
+      // ?download=<name>: saved under the name the app gave it (a customs paper, an invoice), the name kept plain.
+      if (req.query.download) res.attachment(String(req.query.download).replace(/[^\w .()\-]+/g, '_').slice(0, 120) || 'document');
+      // The window's PDF viewer frames a paper from our own page: DENY (set on everything above) would refuse even that.
+      res.set('X-Frame-Options', 'SAMEORIGIN');
       res.send(f.buffer);
     })
   );

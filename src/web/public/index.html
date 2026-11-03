@@ -145,6 +145,18 @@ main { width: 100%; padding: 18px 20px 60px; }
 .lgw-pic { position: relative; display: block; width: 88px; height: 88px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: #f0ece4; }
 .lgw-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .lgw-pic span { position: absolute; left: 0; right: 0; bottom: 0; font-size: 12px; padding: 2px 6px; background: rgba(0,0,0,.55); color: #fff; }
+/* A PDF among the papers, in a viewer over the window: the name and Download at the top, the paper filling the rest. */
+.lgdoc { width: min(1100px, 96vw); height: 94vh; max-height: 94vh; padding: 0; border: 0; border-radius: 14px; background: var(--card); color: var(--ink);
+  box-shadow: 0 24px 64px rgba(0,0,0,.4); overflow: hidden; }
+.lgdoc[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.lgdoc::backdrop { background: rgba(29,27,24,.6); }
+.lgdoc-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.lgdoc-head b { font-weight: 600; overflow-wrap: anywhere; }
+.lgdoc iframe { display: block; width: 100%; height: 100%; border: 0; background: #525659; }
+@media (max-width: 640px) {
+  .lgdoc { width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
+  .lgdoc-head { flex-wrap: wrap; }
+}
 /* A shipment's papers — customs documents, invoices — by name, each opening on its own. */
 .lgw-docs { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 13px; }
 .lgw-docs a { color: var(--gold); overflow-wrap: anywhere; }
