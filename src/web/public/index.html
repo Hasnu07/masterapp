@@ -262,6 +262,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .tile .acts a, .tile .acts button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px;
   background: #fff; color: var(--ink); cursor: pointer; font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .tile .acts a:hover, .tile .acts button:hover { border-color: var(--gold); color: var(--gold); background: var(--gold-soft); }
+/* The moves — Received into stock, Sold, Reserve, Return… — stand out from the rest of the row. */
+.tile .acts button.move { background: var(--gold-soft); border-color: #d9c9a3; }
+/* A move's form over the page (openMove): the same window as Logistics, narrower. */
+.lgw.move { width: min(620px, 94vw); max-height: 92vh; }
+.lgw.move .lgw-body { padding: 18px 24px 24px; }
 .tile .acts a:focus-visible, .tile .acts button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
 .tile .acts svg.i { width: 14px; height: 14px; color: var(--muted); }
 .tile .acts a:hover svg.i, .tile .acts button:hover svg.i { color: inherit; }

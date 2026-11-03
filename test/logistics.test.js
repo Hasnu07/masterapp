@@ -373,3 +373,23 @@ test('the window’s pictures come as our thumbnails: the worker’s file copied
   assert.equal((await get(`u=${encodeURIComponent('https://elsewhere.example/photos/p2.jpg')}&thumb=1`)).status, 404, 'only the worker’s own');
   assert.equal((await fetch(`${api}/api/lg-app/photo?u=${u}&thumb=1`, { headers: { 'X-Requested-With': 'masterapp' } })).status, 401, 'behind the sign-in');
 });
+
+test('the window draws from our copy at once: a stock number’s records, its pictures as our files', async () => {
+  const headers = { 'X-Requested-With': 'masterapp', 'Content-Type': 'application/json' };
+  const login = await fetch(`${api}/api/login`, { method: 'POST', headers, body: JSON.stringify({ email: 'boss@example.com', password: 'admin-password-1' }) });
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const get = (q) => fetch(`${api}/api/lg-app/${q}`, { headers: { Cookie: cookie } });
+  const p = await (await get('passport?no=1668')).json();
+  assert.equal(p.copied, true);
+  assert.equal(p.empty, false);
+  assert.equal(p.dubai.length, 1, 'its row in Dubai stock, by its exact stock number');
+  assert.match(p.dubai[0].photos[0], /^lgfile:\d+$/, 'the copy’s own file');
+  assert.ok(p.shipments.some((s) => String(s.stockNumber).includes('1668')), 'a shipment naming it among others');
+  assert.ok(Object.keys(p.clients).length >= 1, 'the clients’ names, for the ids');
+  const f = await get(`file/${p.dubai[0].photos[0].slice(7)}?thumb=1`);
+  assert.equal(f.status, 200);
+  assert.equal(f.headers.get('content-type'), 'image/jpeg');
+  assert.equal((await (await get('passport?no=9999')).json()).empty, true, 'nothing on a stock number the app never names');
+  assert.equal((await get('passport?no=')).status, 400);
+  assert.equal((await fetch(`${api}/api/lg-app/passport?no=1668`, { headers: { 'X-Requested-With': 'masterapp' } })).status, 401, 'behind the sign-in');
+});
