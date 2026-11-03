@@ -328,50 +328,77 @@ function lgWinRender(data) {
     rows.some((r) => r.polish) && ['Polish', `with ${rows.find((r) => r.polish).polish.sentTo || 'the polisher'} now`],
   ].filter(Boolean);
 
-  // The story, in the order it happened.
+  /*
+   * The story, in the order it happened. Most of the app's moments are days,
+   * not times, so a day's moments are put in the order a watch moves through
+   * them (STAGE): incoming → shipped → delivered to us → arrived → received →
+   * in stock → out for polish / on consignment / checked out → sold →
+   * delivered to the buyer. And one arrival is one line: the app writes an
+   * arrival, a receipt and the stock row for it (3 Nov 2026: "this doesn't
+   * make sense" — In Dubai stock, Arrived, Received, Delivered, all 2 Nov).
+   */
+  const STAGE = { incoming: 10, shipped: 20, delivered: 30, arrived: 40, received: 50, stock: 60, moved: 65, polish: 70, back: 75, consignment: 80, checkout: 85, accessories: 90, ready: 95, sold: 100, handed: 110 };
   const ev = [];
-  const add = (t, title, detail = '', pics = [], tone = '', docs = []) => ev.push({ t: lgWhen(t), title, detail, pics, tone, docs });
+  const add = (t, stage, title, detail = '', pics = [], tone = '', docs = [], place = '') => ev.push({ t: lgWhen(t), stage: STAGE[stage], title, detail, pics, tone, docs, place });
   for (const i of data.incomings || []) {
-    add(i.createdAt || i.date || i.eta, `Incoming from ${i.supplier || 'a supplier'}`, [i.location, i.eta ? `expected ${lgDay(i.eta)}` : '', i.status ? String(i.status).replace(/_/g, ' ') : ''].filter(Boolean).join(' · '), lgPicsOf(i), 'moving');
+    add(i.createdAt || i.date || i.eta, 'incoming', `Incoming from ${i.supplier || 'a supplier'}`, [i.location, i.eta ? `expected ${lgDay(i.eta)}` : '', i.status ? String(i.status).replace(/_/g, ' ') : ''].filter(Boolean).join(' · '), lgPicsOf(i), 'moving');
     const arrived = i.arrivedAt || i.arrivalRecord?.date || i.arrivalRecord?.ts;
-    if (arrived) add(arrived, 'Arrived', i.arrivalRecord?.notes || '', lgPicsOf(i.arrivalRecord || {}), 'here');
-    if (i.receivedAt || i.inventoryDest) add(i.receivedAt || arrived, `Received into ${PLACE[i.inventoryDest] ? `${PLACE[i.inventoryDest]} stock` : i.inventoryDest || 'stock'}`, '', [], 'here');
+    if (arrived) add(arrived, 'arrived', 'Arrived', i.arrivalRecord?.notes || '', lgPicsOf(i.arrivalRecord || {}), 'here');
+    const dest = PLACE[i.inventoryDest] ? `${PLACE[i.inventoryDest]} stock` : i.inventoryDest || 'stock';
+    if (i.receivedAt || i.inventoryDest) add(i.receivedAt || arrived, 'received', `Received into ${dest}`, '', [], 'here', [], dest);
   }
   // Polish, as the app keeps it on the stock row: the one at the polisher now, and the ones done.
   const polishes = rows.flatMap((r) => [...(r.polish ? [{ ...r.polish, _active: true }] : []), ...(r.polishHistory || [])]);
   for (const p of polishes) {
-    add(p.sentDate || p.sentAt, `Sent to ${p.sentTo || 'the polisher'} for polish`, [p.itemDescription || '', p.takenBy ? `taken by ${p.takenBy}` : '', p.costAmount > 0 ? lgAmount(p.costAmount, p.costCurrency) : '', p.notes || ''].filter(Boolean).join(' · '), p.sentPhotos || [], 'warn');
-    if (!p._active && (p.returnedDate || p.returnedAt)) add(p.returnedDate || p.returnedAt, 'Back from polish', p.returnNotes || '', p.donePhotos || [], 'here');
+    add(p.sentDate || p.sentAt, 'polish', `Sent to ${p.sentTo || 'the polisher'} for polish`, [p.itemDescription || '', p.takenBy ? `taken by ${p.takenBy}` : '', p.costAmount > 0 ? lgAmount(p.costAmount, p.costCurrency) : '', p.notes || ''].filter(Boolean).join(' · '), p.sentPhotos || [], 'warn');
+    if (!p._active && (p.returnedDate || p.returnedAt)) add(p.returnedDate || p.returnedAt, 'back', 'Back from polish', p.returnNotes || '', p.donePhotos || [], 'here');
   }
   for (const r of rows) {
-    add(r.receivedAt || r.createdAt || r.dateAdded, `In ${r._place} stock`, [r.from ? `from ${r.from}` : '', r.status && r.status !== 'current' ? r.status : ''].filter(Boolean).join(' · '), lgPicsOf(r), 'here');
+    add(r.receivedAt || r.createdAt || r.dateAdded, 'stock', `In ${r._place} stock`, [r.from ? `from ${r.from}` : '', r.status && r.status !== 'current' ? r.status : ''].filter(Boolean).join(' · '), lgPicsOf(r), 'here', [], `${r._place} stock`);
     for (const m of r.movements || []) {
       const to = m.to || m.destination || m.toLocation || '';
-      add(m.date || m.ts || m.at || m.movedAt, `${m.type ? String(m.type).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : 'Moved'}${to ? ` to ${to}` : ''}`, [m.carrier ? `by ${m.carrier}` : '', m.notes || m.note || '', m.cost ? lgAmount(m.cost, m.costCurrency || m.currency) : ''].filter(Boolean).join(' · '), lgPicsOf(m), 'moving');
+      add(m.date || m.ts || m.at || m.movedAt, 'moved', `${m.type ? String(m.type).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : 'Moved'}${to ? ` to ${to}` : ''}`, [m.carrier ? `by ${m.carrier}` : '', m.notes || m.note || '', m.cost ? lgAmount(m.cost, m.costCurrency || m.currency) : ''].filter(Boolean).join(' · '), lgPicsOf(m), 'moving');
     }
-    if (r.consignment?.date) add(r.consignment.date, `On consignment${r.consignment.with ? ` with ${r.consignment.with}` : ''}`, r.consignment.returnDate ? `back by ${lgDay(r.consignment.returnDate)}` : '', [], 'warn');
+    if (r.consignment?.date) add(r.consignment.date, 'consignment', `On consignment${r.consignment.with ? ` with ${r.consignment.with}` : ''}`, r.consignment.returnDate ? `back by ${lgDay(r.consignment.returnDate)}` : '', [], 'warn');
   }
-  for (const r of data.checkout || []) add(r.date || r.createdAt, `Checked out${r.to || r.reason ? ` — ${r.to || r.reason}` : ''}`, r.returnedAt ? `returned ${lgDay(r.returnedAt)}` : r.status || '', lgPicsOf(r), 'warn');
+  for (const r of data.checkout || []) add(r.date || r.createdAt, 'checkout', `Checked out${r.to || r.reason ? ` — ${r.to || r.reason}` : ''}`, r.returnedAt ? `returned ${lgDay(r.returnedAt)}` : r.status || '', lgPicsOf(r), 'warn');
   for (const s of data.shipments || []) {
-    add(s.date || s.createdAt, `Shipped ${who(s.fromClientId, s.fromText || s.from) || 'us'} → ${who(s.toClientId, s.toText || s.to) || '…'}`, [s.tracking ? `tracking ${s.tracking}` : '', s.status ? String(s.status).replace(/_/g, ' ') : '', s.costAmount ? lgAmount(s.costAmount, s.costCurrency) : s.cost || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
-    if (s.deliveredAt) add(s.deliveredAt, 'Delivered', s.deliveryNotes || '', s.deliveryPhotos || [], 'here');
+    add(s.date || s.createdAt, 'shipped', `Shipped ${who(s.fromClientId, s.fromText || s.from) || 'us'} → ${who(s.toClientId, s.toText || s.to) || '…'}`, [s.tracking ? `tracking ${s.tracking}` : '', s.status ? String(s.status).replace(/_/g, ' ') : '', s.costAmount ? lgAmount(s.costAmount, s.costCurrency) : s.cost || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
+    if (s.deliveredAt) add(s.deliveredAt, 'delivered', 'Delivered', s.deliveryNotes || '', s.deliveryPhotos || [], 'here');
   }
   for (const s of data.movers || []) {
-    add(s.shipmentDate || s.createdAt, `With ${mover(s.moverId, s.moverName) || 'a courier'}, ${s.fromCountry || '…'} → ${s.toCountry || '…'}`, [s.items, s.amount ? lgAmount(s.amount, s.currency) : '', s.paymentStatus ? `payment ${s.paymentStatus}` : '', s.trackingNumber ? `tracking ${s.trackingNumber}` : ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
-    if (s.status === 'delivered' && s.deliveryDate) add(s.deliveryDate, `Delivered by ${mover(s.moverId, s.moverName) || 'the courier'}`, '', [], 'here');
+    add(s.shipmentDate || s.createdAt, 'shipped', `With ${mover(s.moverId, s.moverName) || 'a courier'}, ${s.fromCountry || '…'} → ${s.toCountry || '…'}`, [s.items, s.amount ? lgAmount(s.amount, s.currency) : '', s.paymentStatus ? `payment ${s.paymentStatus}` : '', s.trackingNumber ? `tracking ${s.trackingNumber}` : ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
+    if (s.status === 'delivered' && s.deliveryDate) add(s.deliveryDate, 'delivered', `Delivered by ${mover(s.moverId, s.moverName) || 'the courier'}`, '', [], 'here');
   }
-  for (const r of data.ready || []) add(r.soldDate || r.createdAt, `Sold to ${r.soldToBuyer || 'a buyer'}, awaiting delivery`, r.soldPrice ? lgAmount(r.soldPrice, r.soldCurrency) : '', lgPicsOf(r), 'sold');
+  for (const r of data.ready || []) add(r.soldDate || r.createdAt, 'ready', `Sold to ${r.soldToBuyer || 'a buyer'}, awaiting delivery`, r.soldPrice ? lgAmount(r.soldPrice, r.soldCurrency) : '', lgPicsOf(r), 'sold');
   for (const s of data.sold || []) {
-    add(s.soldDate, `Sold to ${s.soldToBuyer || 'a buyer'}`, [s.soldPrice ? lgAmount(s.soldPrice, s.soldCurrency) : '', s.soldFromLocation ? `from ${s.soldFromLocation}` : '', s.soldNotes || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'sold');
-    if (s.deliveredAt) add(s.deliveredAt, `Delivered${s.deliveredVia ? ` ${lgSay(s.deliveredVia)}` : ''}`, '', [], 'sold');
+    add(s.soldDate, 'sold', `Sold to ${s.soldToBuyer || 'a buyer'}`, [s.soldPrice ? lgAmount(s.soldPrice, s.soldCurrency) : '', s.soldFromLocation ? `from ${s.soldFromLocation}` : '', s.soldNotes || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'sold');
+    if (s.deliveredAt) add(s.deliveredAt, 'handed', `Delivered${s.deliveredVia ? ` ${lgSay(s.deliveredVia)}` : ''}`, '', [], 'sold');
   }
   for (const t of data.transactions || []) {
     const items = t.items || [];
-    add(t.date || t.createdAt, `${t.type === 'sold' ? 'Sold to' : 'Bought from'} ${who(t.clientId) || 'a client'}`, items.length ? `${items.filter((x) => x.status === 'pending').length} of ${items.length} accessory item${items.length === 1 ? '' : 's'} still pending` : '', [], '');
+    add(t.date || t.createdAt, 'accessories', `${t.type === 'sold' ? 'Sold to' : 'Bought from'} ${who(t.clientId) || 'a client'}`, items.length ? `${items.filter((x) => x.status === 'pending').length} of ${items.length} accessory item${items.length === 1 ? '' : 's'} still pending` : '', [], '');
   }
-  for (const t of data.trips || []) add(t.startDate, `Carried by ${t.personName || 'someone'}, ${t.fromLocation || '…'} → ${t.toLocation || '…'}`, [t.purpose, t.status].filter(Boolean).join(' · '), [], 'moving');
-  // In the order it happened (asked 3 Nov 2026: "this should be in chronological order"); a moment with no date last.
-  ev.sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
+  for (const t of data.trips || []) add(t.startDate, 'moved', `Carried by ${t.personName || 'someone'}, ${t.fromLocation || '…'} → ${t.toLocation || '…'}`, [t.purpose, t.status].filter(Boolean).join(' · '), [], 'moving');
+  // By day, then by stage within the day (asked 3 Nov 2026: "this should be in chronological order"); a moment with no date last.
+  const day = (e) => (e.t === null ? Infinity : Math.floor(e.t / 86400000));
+  ev.sort((a, b) => day(a) - day(b) || a.stage - b.stage || (a.t ?? 0) - (b.t ?? 0));
+  // One arrival, one line: Arrived + Received into X + In X stock on one day become "Arrived and received into X".
+  const ARRIVAL = new Set([STAGE.arrived, STAGE.received, STAGE.stock]);
+  for (let i = 1; i < ev.length; i++) {
+    const prev = ev[i - 1];
+    const e = ev[i];
+    if (!ARRIVAL.has(prev.stage) || !ARRIVAL.has(e.stage) || day(prev) !== day(e) || e.t === null) continue;
+    prev.arrived = prev.arrived || prev.stage === STAGE.arrived || e.stage === STAGE.arrived;
+    prev.place = prev.place || e.place;
+    prev.title = `${prev.arrived ? 'Arrived and received' : 'Received'} into ${prev.place || 'stock'}`;
+    prev.detail = [...new Set([prev.detail, e.detail].filter(Boolean))].join(' · ');
+    prev.pics = [...new Set([...prev.pics, ...e.pics])];
+    prev.docs = [...prev.docs, ...e.docs];
+    prev.stage = Math.max(prev.stage, e.stage);
+    ev.splice(i, 1);
+    i -= 1;
+  }
 
   // What moving it cost: the app's cost lines, per currency.
   const totals = {};
