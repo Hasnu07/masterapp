@@ -65,6 +65,10 @@ export async function listWatches(opts = {}) {
     }
   }
 
+  // A status may be several, comma-separated: the shelf and what is on its way to it ("in_stock,incoming").
+  const statuses = String(status).split(',').map((s) => s.trim()).filter(Boolean);
+  const is = (col, v, n) => (Array.isArray(v) ? `${col} = ANY($${n})` : `${col} = $${n}`);
+
   const base = [...where];
   const baseParams = [...params];
   const facet = async (col, extra) => {
@@ -72,7 +76,7 @@ export async function listWatches(opts = {}) {
     const p = [...baseParams];
     for (const [c, v] of extra) {
       p.push(v);
-      w.push(`${c} = $${p.length}`);
+      w.push(is(c, v, p.length));
     }
     const { rows } = await query(
       `SELECT ${col} AS k, count(*)::int AS n FROM watches w WHERE ${w.join(' AND ')} GROUP BY 1 ORDER BY 2 DESC`,
@@ -81,7 +85,11 @@ export async function listWatches(opts = {}) {
     return rows;
   };
 
-  const f = { status: ['w.status', status], location: ['w.location', location], brand: ['w.brand', brand] };
+  const f = {
+    status: ['w.status', statuses.length > 1 ? statuses : statuses[0] || ''],
+    location: ['w.location', location],
+    brand: ['w.brand', brand],
+  };
   const others = (skip) => Object.entries(f).filter(([k, [, v]]) => k !== skip && v).map(([, cv]) => cv);
 
   const [byStatus, byLocation, byBrand] = await Promise.all([
@@ -90,7 +98,7 @@ export async function listWatches(opts = {}) {
     facet('w.brand', others('brand')),
   ]);
 
-  for (const [col, v] of others(null)) add(`${col} = $?`, v);
+  for (const [col, v] of others(null)) add(is(col, v, '?'), v);
 
   const order = SORTS[sort] || SORTS.newest;
   params.push(limit, offset);

@@ -45,6 +45,23 @@ aside.side { position: sticky; top: 0; height: 100vh; width: var(--side-w); flex
 .side nav a:hover { background: rgba(255,255,255,.07); color: #fff; }
 .side nav a.on { background: rgba(255,255,255,.1); color: var(--side-on); box-shadow: inset 3px 0 0 var(--gold); }
 .side nav a .lbl { overflow: hidden; text-overflow: ellipsis; }
+/* Inventory's parts under it, as Chrono Key's menu has them (asked 3 Nov 2026): In stock, Incoming, Sold, Returned, Other,
+   All stock — folded away behind an arrow on the Inventory row until it is tapped (same day), and remembered. */
+.side nav .navrow { display: flex; align-items: center; }
+.side nav .navrow a { flex: 1; min-width: 0; }
+.side nav .chev { flex: none; width: 30px; height: 30px; margin-left: 2px; border: 0; border-radius: 8px; background: transparent; color: var(--side-ink);
+  cursor: pointer; display: grid; place-items: center; }
+.side nav .chev:hover { background: rgba(255,255,255,.08); color: #fff; }
+.side nav .chev svg.i { width: 16px; height: 16px; transition: transform .18s ease; }
+.side nav .chev[aria-expanded="true"] svg.i { transform: rotate(180deg); }
+.side nav .subnav { display: none; flex-direction: column; margin: -2px 0 4px; }
+.side nav .subnav.open { display: flex; }
+.side nav .subnav a { position: relative; padding: 6px 12px 6px 42px; font-size: 12px; font-weight: 500; letter-spacing: .4px; text-transform: none; opacity: .85; }
+.side nav .subnav a::before { content: ''; position: absolute; left: 28px; top: 50%; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .45; transform: translateY(-50%); }
+.side nav .subnav a.on { color: #fff; background: rgba(255,255,255,.06); box-shadow: none; opacity: 1; }
+.side nav .subnav a.on::before { background: var(--gold); opacity: 1; }
+body.folded .side nav .subnav, body.folded .side nav .chev { display: none; }
+@media (prefers-reduced-motion: reduce) { .side nav .chev svg.i { transition: none; } }
 .side-foot { margin-top: auto; padding: 12px; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 8px; }
 .side-foot .who { font-size: 12.5px; color: var(--side-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-foot .who b { display: block; color: #fff; font-weight: 600; }
@@ -82,6 +99,9 @@ header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255
   body.folded .side-head { padding: 14px 12px 14px 16px; justify-content: flex-start; }
   body.folded .side-head .brand, body.folded .side-head .mark, body.folded .side nav a .lbl, body.folded .side-foot .who, body.folded .side-foot .btn .lbl { display: revert; }
   body.folded .side nav a { justify-content: flex-start; padding: 10px 12px; }
+  body.folded .side nav .subnav.open { display: flex; }
+  body.folded .side nav .chev { display: grid; }
+  body.folded .side nav .subnav a { padding: 6px 12px 6px 42px; }
   .fold { display: none; }
   .drawer-x { display: grid; }
   .burger { display: grid; }
@@ -426,6 +446,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 <body>
 <svg style="display:none" xmlns="http://www.w3.org/2000/svg">
   <symbol id="i-fold" viewBox="0 0 24 24"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-inventory" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></symbol>
   <symbol id="i-clients" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></symbol>
   <symbol id="i-expenses" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></symbol>
@@ -447,7 +468,18 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
       <button class="drawer-x" id="menu-close" type="button" aria-label="Close the menu">×</button>
     </div>
     <nav id="nav">
-      <a href="#/" data-nav="inventory" title="Inventory"><svg class="i"><use href="#i-inventory"/></svg><span class="lbl">Inventory</span></a>
+      <div class="navrow">
+        <a href="#/" data-nav="inventory" title="Inventory"><svg class="i"><use href="#i-inventory"/></svg><span class="lbl">Inventory</span></a>
+        <button class="chev" id="inv-toggle" type="button" aria-expanded="false" aria-controls="subnav" title="Inventory's parts"><svg class="i"><use href="#i-chev"/></svg></button>
+      </div>
+      <div class="subnav" id="subnav">
+        <a href="#/stock/in_stock" data-stock="in_stock">In stock</a>
+        <a href="#/stock/incoming" data-stock="incoming">Incoming</a>
+        <a href="#/stock/sold" data-stock="sold">Sold</a>
+        <a href="#/stock/returned" data-stock="returned">Returned</a>
+        <a href="#/stock/other" data-stock="other">Other</a>
+        <a href="#/stock/all" data-stock="">All stock</a>
+      </div>
       <a href="#/clients" data-nav="clients" title="Clients"><svg class="i"><use href="#i-clients"/></svg><span class="lbl">Clients</span></a>
       <a href="#/expenses" data-nav="expenses" title="Expenses"><svg class="i"><use href="#i-expenses"/></svg><span class="lbl">Expenses</span></a>
       <a href="#/logistics" data-nav="logistics" title="Logistics"><svg class="i"><use href="#i-logistics"/></svg><span class="lbl">Logistics</span></a>

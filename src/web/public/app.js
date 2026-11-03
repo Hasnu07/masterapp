@@ -147,14 +147,16 @@ function route() {
   const hash = location.hash.replace(/^#/, '') || '/';
   // #/logistics/<tab>/<what>: the logistics app's tab, with a stock number (or, on Clients, a name) found there.
   const [, page, id, more] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
-  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  $$('#nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   crumb(section, page, id);
   // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
   menu(false);
   window.scrollTo(0, 0);
-  if (!page) return showInventory();
+  // The Inventory opens on what is in stock (asked 3 Nov 2026); its parts are #/stock/<status>, #/stock/all for everything.
+  if (!page) return showStock('in_stock');
+  if (page === 'stock') return showStock(id || 'in_stock');
   if (page === 'watch' && id) {
     // `#/watch/12/edit` (the card's pencil) opens the form straight away; the
     // address is then tidied so a reload shows the watch, not the form again.
@@ -175,9 +177,13 @@ window.addEventListener('hashchange', route);
 
 /* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
 const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', new: 'New watch', import: 'Import', users: 'Users' };
+const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
 function crumb(section, page, id) {
   const name = SECTION_NAMES[section] || 'Purosangue';
-  const leaf = { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] || (section === 'logistics' && id ? id : '');
+  const leaf =
+    { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] ||
+    (page === 'stock' || !page ? STOCK_NAMES[id || 'in_stock'] || id : '') ||
+    (section === 'logistics' && id ? id : '');
   $('#crumb-title').textContent = name;
   $('#crumb-path').textContent = `Home · ${name}${leaf ? ` · ${leaf}` : ''}`;
 }
@@ -195,6 +201,23 @@ function menu(open, { focus = false } = {}) {
   if (open && focus) ($('#nav a.on') || $('#nav a:not(.hide)'))?.focus();
 }
 phone.addEventListener('change', () => menu(false));
+
+/* Inventory's parts, behind the arrow on its row: shown when tapped, remembered in this browser. */
+const INV_KEY = 'masterapp.inventoryOpen';
+function inventoryParts(open) {
+  $('#subnav').classList.toggle('open', open);
+  $('#inv-toggle').setAttribute('aria-expanded', String(open));
+  try {
+    localStorage.setItem(INV_KEY, open ? '1' : '');
+  } catch {}
+}
+try {
+  inventoryParts(localStorage.getItem(INV_KEY) === '1');
+} catch {}
+$('#inv-toggle').addEventListener('click', (e) => {
+  e.stopPropagation(); // not a page picked: the phone drawer stays open
+  inventoryParts(!$('#subnav').classList.contains('open'));
+});
 
 /* Folded to its icons or open, remembered in this browser. */
 const FOLD_KEY = 'masterapp.sidebar';
@@ -272,11 +295,25 @@ $('#logout').addEventListener('click', async () => {
 /* ── inventory ────────────────────────────────────────────────────── */
 
 let listSeq = 0;
+/* One part of the Inventory, as the sidebar lists them: a status, or 'all'. */
+function showStock(key) {
+  state.list.status = key === 'all' ? '' : key;
+  $$('#subnav a').forEach((a) => a.classList.toggle('on', a.dataset.stock === state.list.status));
+  return showInventory();
+}
 async function showInventory() {
   const L = state.list;
+  const about = {
+    in_stock: 'On the shelf now — as Chrono Key’s Inventory tab lists them.',
+    incoming: 'Bought and on their way — Chrono Key’s To-be-shipped list.',
+    sold: 'Sold, newest sale first by stock number.',
+    returned: 'Returned to their clients, as Chrono Key’s Returned consignments list them.',
+    other: 'On none of Chrono Key’s lists, or held only by the Watch vault.',
+    '': 'Every watch, from Chrono Key, the Watch vault and added here.',
+  };
   $('#app').innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
-      <div><h1>Inventory</h1><p class="sub" style="margin:0">Every watch, from Chrono Key, the Watch vault and added here.</p></div>
+      <div><h1>${esc(STOCK_NAMES[L.status] || (L.status ? statusLabel(L.status) : 'All stock'))}</h1><p class="sub" style="margin:0">${esc(about[L.status] || '')}</p></div>
       ${can('editor') ? '<a class="btn gold" href="#/new">+ New watch</a>' : ''}
     </div>
     <div class="filters">
@@ -297,7 +334,14 @@ async function showInventory() {
     </div>
     <div class="row" style="justify-content:space-between">
       <div class="count" id="count"></div>
-      <label class="count" style="cursor:pointer"><input type="checkbox" id="deleted" ${L.deleted ? 'checked' : ''}> Show deleted</label>
+      <div class="row">
+        ${
+          L.status === 'in_stock'
+            ? `<label class="count" style="cursor:pointer" title="What is on its way to the shelf, beside what is on it"><input type="checkbox" id="also-incoming" ${L.alsoIncoming ? 'checked' : ''}> Also incoming</label>`
+            : ''
+        }
+        <label class="count" style="cursor:pointer"><input type="checkbox" id="deleted" ${L.deleted ? 'checked' : ''}> Show deleted</label>
+      </div>
     </div>
     <div class="grid" id="grid"></div>
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="more">Load more</button></div>`;
@@ -323,9 +367,20 @@ async function showInventory() {
     L.deleted = e.target.checked;
     loadList();
   });
+  // In stock with what is on its way (asked 3 Nov 2026) — remembered in this browser.
+  $('#also-incoming')?.addEventListener('change', (e) => {
+    L.alsoIncoming = e.target.checked;
+    try {
+      localStorage.setItem('masterapp.alsoIncoming', L.alsoIncoming ? '1' : '');
+    } catch {}
+    loadList();
+  });
   $('#more').addEventListener('click', () => loadList(true));
   loadList();
 }
+try {
+  state.list.alsoIncoming = localStorage.getItem('masterapp.alsoIncoming') === '1';
+} catch {}
 
 let shown = [];
 async function loadList(more = false) {
@@ -333,7 +388,7 @@ async function loadList(more = false) {
   const seq = ++listSeq;
   const params = new URLSearchParams({
     q: L.q,
-    status: L.status,
+    status: L.status === 'in_stock' && L.alsoIncoming ? 'in_stock,incoming' : L.status,
     location: L.location,
     brand: L.brand,
     sort: L.sort,
@@ -350,23 +405,31 @@ async function loadList(more = false) {
   if (seq !== listSeq || !$('#grid')) return; // a newer search has answered, or the page changed
   shown = more ? [...shown, ...r.watches] : r.watches;
 
+  // The pills in a fixed order (asked 3 Nov 2026): In stock, Incoming, Sold …, and Dubai, UK, Europe, HK …; "All" last.
+  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'] };
+  const rank = (key, k) => {
+    const i = (ORDER[key] || []).indexOf(k);
+    return i === -1 ? 99 : i;
+  };
   const pills = (el, key, facet, label) => {
     const total = facet.reduce((a, f) => a + f.n, 0);
     el.innerHTML =
-      `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>` +
       facet
         .filter((f) => f.k)
+        .sort((a, b) => rank(key, a.k) - rank(key, b.k) || b.n - a.n)
         .map(
           (f) =>
             `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(key === 'status' ? statusLabel(f.k) : f.k)}<b>${f.n}</b></button>`
         )
-        .join('');
+        .join('') + `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>`;
     // A filter in force that now has no watches keeps its pill, so it can be lifted.
     if (L[key] && !facet.some((f) => f.k === L[key])) {
-      el.insertAdjacentHTML('beforeend', `<button class="pill on" data-v="${esc(L[key])}">${esc(L[key])}<b>0</b></button>`);
+      el.lastElementChild.insertAdjacentHTML('beforebegin', `<button class="pill on" data-v="${esc(L[key])}">${esc(L[key])}<b>0</b></button>`);
     }
     $$('.pill', el).forEach((b) =>
       b.addEventListener('click', () => {
+        // A status is a part of the Inventory with its own address, so the sidebar follows.
+        if (key === 'status') return (location.hash = `#/stock/${b.dataset.v || 'all'}`);
         L[key] = b.dataset.v;
         loadList();
       })

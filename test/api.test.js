@@ -193,6 +193,10 @@ test('what a reference has sold for: newest first, the vault beside it, the ones
   const gone = await add({ stock_no: '6005', status: 'in_stock' });
   await editor.call('DELETE', `/api/watches/${gone}`);
   await add({ stock_no: '6006', status: 'in_stock', reference: '126334' });
+  // Several statuses at once: the shelf and what is on its way to it (the In stock page's "Also incoming").
+  const n = async (status) => (await viewer.call('GET', `/api/watches?status=${status}`)).body.total;
+  assert.ok((await n('sold')) >= 3 && (await n('in_stock')) >= 2, 'both parts count');
+  assert.equal(await n('in_stock,sold'), (await n('in_stock')) + (await n('sold')), 'a comma joins statuses');
   await pool.query(
     `INSERT INTO vault_records(vault_id, list, stock_no, data, watch_id) VALUES
        ('v-6002', 'soldStocks', '6002', '{"soldPrice": 71000, "soldCurrency": "AED", "soldDate": "2026-10-06"}', $1),
