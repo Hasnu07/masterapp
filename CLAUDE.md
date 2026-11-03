@@ -347,7 +347,8 @@ the logistics app on our own"):
   the worker, which the console's `img-src` allows), and the window says in
   one serif line where the watch is (sold → waiting for delivery → on its way
   → on consignment → checked out → in a place → incoming), then its story
-  newest first with the pictures taken, the shipments, what moving it cost
+  in the order it happened (oldest first — asked 3 Nov 2026; newest first
+  until then) with the pictures taken, the shipments, what moving it cost
   per currency, every picture, and "See it in the logistics app" — the
   Logistics page itself (the app) with the app's own passport in front of it
   (the bridge's `passport` with `inApp`; the chrome-hidden window version,

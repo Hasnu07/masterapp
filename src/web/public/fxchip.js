@@ -238,7 +238,10 @@
       </div>
       <div class="fx-pop-out" data-fx="out">—</div>
       <div class="fx-pop-foot"><span>Loading rates…</span></div>`;
-    document.body.append(pop);
+    // Inside an open modal window (the watch's Logistics window, a <dialog>) the popup goes into the window itself: a
+    // modal sits in the top layer, so anything hung on the body opens beneath it and its backdrop (seen 3 Nov 2026).
+    // masterapp only — InvoiceWEB has no such window.
+    (chip.closest('dialog[open]') || document.body).append(pop);
     place();
     pop.querySelector('.fx-pop-x').onclick = close;
     const amt = pop.querySelector('[data-fx="amt"]');
