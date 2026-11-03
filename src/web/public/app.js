@@ -398,10 +398,17 @@ async function loadList(more = false) {
       const w = shown.find((x) => x.id === Number(b.dataset.copy));
       try {
         await navigator.clipboard.writeText(cardText(w));
-        flash(`Copied stock ${w.stock_no || w.id}`);
+        flash(`Copied stock ${w.stock_no || w.id} — paste it into WhatsApp`);
       } catch {
         flash('Could not copy — the browser refused', true);
       }
+    })
+  );
+  // The watch's Logistics window (logistics.js), straight from the list.
+  $$('#grid [data-lg]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.lg));
+      if (w && typeof showLogisticsWindow === 'function') showLogisticsWindow(w.stock_no, w.title);
     })
   );
   $('#more').classList.toggle('hide', shown.length >= r.total);
@@ -421,17 +428,22 @@ function daysInStock(w) {
  * to be this size and have buttons as info like this"): the picture with the
  * status over it, the facts one under the other — reference, serial, stock
  * number, watch date, owner, category, who from, the prices, days in stock —
- * and a row of buttons: open, edit, photos, copy, the watch on Chrono Key.
- * Colour still says status only: the badge, and the line along the foot.
- * What we paid and, once sold, what it sold for are the prices in bold (asked
- * 26 Oct 2026). What the logistics app knows is in the app itself (30 Oct).
+ * and the buttons for what is done with a watch from the list (the icons
+ * alone "don't make sense", same day): Edit, its Logistics window, the watch
+ * on Chrono Key, Share (the card as text, for WhatsApp). Opening it is the
+ * card itself. Colour still says status only: the badge, and the line along
+ * the foot. What we paid and, once sold, what it sold for are the prices in
+ * bold (asked 26 Oct 2026). What the logistics app knows is in the app itself
+ * (30 Oct).
  */
 function tile(w) {
   const icon = (id) => `<svg class="i"><use href="#i-${id}"/></svg>`;
   const plain = (n, cur) => money(n, cur, { plain: true });
-  const f = (label, html, cls = '') => `<div class="f ${cls}">${label}: <span>${html || ''}</span></div>`;
+  const f = (label, html, cls = '') => `<div class="f ${cls}"><span class="k">${label}</span> <span>${html || ''}</span></div>`;
   const days = daysInStock(w);
   const ckUrl = w.ck_id && state.meta?.chronokeyUrl ? `${state.meta.chronokeyUrl}/Stock/InstockDetailPage/${encodeURIComponent(w.ck_id)}` : '';
+  const editor = can('editor') && !w.deleted_at;
+  const lg = editor && w.stock_no && typeof lgAppOn === 'function' && lgAppOn();
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
   return `<article class="tile st-${esc(status)}" data-id="${w.id}" title="${esc(w.title)}">
     <div class="pic">${
@@ -456,11 +468,10 @@ function tile(w) {
       ${f(w.sale_date ? 'Days to sell' : 'Days in stock', days === null ? '' : `<i class="days">${days}</i>`)}
     </div>
     <div class="acts">
-      <a href="#/watch/${w.id}" title="Open the watch">${icon('eye')}</a>
-      ${can('editor') && !w.deleted_at ? `<a href="#/watch/${w.id}/edit" title="Edit">${icon('edit')}</a>` : ''}
-      <a href="#/watch/${w.id}" title="${w.photo_count ? `${w.photo_count} photo${w.photo_count === 1 ? '' : 's'}` : 'No photos'}">${icon('photos')}</a>
-      <button type="button" data-copy="${w.id}" title="Copy the details">${icon('copy')}</button>
-      ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="Open on Chrono Key">${icon('link')}</a>` : ''}
+      ${editor ? `<a href="#/watch/${w.id}/edit" title="Edit this watch">${icon('edit')}Edit</a>` : ''}
+      ${lg ? `<button type="button" data-lg="${w.id}" title="Where it is and what happened to it, from the logistics app">${icon('logistics')}Logistics</button>` : ''}
+      ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="This watch on Chrono Key">${icon('link')}Chrono Key</a>` : ''}
+      <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
     </div>
   </article>`;
 }
