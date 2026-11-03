@@ -147,14 +147,16 @@ function route() {
   const hash = location.hash.replace(/^#/, '') || '/';
   // #/logistics/<tab>/<what>: the logistics app's tab, with a stock number (or, on Clients, a name) found there.
   const [, page, id, more] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
-  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  $$('#nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   crumb(section, page, id);
   // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
   menu(false);
   window.scrollTo(0, 0);
-  if (!page) return showInventory();
+  // The Inventory opens on what is in stock (asked 3 Nov 2026); its parts are #/stock/<status>, #/stock/all for everything.
+  if (!page) return showStock('in_stock');
+  if (page === 'stock') return showStock(id || 'in_stock');
   if (page === 'watch' && id) {
     // `#/watch/12/edit` (the card's pencil) opens the form straight away; the
     // address is then tidied so a reload shows the watch, not the form again.
@@ -175,9 +177,13 @@ window.addEventListener('hashchange', route);
 
 /* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
 const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', new: 'New watch', import: 'Import', users: 'Users' };
+const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
 function crumb(section, page, id) {
   const name = SECTION_NAMES[section] || 'Purosangue';
-  const leaf = { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] || (section === 'logistics' && id ? id : '');
+  const leaf =
+    { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] ||
+    (page === 'stock' || !page ? STOCK_NAMES[id || 'in_stock'] || id : '') ||
+    (section === 'logistics' && id ? id : '');
   $('#crumb-title').textContent = name;
   $('#crumb-path').textContent = `Home · ${name}${leaf ? ` · ${leaf}` : ''}`;
 }
@@ -272,11 +278,24 @@ $('#logout').addEventListener('click', async () => {
 /* ── inventory ────────────────────────────────────────────────────── */
 
 let listSeq = 0;
+/* One part of the Inventory, as the sidebar lists them: a status, or 'all'. */
+function showStock(key) {
+  state.list.status = key === 'all' ? '' : key;
+  $$('#subnav a').forEach((a) => a.classList.toggle('on', a.dataset.stock === state.list.status));
+  return showInventory();
+}
 async function showInventory() {
   const L = state.list;
+  const about = {
+    in_stock: 'On the shelf now — as Chrono Key’s Inventory tab lists them.',
+    sold: 'Sold, newest sale first by stock number.',
+    returned: 'Returned to their clients, as Chrono Key’s Returned consignments list them.',
+    other: 'On none of Chrono Key’s lists, or held only by the Watch vault.',
+    '': 'Every watch, from Chrono Key, the Watch vault and added here.',
+  };
   $('#app').innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
-      <div><h1>Inventory</h1><p class="sub" style="margin:0">Every watch, from Chrono Key, the Watch vault and added here.</p></div>
+      <div><h1>${esc(STOCK_NAMES[L.status] || (L.status ? statusLabel(L.status) : 'All stock'))}</h1><p class="sub" style="margin:0">${esc(about[L.status] || '')}</p></div>
       ${can('editor') ? '<a class="btn gold" href="#/new">+ New watch</a>' : ''}
     </div>
     <div class="filters">
@@ -367,6 +386,8 @@ async function loadList(more = false) {
     }
     $$('.pill', el).forEach((b) =>
       b.addEventListener('click', () => {
+        // A status is a part of the Inventory with its own address, so the sidebar follows.
+        if (key === 'status') return (location.hash = `#/stock/${b.dataset.v || 'all'}`);
         L[key] = b.dataset.v;
         loadList();
       })
