@@ -264,6 +264,7 @@ export function createServer() {
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
       logistics: logistics.catalog(),
+      chronokeyUrl: config.chronokey.url, // the Inventory card links a watch to its Chrono Key page
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
         enabled: config.sync.enabled,
