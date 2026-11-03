@@ -84,6 +84,17 @@ open.er-api daily; held a minute; a stale copy says so). No Converter tab
 here, so the popup has no "Open converter". If InvoiceWEB's changes, port it
 again rather than letting the two drift.
 
+**Moves** (asked 3 Nov 2026: "for incoming add a button to move to stock,
+for in stock sold and return and all the stuff, then fill up the info"):
+each status offers its moves on the Inventory card and the watch page —
+incoming / other → *Received into stock* (place); in stock → *Sold* (date,
+sold to, price, currency, paid by), *Reserve* (reserved for), *Return to
+client*; reserved → *Sold*, *Back in stock*; sold → *Sale taken back* (the
+sale cleared); returned → *Back in stock*. A move is a small form over the
+page (`MOVES`, `openMove` in `app.js`) saved by the same PATCH as the edit
+form, so its fields are locked against the copy like any edit; Chrono Key is
+not written to — the same move is made there by hand until the switch-over.
+
 **One watch record = one STOCK NUMBER = one purchase.** The same physical
 watch bought back and sold again is two records, exactly as in Chrono Key;
 `ck_product_id` (Chrono Key's "Product ID") links them, and the watch page

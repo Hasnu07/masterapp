@@ -467,6 +467,8 @@ async function loadList(more = false) {
       }
     })
   );
+  // A move — received, sold, reserved, returned, back — from the card; the list is read again after it.
+  $$('#grid [data-move]').forEach((b) => b.addEventListener('click', () => openMove(Number(b.dataset.id), b.dataset.move, () => loadList())));
   // The watch's Logistics window (logistics.js), straight from the list.
   $$('#grid [data-lg]').forEach((b) =>
     b.addEventListener('click', () => {
@@ -531,12 +533,114 @@ function tile(w) {
       ${f(w.sale_date ? 'Days to sell' : 'Days in stock', days === null ? '' : `<i class="days">${days}</i>`)}
     </div>
     <div class="acts">
+      ${moveButtons(w, 'move')}
       ${editor ? `<a href="#/watch/${w.id}/edit" title="Edit this watch">${icon('edit')}Edit</a>` : ''}
       ${lg ? `<button type="button" data-lg="${w.id}" title="Where it is and what happened to it, from the logistics app">${icon('logistics')}Logistics</button>` : ''}
       ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="This watch on Chrono Key">${icon('link')}Chrono Key</a>` : ''}
       <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
     </div>
   </article>`;
+}
+
+/*
+ * What is done with a watch as it moves (asked 3 Nov 2026: "for incoming add a
+ * button to move to stock; for in stock add a button sold and return and all
+ * the stuff, then fill up the info needed"): each status offers its moves, and
+ * a move is a small form over the page — the fields that moment needs, then
+ * the status — saved through the same edit as the form (PATCH), so it is a
+ * person's decision, locked against the copy from Chrono Key like any edit.
+ * Nothing is written to Chrono Key: its own record is updated there, by hand,
+ * until the switch-over.
+ */
+const SOLD = { key: 'sold', label: 'Sold', to: 'sold', fields: ['sale_date', 'sold_to', 'sale_price', 'sale_currency', 'sale_payments', 'notes'], today: ['sale_date'] };
+const RECEIVED = { key: 'received', label: 'Received into stock', to: 'in_stock', fields: ['location', 'notes'] };
+const MOVES = {
+  incoming: [RECEIVED],
+  in_stock: [
+    SOLD,
+    { key: 'reserve', label: 'Reserve', to: 'reserved', fields: ['sold_to', 'notes'], labels: { sold_to: 'Reserved for' } },
+    { key: 'return', label: 'Return to client', to: 'returned', fields: ['notes'] },
+  ],
+  reserved: [SOLD, { key: 'unreserve', label: 'Back in stock', to: 'in_stock', fields: ['notes'], clear: ['sold_to'] }],
+  sold: [{ key: 'unsold', label: 'Sale taken back', to: 'in_stock', fields: ['notes'], clear: ['sale_date', 'sold_to', 'sale_price', 'sale_currency', 'sale_payments'] }],
+  returned: [{ key: 'back', label: 'Back in stock', to: 'in_stock', fields: ['location', 'notes'] }],
+  other: [RECEIVED],
+};
+const movesOf = (w) => (can('editor') && !w.deleted_at ? MOVES[w.status] || [] : []);
+const moveButtons = (w, cls = '') =>
+  movesOf(w)
+    .map((m) => `<button type="button" class="${cls}" data-move="${m.key}" data-id="${w.id}">${esc(m.label)}</button>`)
+    .join('');
+
+/* The move's form over the page: the watch read in full first, so a note or a price already held is not written over blind. */
+async function openMove(id, key, after) {
+  let w;
+  try {
+    w = await api(`/api/watches/${id}`);
+  } catch (err) {
+    return flash(err.message, true);
+  }
+  const move = movesOf(w).find((m) => m.key === key);
+  if (!move) return flash(`${w.display_title} is ${statusLabel(w.status).toLowerCase()} now — nothing to do`, true);
+  const draft = { ...w };
+  for (const k of move.today || []) if (!draft[k]) draft[k] = new Date().toISOString().slice(0, 10);
+  let d = document.getElementById('move-win');
+  if (!d) {
+    d = document.createElement('dialog');
+    d.id = 'move-win';
+    d.className = 'lgw move';
+    d.addEventListener('click', (e) => {
+      if (e.target === d) d.close();
+    });
+    document.body.appendChild(d);
+  }
+  const fields = move.fields.map((k) => state.meta.fields.find((f) => f.key === k)).filter(Boolean);
+  d.innerHTML = `
+    <div class="lgw-head">
+      <div>
+        <div class="lgw-eyebrow">${esc(move.label)}</div>
+        <h2>${esc(w.display_title)}</h2>
+        <div class="count" style="margin:0">${w.stock_no ? `Stock ${esc(w.stock_no)} · ` : ''}${esc(statusLabel(w.status))} → ${esc(statusLabel(move.to))}</div>
+      </div>
+      <button type="button" class="btn" data-x>Close</button>
+    </div>
+    <div class="lgw-body">
+      <form id="move-form">
+        <div class="form-grid">${fields
+          .map(
+            (f) =>
+              `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(move.labels?.[f.key] || f.label)}${inputFor(f, draft)}${
+                f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''
+              }</label>`
+          )
+          .join('')}</div>
+        <datalist id="currencies">${state.meta.currencies.map((c) => `<option value="${c}">`).join('')}</datalist>
+        ${move.clear?.length ? `<p class="count">${esc(move.clear.map((k) => state.meta.fields.find((f) => f.key === k)?.label || k).join(', '))} will be cleared.</p>` : ''}
+        <div class="err" id="move-err"></div>
+        <div class="row" style="margin-top:14px"><button class="btn primary">${esc(move.label)}</button><button type="button" class="btn" data-x>Cancel</button></div>
+      </form>
+    </div>`;
+  $$('[data-x]', d).forEach((b) => b.addEventListener('click', () => d.close()));
+  const form = $('#move-form', d);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const patch = readForm(form, w);
+    patch.status = move.to;
+    for (const k of move.clear || []) patch[k] = state.meta.fields.find((f) => f.key === k)?.type === 'payments' ? {} : '';
+    const btn = form.querySelector('.btn.primary');
+    btn.disabled = true;
+    try {
+      await api(`/api/watches/${w.id}`, { method: 'PATCH', body: patch });
+      d.close();
+      flash(`${w.display_title}: ${statusLabel(move.to).toLowerCase()}`);
+      after?.();
+    } catch (err) {
+      $('#move-err', d).textContent = err.message;
+      btn.disabled = false;
+    }
+  };
+  if (!d.open) d.showModal();
+  (form.querySelector('input, select, textarea') || form.querySelector('.btn')).focus();
 }
 
 /* What the copy button puts on the clipboard: the card as text, for a WhatsApp message. */
@@ -693,6 +797,7 @@ function renderWatch() {
             ${statusLine(w)}
           </div>
           <div class="row actions">
+            ${current.editing ? '' : moveButtons(w, 'btn gold')}
             ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
             ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
@@ -717,6 +822,7 @@ function renderWatch() {
   renderDetails(groups);
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
+  $$('.actions [data-move]').forEach((b) => b.addEventListener('click', () => openMove(w.id, b.dataset.move, () => showWatch(w.id))));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
