@@ -81,7 +81,7 @@ document.addEventListener('keydown', (e) => {
  * named Logistics"; then "design a better window"). The frame, hidden,
  * hands over everything the app holds on the stock number (the bridge's
  * passport-data); the window says in one line where the watch is, then tells
- * its story newest first — every receipt, move, shipment, courier and sale,
+ * its story in the order it happened — every receipt, move, shipment, courier and sale,
  * with the pictures taken — and lists what is still owed and what moving it
  * cost. Nothing is written back. The app's own passport is one link away.
  */
@@ -186,7 +186,28 @@ const lgPics = (list, label = '') =>
   (list || []).length
     ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener" class="lgw-pic"><img src="${esc(lgThumb(p))}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
     : '';
-const lgPicsOf = (r) => Object.keys(r || {}).filter((k) => /photo|image|pic|doc/i.test(k) && Array.isArray(r[k])).flatMap((k) => r[k]);
+/*
+ * A record's pictures: the addresses in its photo lists, and a picture among
+ * its documents. A document is {data, name, type} in the app — a shipment's
+ * customs papers and invoices, mostly PDFs — and is listed by name (lgDocsOf),
+ * not shown as a picture that cannot load (3 Nov 2026: "picture missing").
+ */
+const lgPicsOf = (r) =>
+  Object.keys(r || {})
+    .filter((k) => /photo|image|pic|doc/i.test(k) && Array.isArray(r[k]))
+    .flatMap((k) => r[k])
+    .map((x) => (typeof x === 'string' ? x : x && typeof x.data === 'string' && /^image\//.test(x.type || '') ? x.data : null))
+    .filter(Boolean);
+const lgDocsOf = (r) =>
+  Object.keys(r || {})
+    .filter((k) => /doc|file|paper/i.test(k) && Array.isArray(r[k]))
+    .flatMap((k) => r[k])
+    .filter((x) => x && typeof x === 'object' && typeof x.data === 'string' && !/^image\//.test(x.type || ''))
+    .map((x) => ({ url: x.data, name: x.name || 'document', type: x.type || '' }));
+const lgDocs = (list) =>
+  (list || []).length
+    ? `<div class="lgw-docs">${list.map((d) => `<a href="${esc(d.url)}" target="_blank" rel="noopener" title="${esc(d.type)}">${esc(d.name)}</a>`).join('')}</div>`
+    : '';
 
 /* ── the window's content ── */
 function lgWinRender(data) {
@@ -255,9 +276,9 @@ function lgWinRender(data) {
     rows.some((r) => r.polish) && ['Polish', `with ${rows.find((r) => r.polish).polish.sentTo || 'the polisher'} now`],
   ].filter(Boolean);
 
-  // The story, newest first.
+  // The story, in the order it happened.
   const ev = [];
-  const add = (t, title, detail = '', pics = [], tone = '') => ev.push({ t: lgWhen(t), title, detail, pics, tone });
+  const add = (t, title, detail = '', pics = [], tone = '', docs = []) => ev.push({ t: lgWhen(t), title, detail, pics, tone, docs });
   for (const i of data.incomings || []) {
     add(i.createdAt || i.date || i.eta, `Incoming from ${i.supplier || 'a supplier'}`, [i.location, i.eta ? `expected ${lgDay(i.eta)}` : '', i.status ? String(i.status).replace(/_/g, ' ') : ''].filter(Boolean).join(' · '), lgPicsOf(i), 'moving');
     const arrived = i.arrivedAt || i.arrivalRecord?.date || i.arrivalRecord?.ts;
@@ -280,11 +301,11 @@ function lgWinRender(data) {
   }
   for (const r of data.checkout || []) add(r.date || r.createdAt, `Checked out${r.to || r.reason ? ` — ${r.to || r.reason}` : ''}`, r.returnedAt ? `returned ${lgDay(r.returnedAt)}` : r.status || '', lgPicsOf(r), 'warn');
   for (const s of data.shipments || []) {
-    add(s.date || s.createdAt, `Shipped ${who(s.fromClientId, s.fromText || s.from) || 'us'} → ${who(s.toClientId, s.toText || s.to) || '…'}`, [s.tracking ? `tracking ${s.tracking}` : '', s.status ? String(s.status).replace(/_/g, ' ') : '', s.costAmount ? lgAmount(s.costAmount, s.costCurrency) : s.cost || ''].filter(Boolean).join(' · '), [], 'moving');
+    add(s.date || s.createdAt, `Shipped ${who(s.fromClientId, s.fromText || s.from) || 'us'} → ${who(s.toClientId, s.toText || s.to) || '…'}`, [s.tracking ? `tracking ${s.tracking}` : '', s.status ? String(s.status).replace(/_/g, ' ') : '', s.costAmount ? lgAmount(s.costAmount, s.costCurrency) : s.cost || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
     if (s.deliveredAt) add(s.deliveredAt, 'Delivered', s.deliveryNotes || '', s.deliveryPhotos || [], 'here');
   }
   for (const s of data.movers || []) {
-    add(s.shipmentDate || s.createdAt, `With ${mover(s.moverId, s.moverName) || 'a courier'}, ${s.fromCountry || '…'} → ${s.toCountry || '…'}`, [s.items, s.amount ? lgAmount(s.amount, s.currency) : '', s.paymentStatus ? `payment ${s.paymentStatus}` : '', s.trackingNumber ? `tracking ${s.trackingNumber}` : ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving');
+    add(s.shipmentDate || s.createdAt, `With ${mover(s.moverId, s.moverName) || 'a courier'}, ${s.fromCountry || '…'} → ${s.toCountry || '…'}`, [s.items, s.amount ? lgAmount(s.amount, s.currency) : '', s.paymentStatus ? `payment ${s.paymentStatus}` : '', s.trackingNumber ? `tracking ${s.trackingNumber}` : ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
     if (s.status === 'delivered' && s.deliveryDate) add(s.deliveryDate, `Delivered by ${mover(s.moverId, s.moverName) || 'the courier'}`, '', [], 'here');
   }
   for (const r of data.ready || []) add(r.soldDate || r.createdAt, `Sold to ${r.soldToBuyer || 'a buyer'}, awaiting delivery`, r.soldPrice ? lgAmount(r.soldPrice, r.soldCurrency) : '', lgPicsOf(r), 'sold');
@@ -297,7 +318,8 @@ function lgWinRender(data) {
     add(t.date || t.createdAt, `${t.type === 'sold' ? 'Sold to' : 'Bought from'} ${who(t.clientId) || 'a client'}`, items.length ? `${items.filter((x) => x.status === 'pending').length} of ${items.length} accessory item${items.length === 1 ? '' : 's'} still pending` : '', [], '');
   }
   for (const t of data.trips || []) add(t.startDate, `Carried by ${t.personName || 'someone'}, ${t.fromLocation || '…'} → ${t.toLocation || '…'}`, [t.purpose, t.status].filter(Boolean).join(' · '), [], 'moving');
-  ev.sort((a, b) => (b.t || 0) - (a.t || 0));
+  // In the order it happened (asked 3 Nov 2026: "this should be in chronological order"); a moment with no date last.
+  ev.sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
 
   // What moving it cost: the app's cost lines, per currency.
   const totals = {};
@@ -330,7 +352,7 @@ function lgWinRender(data) {
            <ol class="lgw-tl">${ev
              .map(
                (e) => `<li class="${esc(e.tone)}"><time>${e.t ? esc(lgDay(e.t)) : '<span class="blank">no date</span>'}</time>
-                 <div><div class="lgw-ev">${esc(e.title)}</div>${e.detail ? `<div class="lgw-d">${esc(e.detail)}</div>` : ''}${lgPics(e.pics)}</div></li>`
+                 <div><div class="lgw-ev">${esc(e.title)}</div>${e.detail ? `<div class="lgw-d">${esc(e.detail)}</div>` : ''}${lgPics(e.pics)}${lgDocs(e.docs)}</div></li>`
              )
              .join('')}</ol>`
         : ''
