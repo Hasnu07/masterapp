@@ -67,6 +67,7 @@ window.addEventListener('message', (e) => {
   if (e.data.erp === 'passport-closed') lgAppHide();
   if (e.data.erp === 'passport-data' && e.data.stock === lgWin.no) {
     clearInterval(lgWin.timer);
+    lgWin.live = true;
     lgWinRender(e.data.data);
   }
 });
@@ -81,7 +82,7 @@ document.addEventListener('keydown', (e) => {
  * named Logistics"; then "design a better window"). The frame, hidden,
  * hands over everything the app holds on the stock number (the bridge's
  * passport-data); the window says in one line where the watch is, then tells
- * its story newest first — every receipt, move, shipment, courier and sale,
+ * its story in the order it happened — every receipt, move, shipment, courier and sale,
  * with the pictures taken — and lists what is still owed and what moving it
  * cost. Nothing is written back. The app's own passport is one link away.
  */
@@ -111,17 +112,32 @@ function showLogisticsWindow(stockNo, title = '') {
   d.innerHTML = lgWinShell(stockNo, title, '<p class="count lgw-wait">Reading the logistics app…</p>');
   if (!d.open) d.showModal();
   lgWinBind(d);
+  lgWin.live = false;
+  // At once, from our copy of the app's records (a minute behind) — unless the app has answered first (3 Nov 2026: "still too slow").
+  api(`/api/lg-app/passport?no=${encodeURIComponent(stockNo)}`)
+    .then((p) => {
+      if (lgWin.no === stockNo && !lgWin.live && p && !p.empty) lgWinRender(p);
+    })
+    .catch(() => {});
   // The frame answers from the app's data; made now, hidden, if it is not there yet — and asked again until it has loaded.
-  if (!lgApp.frame) {
-    lgApp.frame = document.createElement('iframe');
-    lgApp.frame.title = 'Purosangue Watches Logistics';
-    lgApp.frame.src = '/lg-app/#tab=dashboard';
-    lgAppHost().appendChild(lgApp.frame);
-  }
+  lgAppWarm();
   const ask = () => lgApp.frame?.contentWindow?.postMessage({ erp: 'passport-data', stock: stockNo }, location.origin);
   ask();
   clearInterval(lgWin.timer);
-  lgWin.timer = setInterval(ask, 2000);
+  lgWin.timer = setInterval(ask, 500);
+}
+/*
+ * The frame, hidden, loading the app before anyone asks for it (asked 3 Nov
+ * 2026: the window "loads very late"): the app is 2 MB and reads its whole
+ * document from its worker before it can answer, so app.js starts it a
+ * moment after sign-in, for editors, and the first window finds it ready.
+ */
+function lgAppWarm() {
+  if (!lgAppOn() || !can('editor') || lgApp.frame) return;
+  lgApp.frame = document.createElement('iframe');
+  lgApp.frame.title = 'Purosangue Watches Logistics';
+  lgApp.frame.src = '/lg-app/#tab=dashboard';
+  lgAppHost().appendChild(lgApp.frame);
 }
 const lgWinShell = (no, title, body) => `
   <div class="lgw-head">
@@ -172,11 +188,90 @@ const lgAmount = (n, cur) => {
   if (!x) return '';
   return `${cur ? `${esc(String(cur).toUpperCase())} ` : ''}${x.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
 };
+// A picture on the worker is shown as the ERP's own thumbnail of it (/api/lg-app/photo); one the pass has copied
+// ("lgfile:<id>", from our copy of the records) from the copy; one inline in the record as it is.
+const lgFile = (p) => p.match(/^lgfile:(\d+)$/)?.[1];
+const lgThumb = (p) => (/^(data:|blob:)/.test(p) ? p : lgFile(p) ? `/api/lg-app/file/${lgFile(p)}?thumb=1` : `/api/lg-app/photo?u=${encodeURIComponent(p)}&thumb=1`);
+const lgFull = (p) => (lgFile(p) ? `/api/lg-app/file/${lgFile(p)}` : p);
 const lgPics = (list, label = '') =>
   (list || []).length
-    ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(p)}" target="_blank" rel="noopener" class="lgw-pic"><img loading="lazy" src="${esc(p)}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
+    ? `<div class="lgw-pics">${list.map((p) => `<a href="${esc(lgFull(p))}" target="_blank" rel="noopener" class="lgw-pic"><img src="${esc(lgThumb(p))}" alt="">${label ? `<span>${esc(label)}</span>` : ''}</a>`).join('')}</div>`
     : '';
-const lgPicsOf = (r) => Object.keys(r || {}).filter((k) => /photo|image|pic|doc/i.test(k) && Array.isArray(r[k])).flatMap((k) => r[k]);
+/*
+ * A record's pictures: the addresses in its photo lists, and a picture among
+ * its documents. A document is {data, name, type} in the app — a shipment's
+ * customs papers and invoices, mostly PDFs — and is listed by name (lgDocsOf),
+ * not shown as a picture that cannot load (3 Nov 2026: "picture missing").
+ */
+const lgPicsOf = (r) =>
+  Object.keys(r || {})
+    .filter((k) => /photo|image|pic|doc/i.test(k) && Array.isArray(r[k]))
+    .flatMap((k) => r[k])
+    .map((x) => (typeof x === 'string' ? x : x && typeof x.data === 'string' && /^image\//.test(x.type || '') ? x.data : null))
+    .filter(Boolean);
+const lgDocsOf = (r) =>
+  Object.keys(r || {})
+    .filter((k) => /doc|file|paper/i.test(k) && Array.isArray(r[k]))
+    .flatMap((k) => r[k])
+    .filter((x) => x && typeof x === 'object' && typeof x.data === 'string' && !/^image\//.test(x.type || ''))
+    .map((x) => ({ url: x.data, name: x.name || 'document', type: x.type || '' }));
+const lgIsPdf = (d) => /pdf/i.test(d.type) || /\.pdf$/i.test(d.name);
+const lgDocs = (list) =>
+  (list || []).length
+    ? `<div class="lgw-docs">${list
+        .map(
+          (d) =>
+            `<a href="${esc(lgFull(d.url))}" target="_blank" rel="noopener" title="${esc(d.type)}" ${lgIsPdf(d) ? `data-pdf="${esc(d.url)}" data-name="${esc(d.name)}"` : ''}>${esc(d.name)}</a>`
+        )
+        .join('')}</div>`
+    : '';
+
+/*
+ * A PDF among a shipment's papers opens in a viewer over the window, with
+ * Download under it (asked 3 Nov 2026). One on the worker is shown through
+ * /api/lg-app/photo (same origin, so the browser's own viewer may frame it);
+ * one held inline in the app's record (data:) is handed over as a blob.
+ */
+let lgDocUrl = null;
+function lgDocOpen(url, name) {
+  let d = document.getElementById('lg-doc');
+  if (!d) {
+    d = document.createElement('dialog');
+    d.id = 'lg-doc';
+    d.className = 'lgdoc';
+    d.addEventListener('close', () => {
+      d.querySelector('iframe')?.remove();
+      if (lgDocUrl) URL.revokeObjectURL(lgDocUrl);
+      lgDocUrl = null;
+    });
+    document.body.appendChild(d);
+  }
+  // &view=1 says nothing to the server; it keeps the viewer off a copy the browser cached before frames were allowed.
+  const at = lgFile(url) ? `/api/lg-app/file/${lgFile(url)}?` : `/api/lg-app/photo?u=${encodeURIComponent(url)}&`;
+  let src = `${at}view=1`;
+  let download = `${at}download=${encodeURIComponent(name)}`;
+  const m = url.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (m) {
+    const bytes = m[2] ? Uint8Array.from(atob(m[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(m[3]));
+    lgDocUrl = URL.createObjectURL(new Blob([bytes], { type: m[1] || 'application/pdf' }));
+    src = download = lgDocUrl;
+  }
+  d.innerHTML = `
+    <div class="lgdoc-head">
+      <b>${esc(name)}</b>
+      <span class="row">
+        <a class="btn small" href="${esc(download)}" download="${esc(name)}">Download</a>
+        <a class="btn small" href="${esc(src)}" target="_blank" rel="noopener">Open in a tab</a>
+        <button type="button" class="btn small" id="lgdoc-close">Close</button>
+      </span>
+    </div>
+    <iframe src="${esc(src)}" title="${esc(name)}"></iframe>`;
+  d.querySelector('#lgdoc-close').addEventListener('click', () => d.close());
+  d.addEventListener('click', (e) => {
+    if (e.target === d) d.close();
+  });
+  if (!d.open) d.showModal();
+}
 
 /* ── the window's content ── */
 function lgWinRender(data) {
@@ -245,49 +340,77 @@ function lgWinRender(data) {
     rows.some((r) => r.polish) && ['Polish', `with ${rows.find((r) => r.polish).polish.sentTo || 'the polisher'} now`],
   ].filter(Boolean);
 
-  // The story, newest first.
+  /*
+   * The story, in the order it happened. Most of the app's moments are days,
+   * not times, so a day's moments are put in the order a watch moves through
+   * them (STAGE): incoming → shipped → delivered to us → arrived → received →
+   * in stock → out for polish / on consignment / checked out → sold →
+   * delivered to the buyer. And one arrival is one line: the app writes an
+   * arrival, a receipt and the stock row for it (3 Nov 2026: "this doesn't
+   * make sense" — In Dubai stock, Arrived, Received, Delivered, all 2 Nov).
+   */
+  const STAGE = { incoming: 10, shipped: 20, delivered: 30, arrived: 40, received: 50, stock: 60, moved: 65, polish: 70, back: 75, consignment: 80, checkout: 85, accessories: 90, ready: 95, sold: 100, handed: 110 };
   const ev = [];
-  const add = (t, title, detail = '', pics = [], tone = '') => ev.push({ t: lgWhen(t), title, detail, pics, tone });
+  const add = (t, stage, title, detail = '', pics = [], tone = '', docs = [], place = '') => ev.push({ t: lgWhen(t), stage: STAGE[stage], title, detail, pics, tone, docs, place });
   for (const i of data.incomings || []) {
-    add(i.createdAt || i.date || i.eta, `Incoming from ${i.supplier || 'a supplier'}`, [i.location, i.eta ? `expected ${lgDay(i.eta)}` : '', i.status ? String(i.status).replace(/_/g, ' ') : ''].filter(Boolean).join(' · '), lgPicsOf(i), 'moving');
+    add(i.createdAt || i.date || i.eta, 'incoming', `Incoming from ${i.supplier || 'a supplier'}`, [i.location, i.eta ? `expected ${lgDay(i.eta)}` : '', i.status ? String(i.status).replace(/_/g, ' ') : ''].filter(Boolean).join(' · '), lgPicsOf(i), 'moving');
     const arrived = i.arrivedAt || i.arrivalRecord?.date || i.arrivalRecord?.ts;
-    if (arrived) add(arrived, 'Arrived', i.arrivalRecord?.notes || '', lgPicsOf(i.arrivalRecord || {}), 'here');
-    if (i.receivedAt || i.inventoryDest) add(i.receivedAt || arrived, `Received into ${PLACE[i.inventoryDest] ? `${PLACE[i.inventoryDest]} stock` : i.inventoryDest || 'stock'}`, '', [], 'here');
+    if (arrived) add(arrived, 'arrived', 'Arrived', i.arrivalRecord?.notes || '', lgPicsOf(i.arrivalRecord || {}), 'here');
+    const dest = PLACE[i.inventoryDest] ? `${PLACE[i.inventoryDest]} stock` : i.inventoryDest || 'stock';
+    if (i.receivedAt || i.inventoryDest) add(i.receivedAt || arrived, 'received', `Received into ${dest}`, '', [], 'here', [], dest);
   }
   // Polish, as the app keeps it on the stock row: the one at the polisher now, and the ones done.
   const polishes = rows.flatMap((r) => [...(r.polish ? [{ ...r.polish, _active: true }] : []), ...(r.polishHistory || [])]);
   for (const p of polishes) {
-    add(p.sentDate || p.sentAt, `Sent to ${p.sentTo || 'the polisher'} for polish`, [p.itemDescription || '', p.takenBy ? `taken by ${p.takenBy}` : '', p.costAmount > 0 ? lgAmount(p.costAmount, p.costCurrency) : '', p.notes || ''].filter(Boolean).join(' · '), p.sentPhotos || [], 'warn');
-    if (!p._active && (p.returnedDate || p.returnedAt)) add(p.returnedDate || p.returnedAt, 'Back from polish', p.returnNotes || '', p.donePhotos || [], 'here');
+    add(p.sentDate || p.sentAt, 'polish', `Sent to ${p.sentTo || 'the polisher'} for polish`, [p.itemDescription || '', p.takenBy ? `taken by ${p.takenBy}` : '', p.costAmount > 0 ? lgAmount(p.costAmount, p.costCurrency) : '', p.notes || ''].filter(Boolean).join(' · '), p.sentPhotos || [], 'warn');
+    if (!p._active && (p.returnedDate || p.returnedAt)) add(p.returnedDate || p.returnedAt, 'back', 'Back from polish', p.returnNotes || '', p.donePhotos || [], 'here');
   }
   for (const r of rows) {
-    add(r.receivedAt || r.createdAt || r.dateAdded, `In ${r._place} stock`, [r.from ? `from ${r.from}` : '', r.status && r.status !== 'current' ? r.status : ''].filter(Boolean).join(' · '), lgPicsOf(r), 'here');
+    add(r.receivedAt || r.createdAt || r.dateAdded, 'stock', `In ${r._place} stock`, [r.from ? `from ${r.from}` : '', r.status && r.status !== 'current' ? r.status : ''].filter(Boolean).join(' · '), lgPicsOf(r), 'here', [], `${r._place} stock`);
     for (const m of r.movements || []) {
       const to = m.to || m.destination || m.toLocation || '';
-      add(m.date || m.ts || m.at || m.movedAt, `${m.type ? String(m.type).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : 'Moved'}${to ? ` to ${to}` : ''}`, [m.carrier ? `by ${m.carrier}` : '', m.notes || m.note || '', m.cost ? lgAmount(m.cost, m.costCurrency || m.currency) : ''].filter(Boolean).join(' · '), lgPicsOf(m), 'moving');
+      add(m.date || m.ts || m.at || m.movedAt, 'moved', `${m.type ? String(m.type).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : 'Moved'}${to ? ` to ${to}` : ''}`, [m.carrier ? `by ${m.carrier}` : '', m.notes || m.note || '', m.cost ? lgAmount(m.cost, m.costCurrency || m.currency) : ''].filter(Boolean).join(' · '), lgPicsOf(m), 'moving');
     }
-    if (r.consignment?.date) add(r.consignment.date, `On consignment${r.consignment.with ? ` with ${r.consignment.with}` : ''}`, r.consignment.returnDate ? `back by ${lgDay(r.consignment.returnDate)}` : '', [], 'warn');
+    if (r.consignment?.date) add(r.consignment.date, 'consignment', `On consignment${r.consignment.with ? ` with ${r.consignment.with}` : ''}`, r.consignment.returnDate ? `back by ${lgDay(r.consignment.returnDate)}` : '', [], 'warn');
   }
-  for (const r of data.checkout || []) add(r.date || r.createdAt, `Checked out${r.to || r.reason ? ` — ${r.to || r.reason}` : ''}`, r.returnedAt ? `returned ${lgDay(r.returnedAt)}` : r.status || '', lgPicsOf(r), 'warn');
+  for (const r of data.checkout || []) add(r.date || r.createdAt, 'checkout', `Checked out${r.to || r.reason ? ` — ${r.to || r.reason}` : ''}`, r.returnedAt ? `returned ${lgDay(r.returnedAt)}` : r.status || '', lgPicsOf(r), 'warn');
   for (const s of data.shipments || []) {
-    add(s.date || s.createdAt, `Shipped ${who(s.fromClientId, s.fromText || s.from) || 'us'} → ${who(s.toClientId, s.toText || s.to) || '…'}`, [s.tracking ? `tracking ${s.tracking}` : '', s.status ? String(s.status).replace(/_/g, ' ') : '', s.costAmount ? lgAmount(s.costAmount, s.costCurrency) : s.cost || ''].filter(Boolean).join(' · '), [], 'moving');
-    if (s.deliveredAt) add(s.deliveredAt, 'Delivered', s.deliveryNotes || '', s.deliveryPhotos || [], 'here');
+    add(s.date || s.createdAt, 'shipped', `Shipped ${who(s.fromClientId, s.fromText || s.from) || 'us'} → ${who(s.toClientId, s.toText || s.to) || '…'}`, [s.tracking ? `tracking ${s.tracking}` : '', s.status ? String(s.status).replace(/_/g, ' ') : '', s.costAmount ? lgAmount(s.costAmount, s.costCurrency) : s.cost || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
+    if (s.deliveredAt) add(s.deliveredAt, 'delivered', 'Delivered', s.deliveryNotes || '', s.deliveryPhotos || [], 'here');
   }
   for (const s of data.movers || []) {
-    add(s.shipmentDate || s.createdAt, `With ${mover(s.moverId, s.moverName) || 'a courier'}, ${s.fromCountry || '…'} → ${s.toCountry || '…'}`, [s.items, s.amount ? lgAmount(s.amount, s.currency) : '', s.paymentStatus ? `payment ${s.paymentStatus}` : '', s.trackingNumber ? `tracking ${s.trackingNumber}` : ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving');
-    if (s.status === 'delivered' && s.deliveryDate) add(s.deliveryDate, `Delivered by ${mover(s.moverId, s.moverName) || 'the courier'}`, '', [], 'here');
+    add(s.shipmentDate || s.createdAt, 'shipped', `With ${mover(s.moverId, s.moverName) || 'a courier'}, ${s.fromCountry || '…'} → ${s.toCountry || '…'}`, [s.items, s.amount ? lgAmount(s.amount, s.currency) : '', s.paymentStatus ? `payment ${s.paymentStatus}` : '', s.trackingNumber ? `tracking ${s.trackingNumber}` : ''].filter(Boolean).join(' · '), lgPicsOf(s), 'moving', lgDocsOf(s));
+    if (s.status === 'delivered' && s.deliveryDate) add(s.deliveryDate, 'delivered', `Delivered by ${mover(s.moverId, s.moverName) || 'the courier'}`, '', [], 'here');
   }
-  for (const r of data.ready || []) add(r.soldDate || r.createdAt, `Sold to ${r.soldToBuyer || 'a buyer'}, awaiting delivery`, r.soldPrice ? lgAmount(r.soldPrice, r.soldCurrency) : '', lgPicsOf(r), 'sold');
+  for (const r of data.ready || []) add(r.soldDate || r.createdAt, 'ready', `Sold to ${r.soldToBuyer || 'a buyer'}, awaiting delivery`, r.soldPrice ? lgAmount(r.soldPrice, r.soldCurrency) : '', lgPicsOf(r), 'sold');
   for (const s of data.sold || []) {
-    add(s.soldDate, `Sold to ${s.soldToBuyer || 'a buyer'}`, [s.soldPrice ? lgAmount(s.soldPrice, s.soldCurrency) : '', s.soldFromLocation ? `from ${s.soldFromLocation}` : '', s.soldNotes || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'sold');
-    if (s.deliveredAt) add(s.deliveredAt, `Delivered${s.deliveredVia ? ` ${lgSay(s.deliveredVia)}` : ''}`, '', [], 'sold');
+    add(s.soldDate, 'sold', `Sold to ${s.soldToBuyer || 'a buyer'}`, [s.soldPrice ? lgAmount(s.soldPrice, s.soldCurrency) : '', s.soldFromLocation ? `from ${s.soldFromLocation}` : '', s.soldNotes || ''].filter(Boolean).join(' · '), lgPicsOf(s), 'sold');
+    if (s.deliveredAt) add(s.deliveredAt, 'handed', `Delivered${s.deliveredVia ? ` ${lgSay(s.deliveredVia)}` : ''}`, '', [], 'sold');
   }
   for (const t of data.transactions || []) {
     const items = t.items || [];
-    add(t.date || t.createdAt, `${t.type === 'sold' ? 'Sold to' : 'Bought from'} ${who(t.clientId) || 'a client'}`, items.length ? `${items.filter((x) => x.status === 'pending').length} of ${items.length} accessory item${items.length === 1 ? '' : 's'} still pending` : '', [], '');
+    add(t.date || t.createdAt, 'accessories', `${t.type === 'sold' ? 'Sold to' : 'Bought from'} ${who(t.clientId) || 'a client'}`, items.length ? `${items.filter((x) => x.status === 'pending').length} of ${items.length} accessory item${items.length === 1 ? '' : 's'} still pending` : '', [], '');
   }
-  for (const t of data.trips || []) add(t.startDate, `Carried by ${t.personName || 'someone'}, ${t.fromLocation || '…'} → ${t.toLocation || '…'}`, [t.purpose, t.status].filter(Boolean).join(' · '), [], 'moving');
-  ev.sort((a, b) => (b.t || 0) - (a.t || 0));
+  for (const t of data.trips || []) add(t.startDate, 'moved', `Carried by ${t.personName || 'someone'}, ${t.fromLocation || '…'} → ${t.toLocation || '…'}`, [t.purpose, t.status].filter(Boolean).join(' · '), [], 'moving');
+  // By day, then by stage within the day (asked 3 Nov 2026: "this should be in chronological order"); a moment with no date last.
+  const day = (e) => (e.t === null ? Infinity : Math.floor(e.t / 86400000));
+  ev.sort((a, b) => day(a) - day(b) || a.stage - b.stage || (a.t ?? 0) - (b.t ?? 0));
+  // One arrival, one line: Arrived + Received into X + In X stock on one day become "Arrived and received into X".
+  const ARRIVAL = new Set([STAGE.arrived, STAGE.received, STAGE.stock]);
+  for (let i = 1; i < ev.length; i++) {
+    const prev = ev[i - 1];
+    const e = ev[i];
+    if (!ARRIVAL.has(prev.stage) || !ARRIVAL.has(e.stage) || day(prev) !== day(e) || e.t === null) continue;
+    prev.arrived = prev.arrived || prev.stage === STAGE.arrived || e.stage === STAGE.arrived;
+    prev.place = prev.place || e.place;
+    prev.title = `${prev.arrived ? 'Arrived and received' : 'Received'} into ${prev.place || 'stock'}`;
+    prev.detail = [...new Set([prev.detail, e.detail].filter(Boolean))].join(' · ');
+    prev.pics = [...new Set([...prev.pics, ...e.pics])];
+    prev.docs = [...prev.docs, ...e.docs];
+    prev.stage = Math.max(prev.stage, e.stage);
+    ev.splice(i, 1);
+    i -= 1;
+  }
 
   // What moving it cost: the app's cost lines, per currency.
   const totals = {};
@@ -320,7 +443,7 @@ function lgWinRender(data) {
            <ol class="lgw-tl">${ev
              .map(
                (e) => `<li class="${esc(e.tone)}"><time>${e.t ? esc(lgDay(e.t)) : '<span class="blank">no date</span>'}</time>
-                 <div><div class="lgw-ev">${esc(e.title)}</div>${e.detail ? `<div class="lgw-d">${esc(e.detail)}</div>` : ''}${lgPics(e.pics)}</div></li>`
+                 <div><div class="lgw-ev">${esc(e.title)}</div>${e.detail ? `<div class="lgw-d">${esc(e.detail)}</div>` : ''}${lgPics(e.pics)}${lgDocs(e.docs)}</div></li>`
              )
              .join('')}</ol>`
         : ''
@@ -344,7 +467,18 @@ function lgWinRender(data) {
         : ''
     }
     ${pics.length ? `<h3>Pictures</h3>${lgPics(pics.map((x) => x.p))}` : ''}
-    <p class="lgw-foot"><button type="button" class="linkish" id="lgw-app">See it in the logistics app</button></p>`;
+    <p class="lgw-foot"><button type="button" class="linkish" id="lgw-app">See it in the logistics app</button>${
+      data.copied ? `<span class="count lgw-copied" style="margin:0 0 0 14px">From the ERP’s copy${data.copiedAt ? `, ${esc(fmtWhen(data.copiedAt))}` : ''} · the app itself is still loading…</span>` : ''
+    }</p>`;
+  // A picture the app no longer has says so, instead of an empty box.
+  body.querySelectorAll('.lgw-pic img').forEach((i) => i.addEventListener('error', () => i.closest('.lgw-pic').classList.add('gone')));
+  // A PDF opens in the viewer; any other paper in its own tab, as the link says.
+  body.querySelectorAll('.lgw-docs a[data-pdf]').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      lgDocOpen(a.dataset.pdf, a.dataset.name);
+    })
+  );
   lgWinBind(d);
 }
 /* Signed out: the app goes too — its page holds the key to its records. */

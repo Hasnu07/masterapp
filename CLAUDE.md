@@ -87,6 +87,17 @@ open.er-api daily; held a minute; a stale copy says so). No Converter tab
 here, so the popup has no "Open converter". If InvoiceWEB's changes, port it
 again rather than letting the two drift.
 
+**Moves** (asked 3 Nov 2026: "for incoming add a button to move to stock,
+for in stock sold and return and all the stuff, then fill up the info"):
+each status offers its moves on the Inventory card and the watch page —
+incoming / other → *Received into stock* (place); in stock → *Sold* (date,
+sold to, price, currency, paid by), *Reserve* (reserved for), *Return to
+client*; reserved → *Sold*, *Back in stock*; sold → *Sale taken back* (the
+sale cleared); returned → *Back in stock*. A move is a small form over the
+page (`MOVES`, `openMove` in `app.js`) saved by the same PATCH as the edit
+form, so its fields are locked against the copy like any edit; Chrono Key is
+not written to — the same move is made there by hand until the switch-over.
+
 **One watch record = one STOCK NUMBER = one purchase.** The same physical
 watch bought back and sold again is two records, exactly as in Chrono Key;
 `ck_product_id` (Chrono Key's "Product ID") links them, and the watch page
@@ -350,14 +361,30 @@ the logistics app on our own"):
   the worker, which the console's `img-src` allows), and the window says in
   one serif line where the watch is (sold → waiting for delivery → on its way
   → on consignment → checked out → in a place → incoming), then its story
-  newest first with the pictures taken, the shipments, what moving it cost
+  in the order it happened (oldest first — asked 3 Nov 2026; newest first
+  until then) with the pictures taken, the shipments, what moving it cost
   per currency, every picture, and "See it in the logistics app" — the
   Logistics page itself (the app) with the app's own passport in front of it
   (the bridge's `passport` with `inApp`; the chrome-hidden window version,
   `showLogisticsAppWindow` / `body.erp-window`, stays for the frame route).
   Polish is read off the stock row (`polish`, `polishHistory`), as the app
   keeps it; an incoming's arrival off `arrivalRecord`. Asked again
-  every two seconds until the frame has loaded. The client page's "See <name> in Logistics →"
+  every half second until the frame has loaded — and the frame is started
+  hidden two seconds after an editor signs in (`lgAppWarm`), so the first
+  window finds the app ready (3 Nov 2026: "loads very late"). Its pictures
+  are the worker's full-size originals (100–200 KB each, seconds away), so
+  the window shows them through `GET /api/lg-app/photo?u=&thumb=1`: the
+  file copied here once by the pass's own code (`workerFile` in
+  `import/logistics/sync.js`, no refusal memory) and served as its 480px
+  thumbnail, immutable; one the app no longer has says "picture missing".
+  Still too slow from a cold frame (3 Nov 2026, 9 s here), so the window
+  first draws from OUR copy of the app's records — `GET
+  /api/lg-app/passport?no=` (`logistics/passport.js`, the bridge's shape
+  from `logistics_items` by `stock_nos`, 100 ms), its pictures and papers as
+  `lgfile:<id>` through `/api/lg-app/file/:id` — with a line saying so, and
+  the app's own answer replaces it when the frame has loaded. The copy must
+  be running for that (`LOGISTICS_SYNC`, on with `SYNC` since 3 Nov).
+  The client page's "See <name> in Logistics →"
   (`#/logistics/contacts/<name>`) opens the app's Clients tab. The
   Inventory card shows Ref, Serial and From (our client by Chrono Key's id,
   else as typed) — nothing from the logistics copy.
@@ -372,10 +399,11 @@ the logistics app on our own"):
   tests. Last whole at the merge of PR #22 (`10125c6`), if a piece is ever
   wanted back. The ERP's own logistics, on its own records, is the next step
   — not started.
-- **The copy is kept, switched off.** `import/logistics/sync.js` still copies
-  the document (`LOGISTICS_SYNC=on`, or `npm run import -- logistics` by hand;
-  off by default since 30 Oct 2026, so the tables hold what was copied up to
-  then) into the same three layers — `logistics_records` (as read),
+- **The copy runs again** (asked 3 Nov 2026: "sync with the logistics app";
+  it was off by default 30 Oct – 3 Nov, so the tables held what was copied up
+  to the 30th). `import/logistics/sync.js` copies the document — it follows
+  `SYNC` unless `LOGISTICS_SYNC` says otherwise, or `npm run import --
+  logistics` by hand — into the same three layers — `logistics_records` (as read),
   `logistics_items` (ours; `locked_fields` = keys once edited here),
   `logistics_events`; pictures once each in `logistics_files` (`lgfile:<id>`);
   `stock_nos` GIN-indexed (migrations 009, 010). Its rules stand: settings

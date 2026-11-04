@@ -321,6 +321,8 @@
     Object.keys(r).forEach(function (k) {
       var v = r[k];
       if (Array.isArray(v) && v.length && v.every(function (x) { return typeof x === 'string'; }) && /photo|image|pic|doc/i.test(k)) out[k] = v.map(photoUrl).filter(Boolean);
+      // A document is {data, name, type}: its address made absolute the same way.
+      else if (Array.isArray(v) && /doc|file|paper/i.test(k)) out[k] = v.map(function (x) { return x && typeof x === 'object' && typeof x.data === 'string' ? Object.assign({}, x, { data: photoUrl(x.data) || x.data }) : withPhotos(x); });
       else if (v && typeof v === 'object') out[k] = withPhotos(v);
       else out[k] = v;
     });

@@ -54,8 +54,9 @@ itself, read from its Vercel address (`LOGISTICS_APP_URL`, default
 so nothing moves and nothing is backed up here for it. If the app moves to
 another address, set `LOGISTICS_APP_URL`; `off` takes it out of the menu.
 The copy of its records into the ERP (24–30 Oct 2026, the same `VAULT_TOKEN`)
-is **off by default** now; `LOGISTICS_SYNC=on` copies again, into the same R2
-bucket for its pictures.
+**follows `SYNC`** — on with it since 3 Nov 2026 (asked: "sync with the
+logistics app"; it was off by default 30 Oct – 3 Nov). `LOGISTICS_SYNC=off`
+stops it on its own; its pictures go into the same R2 bucket.
 
 ---
 

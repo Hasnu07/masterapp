@@ -65,6 +65,10 @@ export async function listWatches(opts = {}) {
     }
   }
 
+  // A status may be several, comma-separated: the shelf and what is on its way to it ("in_stock,incoming").
+  const statuses = String(status).split(',').map((s) => s.trim()).filter(Boolean);
+  const is = (col, v, n) => (Array.isArray(v) ? `${col} = ANY($${n})` : `${col} = $${n}`);
+
   const base = [...where];
   const baseParams = [...params];
   const facet = async (col, extra) => {
@@ -72,7 +76,7 @@ export async function listWatches(opts = {}) {
     const p = [...baseParams];
     for (const [c, v] of extra) {
       p.push(v);
-      w.push(`${c} = $${p.length}`);
+      w.push(is(c, v, p.length));
     }
     const { rows } = await query(
       `SELECT ${col} AS k, count(*)::int AS n FROM watches w WHERE ${w.join(' AND ')} GROUP BY 1 ORDER BY 2 DESC`,
@@ -81,7 +85,11 @@ export async function listWatches(opts = {}) {
     return rows;
   };
 
-  const f = { status: ['w.status', status], location: ['w.location', location], brand: ['w.brand', brand] };
+  const f = {
+    status: ['w.status', statuses.length > 1 ? statuses : statuses[0] || ''],
+    location: ['w.location', location],
+    brand: ['w.brand', brand],
+  };
   const others = (skip) => Object.entries(f).filter(([k, [, v]]) => k !== skip && v).map(([, cv]) => cv);
 
   const [byStatus, byLocation, byBrand] = await Promise.all([
@@ -90,7 +98,7 @@ export async function listWatches(opts = {}) {
     facet('w.brand', others('brand')),
   ]);
 
-  for (const [col, v] of others(null)) add(`${col} = $?`, v);
+  for (const [col, v] of others(null)) add(is(col, v, '?'), v);
 
   const order = SORTS[sort] || SORTS.newest;
   params.push(limit, offset);
@@ -106,7 +114,9 @@ export async function listWatches(opts = {}) {
             (SELECT count(*)::int FROM watch_photos p WHERE p.watch_id = w.id AND p.deleted_at IS NULL) AS photo_count,
             -- Who it was bought from: Chrono Key's link to our client (by id), as the Clients panel names them.
             (SELECT COALESCE(NULLIF(trim(concat_ws(' ', c.forename, c.surname)), ''), NULLIF(c.nickname, ''), NULLIF(c.company, ''))
-               FROM clients c WHERE c.id = w.purchased_from_client_id AND c.deleted_at IS NULL) AS bought_from_name
+               FROM clients c WHERE c.id = w.purchased_from_client_id AND c.deleted_at IS NULL) AS bought_from_name,
+            -- Chrono Key's page id, for the card's link to the watch there.
+            (SELECT c.ck_id FROM ck_records c WHERE c.watch_id = w.id AND c.ck_id IS NOT NULL ORDER BY c.detail_at DESC NULLS LAST LIMIT 1) AS ck_id
        FROM w WHERE ${where.join(' AND ')}
       ORDER BY ${order}
       LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -141,6 +151,15 @@ const summary = (w) => ({
   sale_currency: w.sale_currency,
   purchase_price: w.purchase_price,
   purchase_currency: w.purchase_currency,
+  // The rest of what the card shows (3 Nov 2026): owner, dates, Chrono Key's asking prices, and its page.
+  order_type: w.order_type,
+  purchase_date: w.purchase_date,
+  sale_date: w.sale_date,
+  retail_price: w.retail_price,
+  retail_currency: w.retail_currency,
+  website_price: w.website_price,
+  website_currency: w.website_currency,
+  ck_id: w.ck_id,
   photo_id: w.photo_id,
   photo_count: w.photo_count,
   // Who from: our client by Chrono Key's id, else as typed.

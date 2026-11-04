@@ -147,15 +147,23 @@ function route() {
   const hash = location.hash.replace(/^#/, '') || '/';
   // #/logistics/<tab>/<what>: the logistics app's tab, with a stock number (or, on Clients, a name) found there.
   const [, page, id, more] = hash.split('/');
-  const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
-  $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  $$('#nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
+  crumb(section, page, id);
   // The logistics and accounts apps' frames stay loaded while another page shows (hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
   if (typeof accAppHide === 'function') accAppHide();
   menu(false);
   window.scrollTo(0, 0);
-  if (!page) return showInventory();
-  if (page === 'watch' && id) return showWatch(Number(id));
+  // The Inventory opens on what is in stock (asked 3 Nov 2026); its parts are #/stock/<status>, #/stock/all for everything.
+  if (!page) return showStock('in_stock');
+  if (page === 'stock') return showStock(id || 'in_stock');
+  if (page === 'watch' && id) {
+    // `#/watch/12/edit` (the card's pencil) opens the form straight away; the
+    // address is then tidied so a reload shows the watch, not the form again.
+    if (more === 'edit') history.replaceState(null, '', `#/watch/${Number(id)}`);
+    return showWatch(Number(id), { edit: more === 'edit' });
+  }
   if (page === 'clients') return id === 'new' ? showNewClient() : showClients();
   if (page === 'client' && id) return showClient(Number(id));
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
@@ -169,15 +177,62 @@ function route() {
 }
 window.addEventListener('hashchange', route);
 
-/* The menu drawer, from the ☰. Closed by picking a page, the scrim, × or Esc;
-   `inert` while closed, so its links are not tabbed to off screen. */
+/* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
+const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', new: 'New watch', import: 'Import', users: 'Users' };
+const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
+function crumb(section, page, id) {
+  const name = SECTION_NAMES[section] || 'Purosangue';
+  const leaf =
+    { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] ||
+    (page === 'stock' || !page ? STOCK_NAMES[id || 'in_stock'] || id : '') ||
+    ((section === 'logistics' || section === 'accounts') && id ? id : '');
+  $('#crumb-title').textContent = name;
+  $('#crumb-path').textContent = `Home · ${name}${leaf ? ` · ${leaf}` : ''}`;
+}
+
+/* The menu is the sidebar (3 Nov 2026). On a phone it is a drawer from the ☰,
+   closed by picking a page, the scrim, × or Esc, and `inert` while closed so
+   its links are not tabbed to off screen; on a wider screen it is always
+   there, and this does nothing to it. */
+const phone = matchMedia('(max-width: 760px)');
 function menu(open, { focus = false } = {}) {
   $('#drawer').classList.toggle('open', open);
-  $('#drawer').inert = !open;
+  $('#drawer').inert = !open && phone.matches;
   $('#scrim').classList.toggle('hide', !open);
   $('#menu').setAttribute('aria-expanded', String(open));
   if (open && focus) ($('#nav a.on') || $('#nav a:not(.hide)'))?.focus();
 }
+phone.addEventListener('change', () => menu(false));
+
+/* Inventory's parts, behind the arrow on its row: shown when tapped, remembered in this browser. */
+const INV_KEY = 'masterapp.inventoryOpen';
+function inventoryParts(open) {
+  $('#subnav').classList.toggle('open', open);
+  $('#inv-toggle').setAttribute('aria-expanded', String(open));
+  try {
+    localStorage.setItem(INV_KEY, open ? '1' : '');
+  } catch {}
+}
+try {
+  inventoryParts(localStorage.getItem(INV_KEY) === '1');
+} catch {}
+$('#inv-toggle').addEventListener('click', (e) => {
+  e.stopPropagation(); // not a page picked: the phone drawer stays open
+  inventoryParts(!$('#subnav').classList.contains('open'));
+});
+
+/* Folded to its icons or open, remembered in this browser. */
+const FOLD_KEY = 'masterapp.sidebar';
+try {
+  if (localStorage.getItem(FOLD_KEY) === 'folded') document.body.classList.add('folded');
+} catch {}
+$('#fold').addEventListener('click', () => {
+  const folded = document.body.classList.toggle('folded');
+  $('#fold').title = folded ? 'Open the menu' : 'Fold the menu to its icons';
+  try {
+    localStorage.setItem(FOLD_KEY, folded ? 'folded' : 'open');
+  } catch {}
+});
 // Into the menu only when it was opened from the keyboard (a click's detail is 0 then).
 $('#menu').addEventListener('click', (e) => menu(true, { focus: e.detail === 0 }));
 $('#menu-close').addEventListener('click', () => menu(false));
@@ -195,6 +250,7 @@ document.addEventListener('keydown', (e) => {
 function showLogin() {
   menu(false);
   $('#bar').classList.add('hide');
+  document.body.classList.add('out');
   // The logistics app's frame goes with the session: its page holds the key to its records.
   if (typeof lgAppDrop === 'function') lgAppDrop();
   if (typeof accAppDrop === 'function') accAppDrop();
@@ -224,9 +280,13 @@ async function signedIn(user) {
   state.user = user;
   state.meta = await api('/api/meta');
   $('#bar').classList.remove('hide');
-  $('#who').textContent = `${user.name || user.email} · ${user.role}`;
+  document.body.classList.remove('out');
+  $('#who').innerHTML = `<b>${esc(user.name || user.email)}</b>${esc(user.role)}`;
+  $('#who').title = `${user.name || user.email} · ${user.role}`;
   $$('#nav [data-role]').forEach((a) => a.classList.toggle('hide', !can(a.dataset.role)));
   route();
+  // The logistics app, loading hidden behind the first page, so a watch's Logistics window answers at once (lgAppWarm).
+  setTimeout(() => typeof lgAppWarm === 'function' && lgAppWarm(), 2000);
 }
 
 $('#logout').addEventListener('click', async () => {
@@ -238,11 +298,25 @@ $('#logout').addEventListener('click', async () => {
 /* ── inventory ────────────────────────────────────────────────────── */
 
 let listSeq = 0;
+/* One part of the Inventory, as the sidebar lists them: a status, or 'all'. */
+function showStock(key) {
+  state.list.status = key === 'all' ? '' : key;
+  $$('#subnav a').forEach((a) => a.classList.toggle('on', a.dataset.stock === state.list.status));
+  return showInventory();
+}
 async function showInventory() {
   const L = state.list;
+  const about = {
+    in_stock: 'On the shelf now — as Chrono Key’s Inventory tab lists them.',
+    incoming: 'Bought and on their way — Chrono Key’s To-be-shipped list.',
+    sold: 'Sold, newest sale first by stock number.',
+    returned: 'Returned to their clients, as Chrono Key’s Returned consignments list them.',
+    other: 'On none of Chrono Key’s lists, or held only by the Watch vault.',
+    '': 'Every watch, from Chrono Key, the Watch vault and added here.',
+  };
   $('#app').innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
-      <div><h1>Inventory</h1><p class="sub" style="margin:0">Every watch, from Chrono Key, the Watch vault and added here.</p></div>
+      <div><h1>${esc(STOCK_NAMES[L.status] || (L.status ? statusLabel(L.status) : 'All stock'))}</h1><p class="sub" style="margin:0">${esc(about[L.status] || '')}</p></div>
       ${can('editor') ? '<a class="btn gold" href="#/new">+ New watch</a>' : ''}
     </div>
     <div class="filters">
@@ -263,7 +337,14 @@ async function showInventory() {
     </div>
     <div class="row" style="justify-content:space-between">
       <div class="count" id="count"></div>
-      <label class="count" style="cursor:pointer"><input type="checkbox" id="deleted" ${L.deleted ? 'checked' : ''}> Show deleted</label>
+      <div class="row">
+        ${
+          L.status === 'in_stock'
+            ? `<label class="count" style="cursor:pointer" title="What is on its way to the shelf, beside what is on it"><input type="checkbox" id="also-incoming" ${L.alsoIncoming ? 'checked' : ''}> Also incoming</label>`
+            : ''
+        }
+        <label class="count" style="cursor:pointer"><input type="checkbox" id="deleted" ${L.deleted ? 'checked' : ''}> Show deleted</label>
+      </div>
     </div>
     <div class="grid" id="grid"></div>
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="more">Load more</button></div>`;
@@ -289,9 +370,20 @@ async function showInventory() {
     L.deleted = e.target.checked;
     loadList();
   });
+  // In stock with what is on its way (asked 3 Nov 2026) — remembered in this browser.
+  $('#also-incoming')?.addEventListener('change', (e) => {
+    L.alsoIncoming = e.target.checked;
+    try {
+      localStorage.setItem('masterapp.alsoIncoming', L.alsoIncoming ? '1' : '');
+    } catch {}
+    loadList();
+  });
   $('#more').addEventListener('click', () => loadList(true));
   loadList();
 }
+try {
+  state.list.alsoIncoming = localStorage.getItem('masterapp.alsoIncoming') === '1';
+} catch {}
 
 let shown = [];
 async function loadList(more = false) {
@@ -299,7 +391,7 @@ async function loadList(more = false) {
   const seq = ++listSeq;
   const params = new URLSearchParams({
     q: L.q,
-    status: L.status,
+    status: L.status === 'in_stock' && L.alsoIncoming ? 'in_stock,incoming' : L.status,
     location: L.location,
     brand: L.brand,
     sort: L.sort,
@@ -316,23 +408,31 @@ async function loadList(more = false) {
   if (seq !== listSeq || !$('#grid')) return; // a newer search has answered, or the page changed
   shown = more ? [...shown, ...r.watches] : r.watches;
 
+  // The pills in a fixed order (asked 3 Nov 2026): In stock, Incoming, Sold …, and Dubai, UK, Europe, HK …; "All" last.
+  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'] };
+  const rank = (key, k) => {
+    const i = (ORDER[key] || []).indexOf(k);
+    return i === -1 ? 99 : i;
+  };
   const pills = (el, key, facet, label) => {
     const total = facet.reduce((a, f) => a + f.n, 0);
     el.innerHTML =
-      `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>` +
       facet
         .filter((f) => f.k)
+        .sort((a, b) => rank(key, a.k) - rank(key, b.k) || b.n - a.n)
         .map(
           (f) =>
             `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(key === 'status' ? statusLabel(f.k) : f.k)}<b>${f.n}</b></button>`
         )
-        .join('');
+        .join('') + `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>`;
     // A filter in force that now has no watches keeps its pill, so it can be lifted.
     if (L[key] && !facet.some((f) => f.k === L[key])) {
-      el.insertAdjacentHTML('beforeend', `<button class="pill on" data-v="${esc(L[key])}">${esc(L[key])}<b>0</b></button>`);
+      el.lastElementChild.insertAdjacentHTML('beforebegin', `<button class="pill on" data-v="${esc(L[key])}">${esc(L[key])}<b>0</b></button>`);
     }
     $$('.pill', el).forEach((b) =>
       b.addEventListener('click', () => {
+        // A status is a part of the Inventory with its own address, so the sidebar follows.
+        if (key === 'status') return (location.hash = `#/stock/${b.dataset.v || 'all'}`);
         L[key] = b.dataset.v;
         loadList();
       })
@@ -353,42 +453,216 @@ async function loadList(more = false) {
 
   $('#count').textContent = `${shown.length} of ${r.total} watch${r.total === 1 ? '' : 'es'}${L.deleted ? ' (deleted)' : ''}`;
   $('#grid').innerHTML = shown.length ? shown.map(tile).join('') : '<p class="sub">Nothing matches.</p>';
-  $$('#grid .tile').forEach((t) => t.addEventListener('click', () => (location.hash = `#/watch/${t.dataset.id}`)));
+  $$('#grid .tile').forEach((t) =>
+    t.addEventListener('click', (e) => {
+      if (e.target.closest('.acts')) return; // a button on the card does its own thing
+      location.hash = `#/watch/${t.dataset.id}`;
+    })
+  );
+  $$('#grid [data-copy]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.copy));
+      try {
+        await navigator.clipboard.writeText(cardText(w));
+        flash(`Copied stock ${w.stock_no || w.id} — paste it into WhatsApp`);
+      } catch {
+        flash('Could not copy — the browser refused', true);
+      }
+    })
+  );
+  // A move — received, sold, reserved, returned, back — from the card; the list is read again after it.
+  $$('#grid [data-move]').forEach((b) => b.addEventListener('click', () => openMove(Number(b.dataset.id), b.dataset.move, () => loadList())));
+  // The watch's Logistics window (logistics.js), straight from the list.
+  $$('#grid [data-lg]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.lg));
+      if (w && typeof showLogisticsWindow === 'function') showLogisticsWindow(w.stock_no, w.title);
+    })
+  );
   $('#more').classList.toggle('hide', shown.length >= r.total);
 }
 
+/* Days from the purchase to the sale, or to today while it is still here. */
+function daysInStock(w) {
+  if (!w.purchase_date) return null;
+  const from = new Date(w.purchase_date + 'T00:00:00');
+  const to = w.sale_date ? new Date(w.sale_date + 'T00:00:00') : new Date();
+  const d = Math.floor((to - from) / 86400000);
+  return Number.isFinite(d) && d >= 0 ? d : null;
+}
+
 /*
- * An Inventory card (asked 26 Oct 2026: "more colour coded and simplify
- * it"). Colour says status only, as everywhere in the console: a band in the
- * status's colour across the top of the text. The facts sit in one two-column
- * list, and the prices stand alone at the foot. What the logistics app knows
- * about the watch is in the app itself now (30 Oct 2026), not on the card.
+ * An Inventory card, laid out like Chrono Key's (asked 3 Nov 2026: "the cards
+ * to be this size and have buttons as info like this"): the picture with the
+ * status over it, the facts one under the other — reference, serial, stock
+ * number, watch date, owner, category, who from, the prices, days in stock —
+ * and the buttons for what is done with a watch from the list (the icons
+ * alone "don't make sense", same day): Edit, its Logistics window, the watch
+ * on Chrono Key, Share (the card as text, for WhatsApp). Opening it is the
+ * card itself. Colour still says status only: the badge, and the line along
+ * the foot. What we paid and, once sold, what it sold for are the prices in
+ * bold (asked 26 Oct 2026). What the logistics app knows is in the app itself
+ * (30 Oct).
  */
 function tile(w) {
-  // What we paid and, once sold, what it sold for (asked 26 Oct 2026: "instead of B2C show purchase price and sold price").
-  const prices = [
-    w.purchase_price && ['Bought for', money(w.purchase_price, w.purchase_currency, { plain: true }), ''],
-    w.sale_price && ['Sold for', money(w.sale_price, w.sale_currency, { plain: true }), 'sold'],
-  ].filter(Boolean);
-  const facts = [
-    ['Ref', [w.reference, w.watch_date].filter(Boolean).join(' · ')],
-    ['Serial', w.serial],
-    ['From', w.bought_from],
-  ].filter(([, v]) => v);
+  const icon = (id) => `<svg class="i"><use href="#i-${id}"/></svg>`;
+  const plain = (n, cur) => money(n, cur, { plain: true });
+  const f = (label, html, cls = '') => `<div class="f ${cls}"><span class="k">${label}</span> <span>${html || ''}</span></div>`;
+  const days = daysInStock(w);
+  const ckUrl = w.ck_id && state.meta?.chronokeyUrl ? `${state.meta.chronokeyUrl}/Stock/InstockDetailPage/${encodeURIComponent(w.ck_id)}` : '';
+  const editor = can('editor') && !w.deleted_at;
+  const lg = editor && w.stock_no && typeof lgAppOn === 'function' && lgAppOn();
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
-  return `<button class="tile st-${esc(status)}" data-id="${w.id}">
+  return `<article class="tile st-${esc(status)}" data-id="${w.id}" title="${esc(w.title)}">
     <div class="pic">${
       w.photo_id
         ? `<img loading="lazy" src="/api/photos/${w.photo_id}?thumb=1" alt="">`
         : `<span>${esc(w.reference || 'No photo')}</span>`
     }${w.photo_count > 1 ? `<span class="pic-n">${w.photo_count} photos</span>` : ''}</div>
+    <span class="badge chip ${esc(status)}">${esc(status === 'in_stock' ? 'Available' : statusLabel(status))}</span>
     <div class="body">
-      <div class="m"><b class="tile-no">${w.stock_no ? `#${esc(w.stock_no)}` : 'No stock number'}</b>${chip(status)}${w.location ? `<span>${esc(w.location)}</span>` : ''}</div>
       <div class="t">${esc(w.title)}</div>
-      ${facts.length ? `<div class="tile-facts">${facts.map(([k, v]) => `<div class="f"><span class="k">${k}</span> <span class="v">${esc(v)}</span></div>`).join('')}</div>` : ''}
-      ${prices.length ? `<div class="p">${prices.map(([k, v, cls]) => `<div class="pr ${cls}"><span class="k">${k}</span><span>${v}</span></div>`).join('')}</div>` : ''}
+      ${f('Reference', esc(w.reference))}
+      ${f('Serial number', esc(w.serial))}
+      ${f('Stock number', esc(w.stock_no))}
+      ${f('Watch date', esc(w.watch_date))}
+      ${f('Owner', esc(w.order_type))}
+      ${f('Category', esc(w.location))}
+      ${f('From', esc(w.bought_from))}
+      ${f('Retail price', plain(w.retail_price, w.retail_currency))}
+      ${f('Website price', plain(w.website_price, w.website_currency))}
+      ${f('Purchase price', plain(w.purchase_price, w.purchase_currency), 'strong')}
+      ${w.sale_price ? f('Sold for', plain(w.sale_price, w.sale_currency), 'sold') : ''}
+      ${f(w.sale_date ? 'Days to sell' : 'Days in stock', days === null ? '' : `<i class="days">${days}</i>`)}
     </div>
-  </button>`;
+    <div class="acts">
+      ${moveButtons(w, 'move')}
+      ${editor ? `<a href="#/watch/${w.id}/edit" title="Edit this watch">${icon('edit')}Edit</a>` : ''}
+      ${lg ? `<button type="button" data-lg="${w.id}" title="Where it is and what happened to it, from the logistics app">${icon('logistics')}Logistics</button>` : ''}
+      ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="This watch on Chrono Key">${icon('link')}Chrono Key</a>` : ''}
+      <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
+    </div>
+  </article>`;
+}
+
+/*
+ * What is done with a watch as it moves (asked 3 Nov 2026: "for incoming add a
+ * button to move to stock; for in stock add a button sold and return and all
+ * the stuff, then fill up the info needed"): each status offers its moves, and
+ * a move is a small form over the page — the fields that moment needs, then
+ * the status — saved through the same edit as the form (PATCH), so it is a
+ * person's decision, locked against the copy from Chrono Key like any edit.
+ * Nothing is written to Chrono Key: its own record is updated there, by hand,
+ * until the switch-over.
+ */
+const SOLD = { key: 'sold', label: 'Sold', to: 'sold', fields: ['sale_date', 'sold_to', 'sale_price', 'sale_currency', 'sale_payments', 'notes'], today: ['sale_date'] };
+const RECEIVED = { key: 'received', label: 'Received into stock', to: 'in_stock', fields: ['location', 'notes'] };
+const MOVES = {
+  incoming: [RECEIVED],
+  in_stock: [
+    SOLD,
+    { key: 'reserve', label: 'Reserve', to: 'reserved', fields: ['sold_to', 'notes'], labels: { sold_to: 'Reserved for' } },
+    { key: 'return', label: 'Return to client', to: 'returned', fields: ['notes'] },
+  ],
+  reserved: [SOLD, { key: 'unreserve', label: 'Back in stock', to: 'in_stock', fields: ['notes'], clear: ['sold_to'] }],
+  sold: [{ key: 'unsold', label: 'Sale taken back', to: 'in_stock', fields: ['notes'], clear: ['sale_date', 'sold_to', 'sale_price', 'sale_currency', 'sale_payments'] }],
+  returned: [{ key: 'back', label: 'Back in stock', to: 'in_stock', fields: ['location', 'notes'] }],
+  other: [RECEIVED],
+};
+const movesOf = (w) => (can('editor') && !w.deleted_at ? MOVES[w.status] || [] : []);
+const moveButtons = (w, cls = '') =>
+  movesOf(w)
+    .map((m) => `<button type="button" class="${cls}" data-move="${m.key}" data-id="${w.id}">${esc(m.label)}</button>`)
+    .join('');
+
+/* The move's form over the page: the watch read in full first, so a note or a price already held is not written over blind. */
+async function openMove(id, key, after) {
+  let w;
+  try {
+    w = await api(`/api/watches/${id}`);
+  } catch (err) {
+    return flash(err.message, true);
+  }
+  const move = movesOf(w).find((m) => m.key === key);
+  if (!move) return flash(`${w.display_title} is ${statusLabel(w.status).toLowerCase()} now — nothing to do`, true);
+  const draft = { ...w };
+  for (const k of move.today || []) if (!draft[k]) draft[k] = new Date().toISOString().slice(0, 10);
+  let d = document.getElementById('move-win');
+  if (!d) {
+    d = document.createElement('dialog');
+    d.id = 'move-win';
+    d.className = 'lgw move';
+    d.addEventListener('click', (e) => {
+      if (e.target === d) d.close();
+    });
+    document.body.appendChild(d);
+  }
+  const fields = move.fields.map((k) => state.meta.fields.find((f) => f.key === k)).filter(Boolean);
+  d.innerHTML = `
+    <div class="lgw-head">
+      <div>
+        <div class="lgw-eyebrow">${esc(move.label)}</div>
+        <h2>${esc(w.display_title)}</h2>
+        <div class="count" style="margin:0">${w.stock_no ? `Stock ${esc(w.stock_no)} · ` : ''}${esc(statusLabel(w.status))} → ${esc(statusLabel(move.to))}</div>
+      </div>
+      <button type="button" class="btn" data-x>Close</button>
+    </div>
+    <div class="lgw-body">
+      <form id="move-form">
+        <div class="form-grid">${fields
+          .map(
+            (f) =>
+              `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(move.labels?.[f.key] || f.label)}${inputFor(f, draft)}${
+                f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''
+              }</label>`
+          )
+          .join('')}</div>
+        <datalist id="currencies">${state.meta.currencies.map((c) => `<option value="${c}">`).join('')}</datalist>
+        ${move.clear?.length ? `<p class="count">${esc(move.clear.map((k) => state.meta.fields.find((f) => f.key === k)?.label || k).join(', '))} will be cleared.</p>` : ''}
+        <div class="err" id="move-err"></div>
+        <div class="row" style="margin-top:14px"><button class="btn primary">${esc(move.label)}</button><button type="button" class="btn" data-x>Cancel</button></div>
+      </form>
+    </div>`;
+  $$('[data-x]', d).forEach((b) => b.addEventListener('click', () => d.close()));
+  const form = $('#move-form', d);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const patch = readForm(form, w);
+    patch.status = move.to;
+    for (const k of move.clear || []) patch[k] = state.meta.fields.find((f) => f.key === k)?.type === 'payments' ? {} : '';
+    const btn = form.querySelector('.btn.primary');
+    btn.disabled = true;
+    try {
+      await api(`/api/watches/${w.id}`, { method: 'PATCH', body: patch });
+      d.close();
+      flash(`${w.display_title}: ${statusLabel(move.to).toLowerCase()}`);
+      after?.();
+    } catch (err) {
+      $('#move-err', d).textContent = err.message;
+      btn.disabled = false;
+    }
+  };
+  if (!d.open) d.showModal();
+  (form.querySelector('input, select, textarea') || form.querySelector('.btn')).focus();
+}
+
+/* What the copy button puts on the clipboard: the card as text, for a WhatsApp message. */
+function cardText(w) {
+  const plain = (n, cur) => (n === null || n === undefined ? '' : money(n, cur, { plain: true }));
+  const lines = [
+    w.title,
+    ['Reference', w.reference],
+    ['Serial', w.serial],
+    ['Stock number', w.stock_no],
+    ['Watch date', w.watch_date],
+    ['Location', w.location],
+    ['Retail price', plain(w.retail_price, w.retail_currency)],
+    ['Website price', plain(w.website_price, w.website_currency)],
+  ];
+  return lines
+    .map((l) => (Array.isArray(l) ? (l[1] ? `${l[0]}: ${l[1]}` : '') : l))
+    .filter(Boolean)
+    .join('\n');
 }
 
 /*
@@ -481,7 +755,7 @@ function statusLine(w) {
 /* ── one watch ────────────────────────────────────────────────────── */
 
 let current = null;
-async function showWatch(id, { keepEdit = false } = {}) {
+async function showWatch(id, { keepEdit = false, edit = false } = {}) {
   let w;
   try {
     w = await api(`/api/watches/${id}`);
@@ -490,7 +764,8 @@ async function showWatch(id, { keepEdit = false } = {}) {
     return;
   }
   const same = current?.w?.id === w.id;
-  current = { w, selected: same ? current.selected : 0, editing: keepEdit && current?.editing, open: same ? current.open : {} };
+  const editing = (edit && can('editor') && !w.deleted_at) || (keepEdit && current?.editing);
+  current = { w, selected: same ? current.selected : 0, editing, open: same ? current.open : {} };
   renderWatch();
   loadSide(w.id);
 }
@@ -525,6 +800,7 @@ function renderWatch() {
             ${statusLine(w)}
           </div>
           <div class="row actions">
+            ${current.editing ? '' : moveButtons(w, 'btn gold')}
             ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
             ${w.stock_no && typeof accAppOn === 'function' && accAppOn() ? '<button class="btn" id="acc-open">Accounts</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
@@ -552,6 +828,7 @@ function renderWatch() {
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
   // And whatever our copy of the accounts app has on it — the ledger, its payments — the same way.
   $('#acc-open')?.addEventListener('click', () => showAccountsWindow(w.stock_no, w.display_title));
+  $$('.actions [data-move]').forEach((b) => b.addEventListener('click', () => openMove(w.id, b.dataset.move, () => showWatch(w.id))));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
