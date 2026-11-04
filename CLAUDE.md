@@ -533,7 +533,15 @@ stamps `_createdBy` / `_updatedBy` / `_history` on every record.
   invoice issued, quick sales, expenses, commission); quick sales, documents
   (by the entry's invoice number), expenses, commission; every picture; when
   the copy was read; "See it in the accounts app". `accStory(data)` builds all
-  of it and the Timeline reuses it. Files on a record (`attachments`, `proofs`,
+  of it and the Timeline reuses it. **When the copy is not there** — no
+  account for the ERP in the app yet, or the first pass still to come (seen
+  live 4 Nov 2026: "accountancy info not showing up") — the same answer is
+  read from the app itself, live, with the person's own accounts sign-in out
+  of the frame (their `connect.sid`), else the ERP's (`forStock` → `liveForStock`,
+  `fetchStateAs`; seven collections, held a minute per session); `source` says
+  `copy`, `live` or `none`, and the window's foot says which and what to set
+  up. Live, a client is ours by its name only (the ledger match needs the
+  copy). Files on a record (`attachments`, `proofs`,
   `invoiceProof` …): "acfile:<id>" is served from our copy at
   `/api/acc-app/file/:id` (`?thumb=1`), an app upload (`/uploads/…`) through
   `/acc-app/uploads/…` — **with the ERP's own accounts session when the person

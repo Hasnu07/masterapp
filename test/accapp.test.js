@@ -453,6 +453,38 @@ test('which of our clients the app’s clients are: by the watches on their ledg
   assert.equal((await admin.call('POST', '/api/import/run', { job: 'accounts' })).status, 202);
 });
 
+test('without the copy, the window reads the accounts app live — with the person’s own sign-in, else the ERP’s', async () => {
+  // The pass the previous test started must finish first, or it copies everything straight back.
+  for (let i = 0; i < 50 && (await admin.call('GET', '/api/import/status')).body.running; i++) await new Promise((r) => setTimeout(r, 100));
+  await pool.query('DELETE FROM accounts_records; DELETE FROM accounts_items');
+  const acc = await import('../src/accounts/index.js');
+  acc.forgetLive();
+  const reads = () => hits.filter((h) => h === 'GET /api/state').length;
+  const before = reads();
+  // The editor signed in to the app earlier (connect.sid in the jar): their own session reads it.
+  const s = await editor.call('GET', '/api/acc-app/stock/1668');
+  assert.equal(s.status, 200);
+  assert.equal(s.body.source, 'live');
+  assert.deepEqual(s.body.entries.map((e) => e.source_id).sort(), ['e1', 'e2']);
+  assert.equal(s.body.entries.find((e) => e.source_id === 'e2').status, 'partial');
+  assert.equal(s.body.clients['CL-002'].name, 'Omar F');
+  assert.ok(s.body.clients['CL-002'].client_id, 'our Omar F, by the name');
+  assert.ok(s.body.clients['CL-001'].client_id, 'our Dealer One, by the name');
+  assert.equal(s.body.clients['CL-001'].how, 'name', 'live: by the name only — the ledger match needs the copy');
+  assert.deepEqual(s.body.wallets.w1.name, 'WISE (USD)');
+  assert.deepEqual(s.body.invoices.map((i) => i.source_id), ['i1'], 'the invoice by its number');
+  assert.equal(reads(), before + 1);
+  assert.equal((await editor.call('GET', '/api/acc-app/stock/1700')).body.entries.length, 1);
+  assert.equal(reads(), before + 1, 'the app’s answer is held a minute per session');
+  // A viewer has no accounts session: the ERP's own reads it.
+  const v = await viewer.call('GET', '/api/acc-app/stock/1668');
+  assert.equal(v.body.source, 'live');
+  assert.equal(v.body.entries.length, 2);
+  assert.deepEqual((await viewer.call('GET', '/api/acc-app/stock/5555')).body.entries, []);
+  // Signed out of the ERP: nothing, as ever.
+  assert.equal((await client().call('GET', '/api/acc-app/stock/1668')).status, 401);
+});
+
 test('the rewrites, on their own', () => {
   assert.equal(accapp.rewriteScript('x("/api")+y(\'/api/a\')+z(`/api/${b}`)+"https://h/api/x"+"/apix"'), 'x("/acc-app/api")+y(\'/acc-app/api/a\')+z(`/acc-app/api/${b}`)+"https://h/api/x"+"/apix"');
   assert.equal(accapp.rewriteSetCookie('connect.sid=abc; Domain=up.railway.app; Path=/; Secure; HttpOnly', { secure: true }), 'connect.sid=abc; HttpOnly; Path=/; Secure');

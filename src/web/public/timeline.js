@@ -160,7 +160,7 @@ function tlRender(d) {
     ${pics.length ? `<h3>Pictures</h3>${accPics(pics)}` : ''}
     <p class="lgw-foot count tl-noprint" style="margin-top:18px">${[
       lg ? (tlWin.live ? 'Logistics from the app itself' : `Logistics from the ERP’s copy${tlWin.lg?.copiedAt ? `, ${esc(fmtWhen(tlWin.lg.copiedAt))}` : ''}`) : '',
-      acc?.ev.length || tlWin.acc?.read_at ? `Accounts from the ERP’s copy${tlWin.acc?.read_at ? `, read ${esc(fmtWhen(tlWin.acc.read_at))}` : ''}` : '',
+      tlWin.acc ? (tlWin.acc.source === 'copy' ? `Accounts from the ERP’s copy${tlWin.acc.read_at ? `, read ${esc(fmtWhen(tlWin.acc.read_at))}` : ''}` : typeof accSourceNote === 'function' ? accSourceNote(tlWin.acc) : '') : '',
     ]
       .filter(Boolean)
       .join(' · ')}</p>
