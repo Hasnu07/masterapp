@@ -47,6 +47,12 @@ ON by default but needs an account:** in the accounts app make one for the ERP
 others). Until they are set the Import page says "Not configured" and nothing
 is copied. `ACCOUNTS_SYNC=off` is the switch-over for accounts.
 
+**Claude (from 4 Nov 2026).** The brief at the top of a watch's Timeline and
+the Ask button need `ANTHROPIC_API_KEY` on coral-app (an API key from
+console.anthropic.com, encrypted like the others). Without it they are simply
+not shown. `AI_MODEL` (default `claude-opus-5-5`) and `AI_EFFORT` (default
+`medium`) tune cost; the key is only ever used server-side.
+
 **Logistics (from 30 Oct 2026).** The Logistics menu is the logistics app
 itself, read from its Vercel address (`LOGISTICS_APP_URL`, default
 `https://purosangue-watches.vercel.app` — nothing to set) and served at

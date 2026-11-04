@@ -174,6 +174,27 @@ main { width: 100%; padding: 18px 20px 60px; }
 .tl-src.tl-logistics { color: var(--blue); border-color: currentColor; }
 .tl-src.tl-accounts { color: var(--gold); border-color: currentColor; }
 .tl-src.tl-chronokey, .tl-src.tl-erp { color: var(--ink); }
+/* Claude in the console (ask.js): the brief at the top of a Timeline, and the Ask thread. */
+.ask-btn { margin-left: auto; }
+.aib { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px 12px; margin: 12px 0 4px; background: linear-gradient(180deg, rgba(201,168,92,.08), transparent); }
+.aib-head { font: 600 20px/1.3 var(--serif); margin: 4px 0 8px; }
+.aib-lines { margin: 0 0 8px; padding-left: 18px; font-size: 14.5px; line-height: 1.5; }
+.aib-lines li, .aib-att li, .aib-miss li { margin: 2px 0; }
+.aib-p { margin: 6px 0; font-size: 14.5px; line-height: 1.5; }
+.aib .k { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; margin-right: 6px; }
+.aib-att, .aib-miss { margin-top: 8px; font-size: 14px; }
+.aib-att ul, .aib-miss ul { margin: 4px 0 0; padding-left: 18px; }
+.aib-att { color: var(--warn); }
+.aib-miss { color: var(--muted); }
+.aib-foot { margin: 10px 0 0; }
+.aia { margin-top: 18px; }
+.aia-thread { display: grid; gap: 8px; margin-bottom: 10px; }
+.aia-q { justify-self: end; max-width: 85%; background: var(--ink); color: #fff; border-radius: 12px 12px 2px 12px; padding: 8px 12px; font-size: 14.5px; }
+.aia-a { justify-self: start; max-width: 95%; border: 1px solid var(--line); border-radius: 12px 12px 12px 2px; padding: 8px 14px; font-size: 14.5px; line-height: 1.5; }
+.aia-a p { margin: 4px 0; } .aia-a ul { margin: 4px 0; padding-left: 18px; }
+.aia-tools { margin: 6px 0 0; }
+.aia-form { display: flex; gap: 8px; }
+.aia-form input { flex: 1; min-width: 0; }
 .tl-printed { display: none; }
 @media print {
   body > *:not(#tl-win) { display: none !important; }
@@ -548,6 +569,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
       <div class="bar-in">
         <button class="burger" id="menu" type="button" aria-label="Open the menu" aria-controls="drawer" aria-expanded="false"><span></span></button>
         <div class="crumb"><h1 id="crumb-title">Inventory</h1><span class="path" id="crumb-path">Home · Inventory</span></div>
+        <button type="button" class="btn small ask-btn hide" id="ask-open" title="Ask about anything — a watch, a client, who owes us">Ask</button>
       </div>
     </header>
     <main id="app"></main>
@@ -560,6 +582,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 <script src="/logistics.js"></script>
 <script src="/accounts.js"></script>
 <script src="/timeline.js"></script>
+<script src="/ask.js"></script>
 <script src="/fxchip.js"></script>
 </body>
 </html>
