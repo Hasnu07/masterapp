@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { betaTool } from '@anthropic-ai/sdk/helpers/beta/json-schema';
 import { config } from '../config.js';
+import { query } from '../db/index.js';
 import { watchPicture, clientPicture, searchWatches, searchClients, accountsOpen, logisticsWhere } from './context.js';
 
 /*
@@ -110,29 +111,60 @@ const BRIEF_SCHEMA = {
   },
 };
 
-const held = new Map();
 const hash = (v) => crypto.createHash('sha1').update(JSON.stringify(v)).digest('hex');
-export const forgetBriefs = () => held.clear();
+export const forgetBriefs = () => query('DELETE FROM ai_briefs');
 
-/** The watch's brief, written by the model from its whole picture; held ten minutes while the picture is the same. */
+/* The picture without what changes on every read (when the copies were read), so the same data gives the same fingerprint. */
+const VOLATILE = new Set(['read_at', 'copiedAt', 'copied', 'sync', 'source', 'why', 'at', 'lists_at', 'item_status_at', 'fetched_at', 'updated_at']);
+export function fingerprint(v) {
+  if (Array.isArray(v)) return v.map(fingerprint);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).filter(([k]) => !VOLATILE.has(k)).map(([k, x]) => [k, fingerprint(x)]));
+  return v;
+}
+/*
+ * The picture the brief is drawn from, smaller than the one the questions get
+ * (asked 4 Nov 2026: "this loads way too slow"): the history's last 15
+ * changes, each logistics list's last 12 records, the reference's last 5
+ * sales, the ledger as it is. The model reads less, answers sooner.
+ */
+export function compact(p) {
+  const out = { ...p };
+  if (Array.isArray(out.history)) out.history = out.history.slice(0, 15);
+  if (out.reference_sold_for?.sold) out.reference_sold_for = { ...out.reference_sold_for, sold: out.reference_sold_for.sold.slice(0, 5), inStock: (out.reference_sold_for.inStock || []).slice(0, 10) };
+  if (out.logistics && typeof out.logistics === 'object') {
+    out.logistics = Object.fromEntries(Object.entries(out.logistics).map(([k, v]) => [k, Array.isArray(v) ? v.slice(-12) : v]));
+  }
+  if (out.accounts && typeof out.accounts === 'object') {
+    out.accounts = { ...out.accounts, clients: out.accounts.clients, wallets: out.accounts.wallets };
+    for (const k of ['entries', 'quick_sales', 'invoices', 'expenses', 'settlements']) if (Array.isArray(out.accounts[k])) out.accounts[k] = out.accounts[k].slice(0, 12);
+  }
+  return out;
+}
+
+/**
+ * The watch's brief, drawn by the model from its picture — once per state of
+ * the watch: kept in ai_briefs with the picture's fingerprint, served from
+ * there at once while nothing about the watch has changed, asked for again
+ * when something has.
+ */
 export async function briefWatch(id, { cookie = '' } = {}) {
   const picture = await watchPicture(id, { cookie });
   if (!picture) throw Object.assign(new Error('No such watch'), { status: 404 });
-  const key = `${id}`;
-  const h = hash(picture);
-  const have = held.get(key);
-  if (have && have.hash === h && Date.now() - have.at < 10 * 60_000) return { ...have.brief, cached: true };
+  const h = hash(fingerprint(picture));
+  const { rows } = await query('SELECT hash, brief, model, at FROM ai_briefs WHERE watch_id = $1', [Number(id)]);
+  if (rows[0] && rows[0].hash === h) return { ...rows[0].brief, model: rows[0].model, at: rows[0].at, source: picture.accounts?.source || null, cached: true };
+  const started = Date.now();
   const res = await client().beta.messages.create({
-    model: config.ai.model,
+    model: config.ai.briefModel,
     max_tokens: 4000,
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    output_config: { effort: config.ai.effort, format: { type: 'json_schema', schema: BRIEF_SCHEMA } },
+    output_config: { effort: config.ai.briefEffort, format: { type: 'json_schema', schema: BRIEF_SCHEMA } },
     system: [{ type: 'text', text: HOUSE, cache_control: { type: 'ephemeral' } }],
     messages: [
       {
         role: 'user',
-        content: `Here is everything the ERP holds on one watch, as JSON. Fill in its brief: the journey's eight stages, the money as figures, the five to ten moments that matter, and at most a few flags — short, for a picture, not an essay.\n\n${JSON.stringify(picture)}`,
+        content: `Here is everything the ERP holds on one watch, as JSON. Fill in its brief: the journey's eight stages, the money as figures, the five to ten moments that matter, and at most a few flags — short, for a picture, not an essay.\n\n${JSON.stringify(compact(picture))}`,
       },
     ],
   });
@@ -144,9 +176,11 @@ export async function briefWatch(id, { cookie = '' } = {}) {
   } catch {
     throw new Error('The assistant answered in a shape the page cannot read');
   }
-  const out = { ...brief, model: res.model, at: new Date().toISOString(), source: picture.accounts?.source || null };
-  held.set(key, { hash: h, at: Date.now(), brief: out });
-  if (held.size > 500) held.delete(held.keys().next().value);
+  const out = { ...brief, model: res.model, at: new Date().toISOString(), source: picture.accounts?.source || null, took_ms: Date.now() - started };
+  await query(
+    'INSERT INTO ai_briefs(watch_id, hash, brief, model, at) VALUES ($1, $2, $3, $4, now()) ON CONFLICT (watch_id) DO UPDATE SET hash = EXCLUDED.hash, brief = EXCLUDED.brief, model = EXCLUDED.model, at = now()',
+    [Number(id), h, brief, res.model || config.ai.briefModel]
+  );
   return out;
 }
 

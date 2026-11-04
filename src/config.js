@@ -134,6 +134,9 @@ export const config = {
     apiKey: (process.env.ANTHROPIC_API_KEY || '').trim(),
     model: (process.env.AI_MODEL || 'claude-opus-5-5').trim(),
     effort: (process.env.AI_EFFORT || 'medium').trim(),
+    // The brief is extraction over data the model is handed, not hard reasoning: low effort, and its own model if wanted (AI_BRIEF_MODEL).
+    briefEffort: (process.env.AI_BRIEF_EFFORT || 'low').trim(),
+    briefModel: (process.env.AI_BRIEF_MODEL || process.env.AI_MODEL || 'claude-opus-5-5').trim(),
     get enabled() {
       return Boolean(this.apiKey);
     },

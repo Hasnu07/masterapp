@@ -624,8 +624,16 @@ nothing the model says is written anywhere, and it has no tool that writes.
   received — each done / partial / pending / not_yet / unknown with a date
   and a few words), `money` (bought, paid, sold, received, costs as figures
   with their currency, one note), `moments` (5–10 turning points with their
-  source and tone), `attention` (≤ 4), `missing` (≤ 3). Held ten minutes per
-  watch while the picture's hash is the same. Drawn at the top of the watch's
+  source and tone), `attention` (≤ 4), `missing` (≤ 3). **Kept in
+  `ai_briefs`** (migration 013) with the picture's fingerprint (`fingerprint`:
+  the picture without its read times), served from there at once across
+  restarts until something about the watch changes ("this loads way too
+  slow", 4 Nov 2026 — the first draw of a watch is the only slow one). Drawn
+  at **low effort** (`AI_BRIEF_EFFORT`; extraction over data it is handed) by
+  `AI_BRIEF_MODEL` (default `AI_MODEL`; set `claude-sonnet-5-5` here if the
+  first draw is still too slow) from a `compact` picture: the last 15
+  history changes, 12 records per logistics list, 5 reference sales. The
+  waiting line counts the seconds and says the full story is already below. Drawn at the top of the watch's
   **Timeline** ("In one read", `aiBrief` in `ask.js`): the journey as a
   stepper (a dot per stage, filled when done), the money as two bars (paid of
   bought, received of sold) with costs under them, the moments as a short
