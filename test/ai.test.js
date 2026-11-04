@@ -16,9 +16,22 @@ import pg from 'pg';
 
 const DB = process.env.TEST_DATABASE_URL || 'postgres://postgres@localhost:5433/masterapp_test';
 let server, base, pool, dataDir, anthropic, anthropicBase;
+// The brief is asked for as data for a picture: the journey's stages, the money as figures, the moments.
+const req_schema_ok = (body) => { const p = body.output_config?.format?.schema?.properties || {}; return Boolean(p.journey && p.money && p.moments && p.journey.items.properties.stage.enum.includes('received')); };
 const seen = []; // every request body the stand-in received
 
-const BRIEF = { headline: 'Rolex Lady-Datejust, stock #1668: bought from Dealer One, sold to Omar F, USD 4,000 still owed.', lines: ['Bought 5 Sept 2026 for AED 46,000, paid in full', 'Sold 25 Sept 2026 for USD 14,000; USD 10,000 received'], money: 'USD 4,000 outstanding from Omar F.', where: 'In London stock since 1 Oct 2026.', attention: ['The ERP says in stock; the accounts app has it sold.'], missing: ['No sale currency on the ERP record.'] };
+const BRIEF = {
+  headline: 'Rolex Lady-Datejust #1668: in London stock, sold to Omar F, USD 4,000 still owed.',
+  journey: [
+    { stage: 'bought', state: 'done', date: '2026-09-05', label: 'from Dealer One' }, { stage: 'paid', state: 'done', date: '2026-09-06', label: 'AED 46,000' },
+    { stage: 'shipped', state: 'unknown', date: '', label: '' }, { stage: 'arrived', state: 'unknown', date: '', label: '' }, { stage: 'in_stock', state: 'done', date: '2026-10-01', label: 'London' },
+    { stage: 'sold', state: 'done', date: '2026-09-25', label: 'to Omar F' }, { stage: 'delivered', state: 'not_yet', date: '', label: '' }, { stage: 'received', state: 'partial', date: '2026-09-26', label: 'USD 10,000 of 14,000' },
+  ],
+  money: { bought: { amount: 46000, ccy: 'AED' }, paid: { amount: 46000, ccy: 'AED' }, sold: { amount: 14000, ccy: 'USD' }, received: { amount: 10000, ccy: 'USD' }, costs: [], note: '' },
+  moments: [{ date: '2026-09-05', source: 'accounts', title: 'Bought from Dealer One', detail: 'AED 46,000, paid in cash', tone: 'here' }, { date: '2026-09-25', source: 'accounts', title: 'Sold to Omar F', detail: 'USD 14,000', tone: 'sold' }],
+  attention: ['The ERP says in stock; the accounts app has it sold.'],
+  missing: ['No sale currency on the ERP record.'],
+};
 
 before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-ai-'));
@@ -130,6 +143,9 @@ test('the watch’s brief: the model reads the three apps together — no pictur
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.headline, BRIEF.headline);
   assert.deepEqual(r.body.attention, BRIEF.attention);
+  assert.equal(r.body.journey.length, 8);
+  assert.equal(r.body.money.received.amount, 10000);
+  assert.equal(req_schema_ok(seen[seen.length - 1].body), true);
   assert.equal(r.body.model, 'claude-opus-5-5');
   assert.equal(r.body.cached, undefined);
 

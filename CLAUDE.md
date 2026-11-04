@@ -616,14 +616,21 @@ nothing the model says is written anywhere, and it has no tool that writes.
   through `trim`: pictures, papers, inline files, provenance histories and
   secrets out; lists capped at 60; texts at 400 characters.
 - **The brief** (`GET /api/ai/watch/:id/brief`, `briefWatch`): the picture in
-  one request, the answer in a fixed shape (structured output,
-  `output_config.format` json_schema): `headline`, `lines` (3–7), `money`,
-  `where`, `attention` (the apps disagreeing, money outstanding on a delivered
-  watch, a status that looks wrong), `missing` (a currency not stated, no
-  ledger for a sold watch …). Held ten minutes per watch while the picture's
-  hash is the same. Shown at the top of the watch's **Timeline** ("In one
-  read", `aiBrief` in `ask.js`) with a line saying the model wrote it and to
-  check a figure before acting on it.
+  one request, the answer as DATA FOR A PICTURE (structured output,
+  `output_config.format` json_schema; asked the same day after the first
+  prose version: "instead of this overwhelming data show diagrams and a
+  timeline, easy to understand"): `headline` (one short sentence), `journey`
+  (eight stages — bought, paid, shipped, arrived, in_stock, sold, delivered,
+  received — each done / partial / pending / not_yet / unknown with a date
+  and a few words), `money` (bought, paid, sold, received, costs as figures
+  with their currency, one note), `moments` (5–10 turning points with their
+  source and tone), `attention` (≤ 4), `missing` (≤ 3). Held ten minutes per
+  watch while the picture's hash is the same. Drawn at the top of the watch's
+  **Timeline** ("In one read", `aiBrief` in `ask.js`): the journey as a
+  stepper (a dot per stage, filled when done), the money as two bars (paid of
+  bought, received of sold) with costs under them, the moments as a short
+  timeline with source tags, then the flags — and a line saying the model
+  drew it and to check a figure before acting on it.
 - **Ask** (`POST /api/ai/ask` `{question, history, watch_id?}`, `ask`): the
   SDK's tool runner (`client.beta.messages.toolRunner`, `betaTool` with raw
   JSON schemas, at most 8 iterations) over six tools — `search_watches`,
