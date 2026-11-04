@@ -830,6 +830,7 @@ function renderWatch() {
         ${heroSpec(w)}
         ${w.description ? `<p class="desc">${esc(w.description)}</p>` : ''}
         ${priceStrip(w)}
+        <aside class="dossier-costs" id="costs"><h3>Additional expenditures</h3><p class="count" style="margin:0">Reading the costs…</p></aside>
       </div>
     </section>
     <div class="watch-layout">
@@ -845,6 +846,7 @@ function renderWatch() {
   renderGallery();
   renderWatchClients();
   renderPapers();
+  renderCosts();
   renderDetails(groups);
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
@@ -1654,6 +1656,110 @@ async function renderPapers() {
       if (typeof lgDocOpen !== 'function') return;
       e.preventDefault();
       lgDocOpen(a.dataset.pdf, a.dataset.name);
+    })
+  );
+}
+
+/*
+ * A watch's additional expenditures (asked 4 Nov 2026), in the empty space
+ * under the dossier's prices: what it cost beyond its price, as one overview.
+ * On top, what the logistics and accounts apps already hold on the stock
+ * number — read-only, each line tagged with its app; a line the app ties to
+ * several watches at once (a courier that carried three, a trip) is said to
+ * be shared and left out of the total, because how it splits is nobody's
+ * guess. Under that, the lines typed here, per watch — the ERP's own, for
+ * the overview; not corrections of the apps' lines and never written to the
+ * apps — which an editor adds, changes and removes; every change is in the
+ * watch's history. Totals per currency, never converted.
+ */
+const COST_KINDS = { shipping: 'Shipping', customs: 'Customs / duty', service: 'Service / polish', commission: 'Commission', insurance: 'Insurance', travel: 'Travel', other: 'Other' };
+const costSum = (t) => Object.entries(t || {}).map(([cur, n]) => money(n, cur === '—' ? '' : cur, { plain: true })).join(' + ');
+async function renderCosts() {
+  const { w } = current;
+  const box = $('#costs');
+  if (!box) return;
+  let r;
+  try {
+    r = await api(`/api/watches/${w.id}/costs`);
+  } catch (err) {
+    box.innerHTML = `<h3>Additional expenditures</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (current?.w.id !== w.id || !$('#costs')) return;
+  current.costs = r;
+  const editor = can('editor') && !w.deleted_at;
+  const SRC = { logistics: 'Logistics', accounts: 'Accounts' };
+  const known = (l) => `<div class="xc-line${l.shared_with.length ? ' shared' : ''}">
+      <div class="xc-main"><span class="tl-src tl-${esc(l.source)}">${SRC[l.source] || l.source}</span><b>${esc(l.what)}</b>${l.title && l.title !== l.what ? ` <span>${esc(l.title)}</span>` : ''}
+        <span class="count">${l.date ? esc(fmtDate(l.date)) : ''}${l.shared_with.length ? `${l.date ? ' · ' : ''}shared with ${esc(l.shared_with.slice(0, 4).join(', '))}${l.shared_with.length > 4 ? '…' : ''} · not in the total` : ''}</span></div>
+      <div class="xc-amt">${money(l.amount, l.currency, { plain: true })}</div>
+    </div>`;
+  const added = (c) => `<div class="xc-line" data-cost="${c.id}">
+      <div class="xc-main"><b>${esc(COST_KINDS[c.kind] || c.kind)}</b>${c.title ? ` <span>${esc(c.title)}</span>` : ''}
+        <span class="count">${[c.paid_on ? fmtDate(c.paid_on) : '', c.paid_by ? state.meta.paymentKinds.find((p) => p.key === c.paid_by)?.label || c.paid_by : '', c.user_name ? `by ${c.user_name}` : ''].filter(Boolean).map(esc).join(' · ')}</span>
+        ${c.note ? `<div class="xc-note">${esc(c.note)}</div>` : ''}</div>
+      <div class="xc-amt">${money(c.amount, c.currency, { plain: true })}${editor ? `<div class="xc-acts"><button type="button" class="linkish small" data-editcost="${c.id}">Change</button><button type="button" class="linkish small danger" data-rmcost="${c.id}">Remove</button></div>` : ''}</div>
+    </div>`;
+  const foot = [];
+  if (r.accounts.source === 'none' && r.accounts.error) foot.push(`accounts not read (${r.accounts.error})`);
+  else if (r.accounts.source === 'live') foot.push('accounts read live from the app');
+  if (r.logistics.error) foot.push(`logistics not read (${r.logistics.error})`);
+  box.innerHTML = `<div class="xc-head"><h3>Additional expenditures</h3>${Object.keys(r.totals.all).length ? `<b class="xc-sum">${costSum(r.totals.all)}</b>` : ''}</div>
+    <div class="xc-groups">
+    <div class="xc-group">
+      <div class="xc-title">From Logistics and Accounts${Object.keys(r.totals.known).length ? `<span>${costSum(r.totals.known)}</span>` : ''}</div>
+      ${r.known.length ? r.known.map(known).join('') : '<p class="count xc-empty">Nothing on this stock number in the two apps yet.</p>'}
+    </div>
+    <div class="xc-group">
+      <div class="xc-title">Added here${Object.keys(r.totals.added).length ? `<span>${costSum(r.totals.added)}</span>` : ''}</div>
+      ${r.added.length ? r.added.map(added).join('') : `<p class="count xc-empty">${editor ? 'Nothing added yet.' : 'Nothing added here.'}</p>`}
+      ${editor ? '<div id="xc-form-host"><button type="button" class="btn small" id="xc-add">Add a cost</button></div>' : ''}
+    </div>
+    </div>
+    ${foot.length ? `<p class="count xc-foot">${esc(foot.join(' · '))}</p>` : ''}`;
+
+  const form = (c = {}) => `<form class="xc-form" id="xc-form">
+      <div class="form-grid">
+        <label>What <select name="kind">${Object.entries(COST_KINDS).map(([k, l]) => `<option value="${k}"${(c.kind || 'shipping') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Title <input name="title" value="${esc(c.title || '')}" placeholder="Courier to Dubai, duty, polish…" maxlength="200"></label>
+        <label>Amount <input name="amount" inputmode="decimal" required value="${c.amount ?? ''}" placeholder="0.00"></label>
+        <label>Currency <select name="currency">${state.meta.currencies.map((x) => `<option${(c.currency || current.costs?.added?.at(-1)?.currency || w.purchase_currency || 'EUR') === x ? ' selected' : ''}>${x}</option>`).join('')}</select></label>
+        <label>Paid on <input type="date" name="paid_on" value="${esc(c.paid_on || '')}"></label>
+        <label>Paid by <select name="paid_by"><option value="">—</option>${state.meta.paymentKinds.map((p) => `<option value="${p.key}"${c.paid_by === p.key ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
+        <label class="wide">Note <input name="note" value="${esc(c.note || '')}" maxlength="2000"></label>
+      </div>
+      <div class="row" style="margin-top:8px"><button class="btn primary small">${c.id ? 'Save' : 'Add'}</button><button type="button" class="btn small" id="xc-cancel">Cancel</button></div>
+    </form>`;
+  const openForm = (host, c) => {
+    host.innerHTML = form(c);
+    const f = $('#xc-form');
+    f.querySelector('[name=amount]').focus();
+    $('#xc-cancel').addEventListener('click', renderCosts);
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(f).entries());
+      try {
+        if (c?.id) await api(`/api/watches/${w.id}/costs/${c.id}`, { method: 'PATCH', body });
+        else await api(`/api/watches/${w.id}/costs`, { method: 'POST', body });
+        flash(c?.id ? 'Cost changed' : 'Cost added');
+        renderCosts();
+      } catch (err) {
+        flash(err.message, true);
+      }
+    });
+  };
+  $('#xc-add')?.addEventListener('click', () => openForm($('#xc-form-host')));
+  $$('[data-editcost]', box).forEach((b) =>
+    b.addEventListener('click', () => {
+      const c = r.added.find((x) => String(x.id) === b.dataset.editcost);
+      const line = box.querySelector(`[data-cost="${b.dataset.editcost}"]`);
+      if (c && line) openForm(line, c);
+    })
+  );
+  $$('[data-rmcost]', box).forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this cost? It stays in the history.')) return;
+      await api(`/api/watches/${w.id}/costs/${b.dataset.rmcost}`, { method: 'DELETE' }).then(renderCosts, (err) => flash(err.message, true));
     })
   );
 }

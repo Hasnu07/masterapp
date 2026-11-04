@@ -20,6 +20,7 @@ import * as accounts from '../accounts/index.js';
 import { fileById as accFileById } from '../import/accounts/sync.js';
 import * as ai from '../ai/index.js';
 import * as documents from '../watches/documents.js';
+import * as costs from '../watches/costs.js';
 import * as accClients from '../accounts/clients.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
@@ -503,6 +504,43 @@ export function createServer() {
       res.set('X-Frame-Options', 'SAMEORIGIN');
       if (req.query.download) res.attachment(String(f.name || 'document').replace(/[^\w .()\-]+/g, '_').slice(0, 120) || 'document');
       res.send(f.buffer);
+    })
+  );
+
+  /*
+   * A watch's additional expenditures (asked 4 Nov 2026): what the logistics
+   * and accounts apps already hold on the stock number (read-only, from our
+   * copies — accounts live with the person's own sign-in when the copy is not
+   * there), and the lines typed here, with the totals per currency.
+   */
+  app.get(
+    '/api/watches/:id/costs',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const w = await watches.getWatch(req.params.id);
+      if (!w) return res.status(404).json({ error: 'No such watch' });
+      res.json(await costs.costsOf(w, { cookie: req.get('cookie'), accountsOn: Boolean(config.accounts.appUrl) }));
+    })
+  );
+  app.post(
+    '/api/watches/:id/costs',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await costs.addCost(req.params.id, req.body, req.user) }))
+  );
+  app.patch(
+    '/api/watches/:id/costs/:cid',
+    need('editor'),
+    wrap(async (req, res) => {
+      await costs.editCost(req.params.id, req.params.cid, req.body, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.delete(
+    '/api/watches/:id/costs/:cid',
+    need('editor'),
+    wrap(async (req, res) => {
+      await costs.removeCost(req.params.id, req.params.cid, req.user);
+      res.json({ ok: true });
     })
   );
 

@@ -510,6 +510,64 @@ test('a watch’s documents: a PDF and a picture kept with it, served behind the
   assert.ok(actions.includes('document_add') && actions.includes('document_remove'), 'both in the watch’s history');
 });
 
+test('a watch’s additional expenditures: what the two apps hold on it, read-only and a shared line not counted; the lines typed here, with history', async () => {
+  const w = (await editor.call('GET', '/api/watches?q=1668&limit=1')).body.watches[0];
+  // The logistics copy: a courier line the app ties to two watches at once, and an insurance line for this one alone.
+  await pool.query(
+    `INSERT INTO logistics_items(kind, source_id, data, stock_nos, origin, happened_at) VALUES
+       ('logisticCosts', 'C1', $1, '{1668,1700}', 'logistics', '2026-10-20'),
+       ('logisticCosts', 'C2', $2, '{1668}', 'logistics', '2026-10-21')`,
+    [{ id: 'C1', stockNumber: '1668,1700', title: 'Courier', amount: 200, currency: 'AED', date: '2026-10-20' }, { id: 'C2', stockNumber: '1668', title: 'Insurance', amount: 50, currency: 'usd', date: '2026-10-21' }]
+  );
+  let r = await viewer.call('GET', `/api/watches/${w.id}/costs`);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual(
+    r.body.known.map((l) => [l.source, l.what, l.amount, l.currency, l.shared_with]),
+    [
+      ['accounts', 'Expense', 500, 'USD', []],
+      ['logistics', 'Cost', 200, 'AED', ['1700']],
+      ['logistics', 'Cost', 50, 'USD', []],
+      ['accounts', 'Commission', 200, 'USD', []],
+    ]
+  );
+  assert.deepEqual(r.body.totals.known, { USD: 750 }, 'the courier shared with 1700 is left out');
+  assert.equal(r.body.shared, 1);
+  assert.deepEqual(r.body.added, []);
+  assert.equal(r.body.accounts.source, 'copy');
+
+  assert.equal((await viewer.call('POST', `/api/watches/${w.id}/costs`, { amount: 10, currency: 'USD' })).status, 403);
+  assert.equal((await editor.call('POST', `/api/watches/${w.id}/costs`, { amount: 'ten', currency: 'USD' })).status, 400);
+  assert.equal((await editor.call('POST', `/api/watches/${w.id}/costs`, { amount: 10, currency: 'XXX' })).status, 400);
+  assert.equal((await editor.call('POST', `/api/watches/${w.id}/costs`, { amount: 10, currency: 'USD', paid_on: '31/02/2026' })).status, 400, 'a date that does not exist');
+  const add = await editor.call('POST', `/api/watches/${w.id}/costs`, { kind: 'shipping', title: 'DHL, our share', amount: '1,250.5', currency: 'aed', paid_on: '05/10/2026', paid_by: 'cash', note: 'of the courier above' });
+  assert.equal(add.status, 201, add.text);
+  r = (await viewer.call('GET', `/api/watches/${w.id}/costs`)).body;
+  assert.deepEqual(r.added.map((c) => [c.kind, c.title, c.amount, c.currency, c.paid_on, c.paid_by, c.user_name]), [['shipping', 'DHL, our share', 1250.5, 'AED', '2026-10-05', 'cash', 'ed@example.com']]);
+  assert.deepEqual(r.totals.added, { AED: 1250.5 });
+  assert.deepEqual(r.totals.all, { USD: 750, AED: 1250.5 });
+
+  assert.equal((await editor.call('PATCH', `/api/watches/${w.id}/costs/${add.body.id}`, { amount: 1300, kind: 'customs' })).status, 200);
+  assert.equal((await editor.call('PATCH', `/api/watches/${w.id}/costs/${add.body.id}`, { amount: 1300 })).status, 200, 'the same again changes nothing');
+  assert.equal((await editor.call('PATCH', `/api/watches/${w.id}/costs/999999`, { amount: 1 })).status, 404);
+  r = (await viewer.call('GET', `/api/watches/${w.id}/costs`)).body;
+  assert.deepEqual(r.added.map((c) => [c.kind, c.amount]), [['customs', 1300]]);
+  assert.equal((await viewer.call('DELETE', `/api/watches/${w.id}/costs/${add.body.id}`)).status, 403);
+  assert.equal((await editor.call('DELETE', `/api/watches/${w.id}/costs/${add.body.id}`)).status, 200);
+  assert.equal((await editor.call('DELETE', `/api/watches/${w.id}/costs/${add.body.id}`)).status, 404, 'removed once');
+  assert.deepEqual((await viewer.call('GET', `/api/watches/${w.id}/costs`)).body.added, []);
+  const ev = (await editor.call('GET', `/api/watches/${w.id}/events`)).body.events;
+  const mine = ev.filter((e) => e.action.startsWith('cost_'));
+  assert.deepEqual(mine.map((e) => e.action).reverse(), ['cost_add', 'cost_edit', 'cost_remove']);
+  assert.deepEqual(mine.find((e) => e.action === 'cost_edit').changes.amount, [1250.5, 1300]);
+  assert.deepEqual(mine.find((e) => e.action === 'cost_edit').changes.kind, ['shipping', 'customs']);
+  // The model's picture carries the lines typed here.
+  const ctx = await import('../src/ai/context.js');
+  assert.equal((await editor.call('POST', `/api/watches/${w.id}/costs`, { kind: 'travel', amount: 80, currency: 'GBP' })).status, 201);
+  const pic = await ctx.watchPicture(w.id);
+  assert.deepEqual(pic.costs_added_here.map((c) => [c.kind, c.amount, c.ccy]), [['travel', 80, 'GBP']]);
+  await pool.query("DELETE FROM logistics_items WHERE source_id IN ('C1', 'C2')");
+});
+
 test('without the copy, the window reads the accounts app live — with the person’s own sign-in, else the ERP’s', async () => {
   // The pass the previous test started must finish first, or it copies everything straight back.
   for (let i = 0; i < 50 && (await admin.call('GET', '/api/import/status')).body.running; i++) await new Promise((r) => setTimeout(r, 100));

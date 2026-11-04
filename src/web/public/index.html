@@ -370,6 +370,36 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .spec dd { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
 .with { margin: 14px 0 0; font-size: 15px; }
 .dossier .desc { margin-top: 14px; }
+/* Beside the facts, the watch's additional expenditures (4 Nov 2026): what the apps know on top, what was typed here under it. */
+.dossier-body { container-type: inline-size; min-width: 0; }
+/* Under the prices, in the dossier's empty space (asked 4 Nov 2026: "add in the empty space below"): the apps' lines and the typed lines, side by side when the body is wide enough. */
+.dossier-costs { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); min-width: 0; }
+.xc-groups { display: grid; gap: 0 48px; }
+@container (min-width: 900px) {
+  .xc-groups { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.dossier-costs h3 { margin: 0; }
+.xc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.xc-sum { font: 600 18px/1.2 var(--serif); }
+.xc-group { margin-top: 12px; }
+.xc-title { display: flex; justify-content: space-between; gap: 12px; font: 600 10.5px/1 var(--sans); letter-spacing: .8px; text-transform: uppercase; color: var(--muted); padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+.xc-title span { font: 500 13px/1 var(--sans); letter-spacing: 0; text-transform: none; }
+.xc-line { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.xc-line.shared { color: var(--muted); }
+.xc-line.shared .xc-amt { text-decoration: line-through; text-decoration-color: var(--line); font-weight: 400; }
+.xc-main { min-width: 0; }
+.xc-main > span:not(.tl-src) { overflow-wrap: anywhere; }
+.xc-main .count { display: block; margin: 2px 0 0; }
+.xc-note { font-size: 13px; color: var(--muted); margin-top: 2px; white-space: pre-wrap; }
+.xc-amt { text-align: right; font-weight: 600; white-space: nowrap; }
+.xc-acts { display: flex; gap: 10px; justify-content: flex-end; margin-top: 2px; }
+.xc-acts .linkish { min-height: 0; font-size: 12.5px; }
+.xc-acts .linkish.danger { color: var(--bad); }
+.xc-empty { margin: 8px 0 0; font-size: 13.5px; }
+#xc-form-host { margin-top: 10px; }
+.xc-form { margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #faf8f4; }
+.xc-form .form-grid { gap: 8px 12px; }
+.xc-foot { margin: 10px 0 0; font-size: 12.5px; }
 .dossier .prices { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); gap: 12px 44px; }
 .price.sold b { color: var(--gold); }
 /* The prices: the one thing on the watch page set large. What we paid first, in the serif like a page title; what we ask beside it. */
