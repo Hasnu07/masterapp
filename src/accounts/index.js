@@ -84,6 +84,17 @@ export async function forStock(no) {
   }
   const cids = [...new Set(items.flatMap((r) => r.client_ids || []))];
   const who = await linksByClientId(cids);
+  // The wallets its payments went to or came from (the app's `accounts` collection), by id.
+  const walletIds = [
+    ...new Set(
+      items.flatMap((r) => [...(r.data.payments || []).map((p) => p._walletAccId || p.walletAccId || p.accountId), r.data.walletAccId]).filter(Boolean).map(String)
+    ),
+  ];
+  const wallets = {};
+  if (walletIds.length) {
+    const { rows: ws } = await query("SELECT source_id, data FROM accounts_items WHERE kind = 'accounts' AND deleted_at IS NULL AND source_id = ANY($1)", [walletIds]);
+    for (const r of ws) wallets[r.source_id] = { name: r.data.name || '', company: r.data.company || '', bank: r.data.bankName || '', ccy: r.data.ccy || '', kind: r.data.kind || '' };
+  }
   const entries = items
     .filter((r) => r.kind === 'entries')
     .map((r) => ({ ...r, status: statusOf(r.data), paid: paidOf(r.data), target: targetOf(r.data), outstanding: outstandingOf(r.data) }));
@@ -95,6 +106,7 @@ export async function forStock(no) {
     expenses: items.filter((r) => r.kind === 'expenses'),
     settlements: items.filter((r) => r.kind === 'commissionSettlements'),
     clients: Object.fromEntries([...who]),
+    wallets,
     read_at: lastAccountsRead(),
     sync: catalog().sync,
   };

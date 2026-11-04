@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { erpSessionCookie } from '../import/accounts/client.js';
 
 /*
  * The accounts app itself, inside the ERP (asked 4 Nov 2026: "add accountancy
@@ -141,11 +142,16 @@ export function rewriteSetCookie(value, { secure = config.production } = {}) {
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-/* A call passed on as it came — method, query, body, the accounts cookie — and its answer, cookies included. */
-async function passOn(req, res, path) {
+/*
+ * A call passed on as it came — method, query, body, the accounts cookie — and its answer, cookies included.
+ * A file (an upload shown on our watch page or timeline) is fetched with the ERP's own accounts session
+ * when the person has none: it is behind the ERP's sign-in either way, and the ERP's account may read it.
+ */
+async function passOn(req, res, path, { erpSession = false } = {}) {
   const headers = {};
   for (const h of ['content-type', 'accept', 'accept-language', 'range']) if (req.get(h)) headers[h] = req.get(h);
-  const cookie = accountsCookies(req.get('cookie'));
+  let cookie = accountsCookies(req.get('cookie'));
+  if (!/connect\.sid=/.test(cookie) && erpSession) cookie = [cookie, await erpSessionCookie()].filter(Boolean).join('; ');
   if (cookie) headers.cookie = cookie;
   const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBody(req);
   let r;
@@ -200,8 +206,8 @@ export function mountAccountsApp(app, need) {
 
   /* The app's API, and its uploads, passed on as they are. */
   app.all(`${PREFIX}/api/{*rest}`, configured, need('editor'), sameOrigin, wrap((req, res) => passOn(req, res, req.originalUrl.slice(PREFIX.length))));
-  app.get(`${PREFIX}/uploads/{*rest}`, configured, need('editor'), wrap((req, res) => passOn(req, res, req.originalUrl.slice(PREFIX.length))));
-  app.get('/uploads/{*rest}', configured, need('editor'), wrap((req, res) => passOn(req, res, req.originalUrl)));
+  app.get(`${PREFIX}/uploads/{*rest}`, configured, need('viewer'), wrap((req, res) => passOn(req, res, req.originalUrl.slice(PREFIX.length), { erpSession: true })));
+  app.get('/uploads/{*rest}', configured, need('viewer'), wrap((req, res) => passOn(req, res, req.originalUrl, { erpSession: true })));
 
   /* The page, its scripts and styles, and the app's own deep links (its router's addresses are all the page). */
   app.get(

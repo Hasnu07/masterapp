@@ -479,6 +479,19 @@ async function loadList(more = false) {
       if (w && typeof showLogisticsWindow === 'function') showLogisticsWindow(w.stock_no, w.title);
     })
   );
+  // Its Accounts window, and its Timeline, from the list too.
+  $$('#grid [data-acc]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.acc));
+      if (w && typeof showAccountsWindow === 'function') showAccountsWindow(w.stock_no, w.title);
+    })
+  );
+  $$('#grid [data-tl]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.tl));
+      if (w && typeof showTimelineWindow === 'function') showTimelineWindow(w);
+    })
+  );
   $('#more').classList.toggle('hide', shown.length >= r.total);
 }
 
@@ -512,6 +525,8 @@ function tile(w) {
   const ckUrl = w.ck_id && state.meta?.chronokeyUrl ? `${state.meta.chronokeyUrl}/Stock/InstockDetailPage/${encodeURIComponent(w.ck_id)}` : '';
   const editor = can('editor') && !w.deleted_at;
   const lg = editor && w.stock_no && typeof lgAppOn === 'function' && lgAppOn();
+  const acc = w.stock_no && typeof accAppOn === 'function' && accAppOn();
+  const tl = w.stock_no && typeof tlOn === 'function' && tlOn();
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
   return `<article class="tile st-${esc(status)}" data-id="${w.id}" title="${esc(w.title)}">
     <div class="pic">${
@@ -539,6 +554,8 @@ function tile(w) {
       ${moveButtons(w, 'move')}
       ${editor ? `<a href="#/watch/${w.id}/edit" title="Edit this watch">${icon('edit')}Edit</a>` : ''}
       ${lg ? `<button type="button" data-lg="${w.id}" title="Where it is and what happened to it, from the logistics app">${icon('logistics')}Logistics</button>` : ''}
+      ${acc ? `<button type="button" data-acc="${w.id}" title="What was paid and received on it, through which wallets, from the accounts app">${icon('accounts')}Accounts</button>` : ''}
+      ${tl ? `<button type="button" data-tl="${w.id}" title="Its whole story in order — the ERP, the logistics and the accounts — with the papers">${icon('timeline')}Timeline</button>` : ''}
       ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="This watch on Chrono Key">${icon('link')}Chrono Key</a>` : ''}
       <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
     </div>
@@ -803,6 +820,7 @@ function renderWatch() {
             ${current.editing ? '' : moveButtons(w, 'btn gold')}
             ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
             ${w.stock_no && typeof accAppOn === 'function' && accAppOn() ? '<button class="btn" id="acc-open">Accounts</button>' : ''}
+            ${w.stock_no && typeof tlOn === 'function' && tlOn() ? '<button class="btn" id="tl-open">Timeline</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
             ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
           </div>
@@ -828,6 +846,8 @@ function renderWatch() {
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
   // And whatever our copy of the accounts app has on it — the ledger, its payments — the same way.
   $('#acc-open')?.addEventListener('click', () => showAccountsWindow(w.stock_no, w.display_title));
+  // Everything together, in order — the ERP's own history, the logistics, the accounts — with the papers (timeline.js).
+  $('#tl-open')?.addEventListener('click', () => showTimelineWindow(w));
   $$('.actions [data-move]').forEach((b) => b.addEventListener('click', () => openMove(w.id, b.dataset.move, () => showWatch(w.id))));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {

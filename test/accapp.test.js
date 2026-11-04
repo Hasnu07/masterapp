@@ -47,7 +47,7 @@ async function fixture() {
     ],
     entries: [
       { id: 'e1', type: 'PAYABLE', clientId: 'CL-001', stock: '1668', model: 'ROLEX LADY-DATEJUST', amount: 46000, ccy: 'AED', date: '2026-09-05', payments: [{ id: 'p1', date: '2026-09-06', amount: 46000, method: 'Cash' }], _createdByName: 'Kashan' },
-      { id: 'e2', type: 'RECEIVABLE', clientId: 'CL-002', stock: '1668', amount: 14000, ccy: 'USD', date: '2026-09-25', invoiceNo: 'INV-001', payments: [{ id: 'p2', date: '2026-09-26', amount: 10000, applied: 10000, method: 'Crypto' }], invoiceProof: { dataUrl: `data:image/jpeg;base64,${inline}` }, apiKey: 'should-not-be-kept' },
+      { id: 'e2', type: 'RECEIVABLE', clientId: 'CL-002', stock: '1668', amount: 14000, ccy: 'USD', date: '2026-09-25', invoiceNo: 'INV-001', payments: [{ id: 'p2', date: '2026-09-26', amount: 10000, applied: 10000, method: 'Crypto', _walletAccId: 'w1', proofs: [{ id: 'pr1', name: 'receipt.pdf', type: 'application/pdf', url: '/uploads/CL-002/receipt.pdf' }] }], invoiceProof: { dataUrl: `data:image/jpeg;base64,${inline}` }, apiKey: 'should-not-be-kept' },
       { id: 'e3', type: 'PAYABLE', clientId: 'CL-001', stock: '1700', amount: 98000, ccy: 'EUR', date: '2026-10-01', payments: [] },
       { id: 'e4', type: 'RECEIVABLE', clientId: 'CL-003', stock: '', amount: 5, ccy: 'USD', date: '2026-10-02', _cancelled: true },
     ],
@@ -55,6 +55,7 @@ async function fixture() {
     quickSales: [{ id: 'q1', item: 'Strap', stock: '1701', saleAmount: 300, ccy: 'AED', date: '2026-10-11' }],
     expenses: [{ id: 'x1', title: 'Commission', description: '1668 | Partner | Commission', amount: 500, ccy: 'USD', date: '2026-10-03' }],
     commissionSettlements: [{ id: 's1', employee: 'Kashan', date: '2026-10-30', lines: [{ stock: '1668', commission: 200, role: 'sold' }, { stock: '1700', commission: 50 }] }],
+    accounts: [{ id: 'w1', name: 'WISE (USD)', company: 'PUROSANGUE WATCHES LTD', bankName: 'WISE', ccy: 'USD', kind: 'bank' }],
     currencies: [{ code: 'USD', name: 'US Dollar' }, { code: 'AED', name: 'Dirham' }],
     employeeCodes: { kashan: 'EMP-001' },
     expenseCategories: ['Travel', 'Office'],
@@ -276,7 +277,14 @@ test('the app’s API is passed on with the person’s accounts cookie — and i
     assert.match(f.type, /image\/png/);
     assert.equal(f.headers.get('cache-control'), 'private, max-age=86400');
   }
-  assert.equal((await viewer.call('GET', '/uploads/CL-001/proof.png')).status, 403);
+  // A viewer has no accounts session: the file comes through the ERP's own (it signs in for it), as on the watch page.
+  const logins = hits.filter((h) => h === 'POST /api/auth/login').length;
+  const asViewer = await viewer.call('GET', '/uploads/CL-001/proof.png');
+  assert.equal(asViewer.status, 200);
+  assert.match(asViewer.type, /image\/png/);
+  assert.equal(hits.filter((h) => h === 'POST /api/auth/login').length, logins + 1, 'the ERP signed in once for it');
+  assert.equal((await viewer.call('GET', '/acc-app/uploads/CL-001/proof.png')).status, 200, 'and again without a second sign-in');
+  assert.equal(hits.filter((h) => h === 'POST /api/auth/login').length, logins + 1);
   assert.equal((await client().call('GET', '/uploads/public.png')).status, 401, 'nothing of the app’s without the ERP’s sign-in');
 });
 
@@ -284,16 +292,16 @@ test('the copy: every collection, signed in as the ERP; records by id or code, t
   const signIns = () => hits.filter((h) => h === 'POST /api/auth/login').length;
   const before = signIns();
   const st = await sync.syncAccounts();
-  assert.equal(signIns(), before + 1, 'signed in once');
+  assert.ok(signIns() <= before + 1, 'signed in at most once (an earlier file fetch may have signed the ERP in already)');
   assert.equal(st.failed, 0, JSON.stringify(st.failures));
-  assert.equal(st.kinds, 11);
-  // 3 clients + 4 entries + 1 invoice + 1 quick sale + 1 expense + 1 settlement + 2 currencies + 20 driver txns + 3 whole collections
-  assert.equal(st.created, 36);
+  assert.equal(st.kinds, 12);
+  // 3 clients + 4 entries + 1 invoice + 1 quick sale + 1 expense + 1 settlement + 1 wallet + 2 currencies + 20 driver txns + 3 whole collections
+  assert.equal(st.created, 37);
   assert.equal(st.files, 1, 'the inline invoice picture became a file');
 
   const q = (sql, p) => pool.query(sql, p).then((r) => r.rows);
   const kinds = Object.fromEntries((await q('SELECT kind, count(*)::int AS n FROM accounts_items GROUP BY kind')).map((r) => [r.kind, r.n]));
-  assert.deepEqual(kinds, { clients: 3, entries: 4, invoices: 1, quickSales: 1, expenses: 1, commissionSettlements: 1, currencies: 2, driverTxns: 20, employeeCodes: 1, expenseCategories: 1, exchangeRates: 1 });
+  assert.deepEqual(kinds, { clients: 3, entries: 4, invoices: 1, quickSales: 1, expenses: 1, commissionSettlements: 1, accounts: 1, currencies: 2, driverTxns: 20, employeeCodes: 1, expenseCategories: 1, exchangeRates: 1 });
   const whole = await q("SELECT kind, source_id, data FROM accounts_items WHERE source_id = '*' ORDER BY kind");
   assert.deepEqual(whole.map((r) => [r.kind, r.source_id]), [['employeeCodes', '*'], ['exchangeRates', '*'], ['expenseCategories', '*']]);
   assert.deepEqual(whole.find((r) => r.kind === 'expenseCategories').data, { value: ['Travel', 'Office'] });
@@ -316,12 +324,12 @@ test('the copy: every collection, signed in as the ERP; records by id or code, t
 
 test('unchanged: nothing written, no run kept; a dead session is renewed once', async () => {
   const st = await sync.syncAccounts();
-  assert.deepEqual([st.created, st.updated, st.unchanged, st.gone], [0, 0, 36, 0]);
+  assert.deepEqual([st.created, st.updated, st.unchanged, st.gone], [0, 0, 37, 0]);
   assert.equal((await pool.query("SELECT count(*)::int AS n FROM import_runs WHERE source = 'accounts'")).rows[0].n, 1);
   sessions.clear(); // the app forgot the ERP's session
   const before = hits.filter((h) => h === 'POST /api/auth/login').length;
   const again = await sync.syncAccounts();
-  assert.equal(again.unchanged, 36);
+  assert.equal(again.unchanged, 37);
   assert.equal(hits.filter((h) => h === 'POST /api/auth/login').length, before + 1);
 });
 
@@ -358,7 +366,7 @@ test('a change is applied — except a field locked here; a dropped record is de
 
   // An answer without the ledger is not an empty app.
   await assert.rejects(sync.syncAccounts({ state: { foo: [] } }), /without its ledger/);
-  assert.equal((await q("SELECT count(*)::int AS n FROM accounts_items WHERE deleted_at IS NULL"))[0].n, 36);
+  assert.equal((await q("SELECT count(*)::int AS n FROM accounts_items WHERE deleted_at IS NULL"))[0].n, 37);
 });
 
 test('which of our clients the app’s clients are: by the watches on their ledger, else a full name — and what the watch page is told', async () => {
@@ -409,6 +417,17 @@ test('which of our clients the app’s clients are: by the watches on their ledg
   assert.deepEqual(s.body.expenses.map((i) => i.source_id), ['x1']);
   assert.deepEqual(s.body.settlements.map((i) => i.source_id), ['s1']);
   assert.ok(s.body.read_at);
+  assert.deepEqual(s.body.wallets, { w1: { name: 'WISE (USD)', company: 'PUROSANGUE WATCHES LTD', bank: 'WISE', ccy: 'USD', kind: 'bank' } }, 'the wallet the payment went through');
+  const e2 = s.body.entries.find((e) => e.source_id === 'e2');
+  assert.deepEqual(e2.data.payments[0].proofs[0].url, '/uploads/CL-002/receipt.pdf', 'an upload stays a reference, shown through the ERP');
+  // The invoice picture the pass copied, served from our copy — full size and as a thumbnail.
+  const fileId = e2.data.invoiceProof.dataUrl.match(/^acfile:(\d+)$/)[1];
+  const full = await viewer.call('GET', `/api/acc-app/file/${fileId}`);
+  assert.equal(full.status, 200);
+  assert.match(full.type, /image\/jpeg/);
+  assert.equal((await viewer.call('GET', `/api/acc-app/file/${fileId}?thumb=1`)).status, 200);
+  assert.equal((await viewer.call('GET', '/api/acc-app/file/999999')).status, 404);
+  assert.equal((await client().call('GET', `/api/acc-app/file/${fileId}`)).status, 401);
   assert.equal((await viewer.call('GET', '/api/acc-app/stock/1701')).body.quick_sales.length, 1);
   assert.deepEqual((await viewer.call('GET', '/api/acc-app/stock/5555')).body.entries, []);
 
@@ -428,7 +447,7 @@ test('which of our clients the app’s clients are: by the watches on their ledg
   assert.equal(meta.body.accounts.sync, true);
   assert.ok(meta.body.accounts.pages.some((p) => p.key === 'stock' && p.path === '/reports/stock'));
   const status = await admin.call('GET', '/api/import/status');
-  assert.equal(status.body.counts.accounts_items, 36);
+  assert.equal(status.body.counts.accounts_items, 37);
   assert.equal(status.body.counts.accounts_entries, 4);
   assert.equal(status.body.configured.accounts, true);
   assert.equal((await admin.call('POST', '/api/import/run', { job: 'accounts' })).status, 202);

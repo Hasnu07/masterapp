@@ -37,7 +37,7 @@ src/
   web/server.js             the API
   web/lgapp.js              the logistics app itself, served inside the ERP at /lg-app/
   web/accapp.js             the accounts app itself, served inside the ERP at /acc-app/
-  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps
+  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline
 test/                       node:test against stand-ins and a real Postgres
 ```
 
@@ -516,19 +516,48 @@ stamps `_createdBy` / `_updatedBy` / `_history` on every record.
   a full name that is exactly one of ours decides when no watch does; a
   person's choice (`accounts_client_links`) always wins. Nothing writes to
   that table yet (no page for it): the match is shown, with how it was made.
-- **The watch page's Accounts button** opens a window in the console's look
-  (`showAccountsWindow`, the Logistics window's shape) read from OUR COPY
-  (`GET /api/acc-app/stock/:no`), so it works for every role and needs no
-  sign-in to the app: one serif line on where the money stands ("Bought from
-  X for AED 46,000, settled · Sold to Y for USD 14,000, USD 4,000 still owed"),
-  then the ledger — each leg with its status, paid, outstanding, invoice,
-  payments and who entered it — quick sales, documents (by the entry's invoice
-  number), expenses and commission lines naming the stock, when the copy was
-  read, and "See it in the accounts app" (the Stock report searched for it).
+- **The Accounts button — on the watch page and on every Inventory card**
+  (asked 4 Nov 2026: "see its payments, wallet, history, remaining / paid, and
+  its timeline") opens a window in the console's look (`showAccountsWindow`,
+  the Logistics window's shape) read from OUR COPY (`GET /api/acc-app/stock/:no`),
+  so it works for every role and needs no sign-in to the app: one serif line
+  on where the money stands ("Bought from X for AED 46,000, settled · Sold to
+  Y for USD 14,000, USD 4,000 still owed"); the facts — bought for / sold for
+  with paid and **remaining**, the **wallets** the money went through (the
+  app's `accounts` collection, resolved by `_walletAccId`, returned as
+  `wallets`), the invoice; the **ledger**, each leg with its **track**: to
+  pay / to receive, then every payment with its date, amount (and the amount
+  actually paid when in another currency), the wallet it came from or went
+  into, the method, the note, its proofs, and what was **left** after it, then
+  paid and remaining; **what happened**, in order (legs posted, payments,
+  invoice issued, quick sales, expenses, commission); quick sales, documents
+  (by the entry's invoice number), expenses, commission; every picture; when
+  the copy was read; "See it in the accounts app". `accStory(data)` builds all
+  of it and the Timeline reuses it. Files on a record (`attachments`, `proofs`,
+  `invoiceProof` …): "acfile:<id>" is served from our copy at
+  `/api/acc-app/file/:id` (`?thumb=1`), an app upload (`/uploads/…`) through
+  `/acc-app/uploads/…` — **with the ERP's own accounts session when the person
+  has none** (`erpSessionCookie`, viewers included), a PDF in the same viewer
+  as the logistics papers (`lgDocOpen` takes any same-origin address now).
   The client page's **Accounts** panel (`GET /api/acc-app/our-client/:id`):
   which of the app's clients this is and how it was matched, what stands open
   per currency (owed to us / we owe), and "See <name> in Accounts →" (their
-  profile in the app). The Inventory card shows nothing of the copy.
+  profile in the app).
+- **The Timeline button — watch page and Inventory card** (`timeline.js`,
+  asked 4 Nov 2026: "a separate timeline button that shows both accountancy
+  and logistics combined, with attached pdf"): one window, three lines on
+  where it stands (the ERP's status and dates, the logistics line, the
+  accounts line), the accounts facts, then ONE story in the order it happened
+  with a tag on every line saying whose it is — **ERP / Chrono Key** (bought,
+  sold, added, every status change and who made it, from the watch and
+  `/api/watches/:id/events`), **Logistics** (`lgStory`, split out of the
+  Logistics window: from our copy at once, the app's own answer replacing it
+  when the frame has it, editors), **Accounts** (`accStory`) — with the
+  pictures and papers on each line (customs papers, invoices, proofs; a PDF
+  opens in the viewer), all papers and all pictures again at the foot, and
+  **Save as PDF** (the browser's print of the window alone: `@media print`
+  hides everything else). Within a day the order is each app's own stage
+  order, the ERP's fact first.
 - **Not done / to decide:** a page to set a person's client link (the table
   exists); copying the app's `/uploads/` files (they are served live through
   the proxy; the switch-over needs them copied); the app's own client picker

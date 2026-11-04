@@ -6,7 +6,7 @@ import { startRun, finishRun, progressRun } from '../listimport.js';
 import { GONE_LIMIT } from '../gone.js';
 import { isSecret } from '../../logistics/kinds.js';
 import { stable, brief } from '../logistics/sync.js';
-import { savePhoto, saveDocument } from '../../storage/index.js';
+import { savePhoto, saveDocument, storage } from '../../storage/index.js';
 
 /*
  * The accounts app (its /api/state) → accounts_items.
@@ -117,6 +117,16 @@ async function storeFile(buffer, ref = null) {
   );
   if (rows[0]) return rows[0].id;
   return (await query('SELECT id FROM accounts_files WHERE sha256 = $1', [hash])).rows[0].id;
+}
+
+/** A copied file by its id ("acfile:<id>" in a record): its bytes and type, or its thumbnail. */
+export async function fileById(id, { thumb = false } = {}) {
+  const { rows } = await query('SELECT storage_key, thumb_key, content_type FROM accounts_files WHERE id = $1', [Number(id) || 0]);
+  const f = rows[0];
+  if (!f) return null;
+  const key = thumb && f.thumb_key ? f.thumb_key : f.storage_key;
+  const buffer = await (await storage()).get(key);
+  return buffer ? { buffer, type: thumb && f.thumb_key ? 'image/jpeg' : f.content_type } : null;
 }
 
 const DATA_URI = /^data:([\w.+-]+\/[\w.+-]+)?(;[\w=.+-]+)*;base64,/i;

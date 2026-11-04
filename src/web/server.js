@@ -17,6 +17,7 @@ import { passport } from '../logistics/passport.js';
 import { mountLogisticsApp, workerOrigin } from './lgapp.js';
 import { mountAccountsApp } from './accapp.js';
 import * as accounts from '../accounts/index.js';
+import { fileById as accFileById } from '../import/accounts/sync.js';
 import * as accClients from '../accounts/clients.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
@@ -64,7 +65,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'accounts.js', 'fxchip.js'];
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'accounts.js', 'timeline.js', 'fxchip.js'];
 // Each page's own stylesheet, versioned with the scripts.
 const CONSOLE_STYLES = [];
 function consolePage() {
@@ -702,6 +703,16 @@ export function createServer() {
     '/api/acc-app/client',
     need('viewer'),
     wrap(async (req, res) => res.json({ acc_client_id: await accClients.accountsClientIdFor(String(req.query.name || '')) }))
+  );
+  /* A picture or paper the pass copied out of an accounts record ("acfile:<id>"): an invoice, a proof. */
+  app.get(
+    '/api/acc-app/file/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await accFileById(req.params.id, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      sendLgFile(req, res, f);
+    })
   );
   /* What our copy of the accounts app holds on one stock number: the watch page's Accounts window. */
   app.get('/api/acc-app/stock/:no', need('viewer'), wrap(async (req, res) => res.json(await accounts.forStock(String(req.params.no || '').trim().slice(0, 20)))));

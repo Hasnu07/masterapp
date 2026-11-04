@@ -72,6 +72,24 @@ async function getJson(path) {
   return res.json();
 }
 
+/**
+ * The ERP's own session cookie, signing in first when there is none — for the
+ * app's uploads shown on our pages (a proof, an invoice) when the person has
+ * no accounts session of their own. '' when the ERP has no account there.
+ */
+export async function erpSessionCookie() {
+  if (!config.accounts.configured) return '';
+  if (!cookie) {
+    try {
+      await login();
+    } catch (err) {
+      console.warn(`[accounts] ${err.message}`);
+      return '';
+    }
+  }
+  return cookie;
+}
+
 /** Every collection, or the named ones: { entries: [...], clients: [...], … }. */
 export const fetchAccountsState = (only = null) => getJson(only?.length ? `/api/state?only=${only.map(encodeURIComponent).join(',')}` : '/api/state');
 
