@@ -32,16 +32,17 @@ src/
   import/logistics/sync.js  the logistics app (same worker document) → logistics_items
   import/accounts/          the accounts app: client.js signs in as the ERP and reads /api/state; sync.js → accounts_items
   accounts/                 what our copy says about a stock number or a client (index.js), which client of ours an accounts client is (clients.js)
+  ai/                       Claude in the ERP: what the model reads (context.js), the watch's brief and Ask with tools (index.js)
   logistics/                the app's lists (kinds.js), moments and stages (situation.js), which client of ours a logistics client is (clients.js), our watch by stock number (shared.js)
   import/jobs.js            the timer, and the one-job-at-a-time lock
   web/server.js             the API
   web/lgapp.js              the logistics app itself, served inside the ERP at /lg-app/
   web/accapp.js             the accounts app itself, served inside the ERP at /acc-app/
-  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline
+  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline; ask.js the brief and the Ask thread
 test/                       node:test against stand-ins and a real Postgres
 ```
 
-Node 20+, Express 5, Postgres, `sharp` for thumbnails.
+Node 20+, Express 5, Postgres, `sharp` for thumbnails, `@anthropic-ai/sdk` for the assistant.
 
 **LIVE since 23 Oct 2026: https://coral-app-7qthm.ondigitalocean.app**
 (DigitalOcean app `coral-app` + database `masterapp-db`, photos in R2 bucket
@@ -573,6 +574,59 @@ stamps `_createdBy` / `_updatedBy` / `_history` on every record.
   shows the app dark (its own theme). Found in the app, for its owner: a
   break-glass `admin` login exists in its code (disabled unless a strong
   `ADMIN_PASS` is set); `/api/deploy-log` is public.
+
+## Claude in the ERP (4 Nov 2026)
+
+Asked for: "add api to the tool so it can read through everything easily and
+be smart about what and how to show the data combined and in a good manner".
+`src/ai/`, through the official SDK (`@anthropic-ai/sdk`), **read-only**:
+nothing the model says is written anywhere, and it has no tool that writes.
+
+- **On when `ANTHROPIC_API_KEY` is set** on the server (`config.ai`; the
+  console learns it from `/api/meta`'s `ai.enabled` and hides the buttons
+  otherwise). `AI_MODEL` (default `claude-opus-5-5`, the current Opus) and
+  `AI_EFFORT` (default `medium`). Every request carries the server-side
+  refusal fallback (`fallbacks: "default"`, beta
+  `server-side-fallback-2026-07-01`), so a declined request is re-run on
+  another model rather than left blank; the house prompt is cached
+  (`cache_control`); forced `tool_choice` is never used (Opus 5.5 refuses it).
+- **What the model reads** (`ai/context.js`): `watchPicture` — the ERP's
+  record (the fields that matter, `status_why`), its two clients, the history
+  as changes (who moved what, when), what the reference has sold for, the same
+  watch's other purchases, the logistics app's story from our copy
+  (`passport`), the accounts ledger (`forStock`: our copy, or live with the
+  person's sign-in — the cookie goes with the question); `clientPicture`,
+  `searchWatches`, `searchClients`, `accountsOpen` (every entry with money
+  outstanding, each way, with totals per currency), `logisticsWhere`. All
+  through `trim`: pictures, papers, inline files, provenance histories and
+  secrets out; lists capped at 60; texts at 400 characters.
+- **The brief** (`GET /api/ai/watch/:id/brief`, `briefWatch`): the picture in
+  one request, the answer in a fixed shape (structured output,
+  `output_config.format` json_schema): `headline`, `lines` (3–7), `money`,
+  `where`, `attention` (the apps disagreeing, money outstanding on a delivered
+  watch, a status that looks wrong), `missing` (a currency not stated, no
+  ledger for a sold watch …). Held ten minutes per watch while the picture's
+  hash is the same. Shown at the top of the watch's **Timeline** ("In one
+  read", `aiBrief` in `ask.js`) with a line saying the model wrote it and to
+  check a figure before acting on it.
+- **Ask** (`POST /api/ai/ask` `{question, history, watch_id?}`, `ask`): the
+  SDK's tool runner (`client.beta.messages.toolRunner`, `betaTool` with raw
+  JSON schemas, at most 8 iterations) over six tools — `search_watches`,
+  `watch_picture`, `find_clients`, `client_picture`, `accounts_open`,
+  `logistics_where`. The page keeps the conversation (last 12 turns, text
+  only) and sends it back each time; about a watch, its picture opens the
+  first turn. Answers are asked for short, a one-line answer then "- " lines,
+  stock numbers as "#1668" and clients by name — the page makes those links
+  through `/api/acc-app/links` (`aiText`, `aiLinks`). On the Timeline (about
+  that watch) and from the **Ask** button in the bar (about anything).
+- `test/ai.test.js` against a stand-in Anthropic API (`ANTHROPIC_BASE_URL`,
+  which the SDK honours): what the model was given, the brief's shape and
+  cache, the tool round-trip, the conversation carried. Not tried against the
+  real API from this PC (no key here): the first live run is the check.
+- **Cost**: a brief is one request of roughly 10–30k input tokens
+  (Opus 5.5: $4 per million in); a question two to four. The ten-minute hold
+  and the cached house prompt keep repeats cheap. Switch to
+  `AI_MODEL=claude-sonnet-5-5` if it adds up.
 
 ## Chrono Key's product list — read it right
 

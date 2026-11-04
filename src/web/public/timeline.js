@@ -54,6 +54,7 @@ async function showTimelineWindow(watch) {
   tlWin.no = watch.stock_no || '';
   tlWin.live = false;
   tlWin.lg = tlWin.acc = null;
+  if (tlWin.briefFor !== watch.id) tlWin.briefHtml = '';
   d.innerHTML = tlShell(watch, '<p class="count lgw-wait">Reading the ERP, the logistics app and the accounts…</p>');
   if (!d.open) d.showModal();
   tlBind(d);
@@ -139,6 +140,7 @@ function tlRender(d) {
 
   const line = (label, html, tone) => `<div class="tl-now ${esc(tone || '')}"><span class="tl-src">${label}</span> ${html}</div>`;
   body.innerHTML = `
+    <div id="tl-brief"></div>
     <div class="tl-nows">
       ${line('ERP', `${chip(w.deleted_at ? 'deleted' : w.status)}${w.location ? ` <span>${esc(w.location)}</span>` : ''}${w.purchase_date ? ` · bought ${esc(fmtDate(w.purchase_date))}` : ''}${w.sale_date ? ` · sold ${esc(fmtDate(w.sale_date))}` : ''}`)}
       ${lg ? line('Logistics', esc(lg.now.text), lg.now.tone) : typeof lgAppOn === 'function' && lgAppOn() ? line('Logistics', '<span class="count" style="margin:0">Nothing in the logistics app.</span>') : ''}
@@ -164,6 +166,23 @@ function tlRender(d) {
     ]
       .filter(Boolean)
       .join(' · ')}</p>
+    <div id="tl-ask" class="tl-noprint"></div>
     <p class="tl-printed">Purosangue ERP · printed ${esc(fmtWhen(new Date().toISOString()))}</p>`;
   accBindFiles(body);
+  // Claude's brief at the top and a question box at the foot (ask.js) — kept across a redraw when the logistics answer arrives.
+  if (typeof aiOn === 'function' && aiOn()) {
+    if (tlWin.briefHtml && tlWin.briefFor === tlWin.id) body.querySelector('#tl-brief').innerHTML = tlWin.briefHtml;
+    else {
+      tlWin.briefFor = tlWin.id;
+      aiBrief(tlWin.id, body.querySelector('#tl-brief')).then(() => {
+        tlWin.briefHtml = body.querySelector('#tl-brief')?.innerHTML || '';
+      });
+    }
+    if (tlWin.askEl && tlWin.askFor === tlWin.id) body.querySelector('#tl-ask').replaceWith(tlWin.askEl);
+    else {
+      tlWin.askFor = tlWin.id;
+      tlWin.askEl = body.querySelector('#tl-ask');
+      aiAskPanel(tlWin.askEl, { watchId: tlWin.id, placeholder: `Ask about this watch — “Is it paid?”, “Where is it now?”, “What did we make on it?”` });
+    }
+  }
 }

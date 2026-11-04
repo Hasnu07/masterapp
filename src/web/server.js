@@ -18,6 +18,7 @@ import { mountLogisticsApp, workerOrigin } from './lgapp.js';
 import { mountAccountsApp } from './accapp.js';
 import * as accounts from '../accounts/index.js';
 import { fileById as accFileById } from '../import/accounts/sync.js';
+import * as ai from '../ai/index.js';
 import * as accClients from '../accounts/clients.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
@@ -65,7 +66,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'accounts.js', 'timeline.js', 'fxchip.js'];
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'accounts.js', 'timeline.js', 'ask.js', 'fxchip.js'];
 // Each page's own stylesheet, versioned with the scripts.
 const CONSOLE_STYLES = [];
 function consolePage() {
@@ -275,6 +276,7 @@ export function createServer() {
       expenseFields: expenses.EXPENSE_FIELDS,
       logistics: logistics.catalog(),
       accounts: accounts.catalog(),
+      ai: { enabled: config.ai.enabled, model: config.ai.model },
       chronokeyUrl: config.chronokey.url, // the Inventory card links a watch to its Chrono Key page
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
@@ -718,6 +720,24 @@ export function createServer() {
   app.get('/api/acc-app/stock/:no', need('viewer'), wrap(async (req, res) => res.json(await accounts.forStock(String(req.params.no || '').trim().slice(0, 20), { cookie: req.get('cookie') }))));
   /* What it says about one of OUR clients: the client page's panel. */
   app.get('/api/acc-app/our-client/:id', need('viewer'), wrap(async (req, res) => res.json(await accounts.forOurClient(Number(req.params.id) || 0))));
+
+  /* ── Claude: the watch's brief, and a question across everything (ai/index.js) ── */
+
+  const aiOn = (req, res, next) => (config.ai.enabled ? next() : res.status(404).json({ error: 'The assistant is not set up here (ANTHROPIC_API_KEY)' }));
+  app.get(
+    '/api/ai/watch/:id/brief',
+    need('viewer'),
+    aiOn,
+    wrap(async (req, res) => res.json(await ai.briefWatch(Number(req.params.id) || 0, { cookie: req.get('cookie') })))
+  );
+  app.post(
+    '/api/ai/ask',
+    need('viewer'),
+    aiOn,
+    wrap(async (req, res) =>
+      res.json(await ai.ask({ question: req.body?.question, history: req.body?.history, watchId: Number(req.body?.watch_id) || null, cookie: req.get('cookie') }))
+    )
+  );
 
   /* ── import ──────────────────────────────────────────────────── */
 

@@ -284,6 +284,8 @@ async function signedIn(user) {
   $('#who').innerHTML = `<b>${esc(user.name || user.email)}</b>${esc(user.role)}`;
   $('#who').title = `${user.name || user.email} · ${user.role}`;
   $$('#nav [data-role]').forEach((a) => a.classList.toggle('hide', !can(a.dataset.role)));
+  // The Ask button, when the server has the Claude API (ask.js).
+  $('#ask-open')?.classList.toggle('hide', !state.meta?.ai?.enabled);
   route();
   // The logistics app, loading hidden behind the first page, so a watch's Logistics window answers at once (lgAppWarm).
   setTimeout(() => typeof lgAppWarm === 'function' && lgAppWarm(), 2000);

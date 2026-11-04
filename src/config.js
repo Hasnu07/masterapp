@@ -124,6 +124,21 @@ export const config = {
    * numbers (a few bytes) are checked every ACCOUNTS_POLL_SEC and only the
    * collections that moved are read again; 0 leaves only the 15-minute pass.
    */
+  /*
+   * Claude in the ERP (asked 4 Nov 2026): the watch's brief and the Ask window
+   * read across everything through the Claude API. ANTHROPIC_API_KEY turns it
+   * on; AI_MODEL and AI_EFFORT tune it. Read-only: nothing the model says is
+   * written anywhere.
+   */
+  ai: {
+    apiKey: (process.env.ANTHROPIC_API_KEY || '').trim(),
+    model: (process.env.AI_MODEL || 'claude-opus-5-5').trim(),
+    effort: (process.env.AI_EFFORT || 'medium').trim(),
+    get enabled() {
+      return Boolean(this.apiKey);
+    },
+  },
+
   accounts: {
     appUrl: (process.env.ACCOUNTS_APP_URL ?? 'https://accountancy-app-production.up.railway.app').trim().replace(/^off$/i, '').replace(/\/+$/, ''),
     username: (process.env.ACCOUNTS_USERNAME || '').trim(),
