@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { pool, query } from '../../db/index.js';
+import { pool, query, tx } from '../../db/index.js';
 import { config } from '../../config.js';
-import { fetchAccountsState } from './client.js';
+import { fetchAccountsState, erpSessionCookie } from './client.js';
 import { startRun, finishRun, progressRun } from '../listimport.js';
 import { GONE_LIMIT } from '../gone.js';
 import { isSecret } from '../../logistics/kinds.js';
@@ -108,7 +108,10 @@ export function happenedAt(d) {
 async function storeFile(buffer, ref = null) {
   const hash = sha(buffer);
   const had = await query('SELECT id FROM accounts_files WHERE sha256 = $1', [hash]);
-  if (had.rows[0]) return had.rows[0].id;
+  if (had.rows[0]) {
+    if (ref) await query('UPDATE accounts_files SET source_ref = COALESCE(source_ref, $2) WHERE id = $1', [had.rows[0].id, ref]);
+    return had.rows[0].id;
+  }
   const s = buffer.subarray(0, 5).toString('latin1') === '%PDF-' ? await saveDocument(buffer) : await savePhoto(buffer);
   const { rows } = await query(
     `INSERT INTO accounts_files(sha256, storage_key, thumb_key, content_type, bytes, source_ref) VALUES ($1,$2,$3,$4,$5,$6)
@@ -164,6 +167,102 @@ async function keep(v, stats) {
     return out;
   }
   return v;
+}
+
+/* ── the app's own uploads, copied here for the switch-over ────────── */
+
+const UPLOAD = /^\/uploads\/[^\s"'<>]+$/;
+function uploadRefs(v, acc = new Set()) {
+  if (typeof v === 'string') {
+    if (UPLOAD.test(v)) acc.add(v);
+  } else if (Array.isArray(v)) v.forEach((x) => uploadRefs(x, acc));
+  else if (v && typeof v === 'object') Object.values(v).forEach((x) => uploadRefs(x, acc));
+  return acc;
+}
+function localise(v, map) {
+  if (typeof v === 'string') return map.has(v) ? `acfile:${map.get(v)}` : v;
+  if (Array.isArray(v)) return v.map((x) => localise(x, map));
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, localise(x, map)]));
+  return v;
+}
+async function copiedMap(refs) {
+  if (!refs.length) return new Map();
+  const { rows } = await query('SELECT source_ref, id FROM accounts_files WHERE source_ref = ANY($1)', [refs]);
+  return new Map(rows.map((r) => [r.source_ref, r.id]));
+}
+const MAX_FILE = 50 * 1024 * 1024;
+/* An address that gave nothing storable (a Word file, a dead link) is not asked for again for a day. */
+const refused = new Map();
+const REFUSED_FOR = 24 * 3600_000;
+
+/** One of the app's uploads, with the ERP's own session: a picture or a PDF, or null. */
+async function getUpload(ref, cookie) {
+  const res = await fetch(`${config.accounts.appUrl}${ref}`, { headers: { Cookie: cookie }, redirect: 'manual', signal: AbortSignal.timeout(config.accounts.timeoutMs) });
+  const type = res.headers.get('content-type') || '';
+  if (!res.ok || !(type.startsWith('image/') || type.startsWith('application/pdf'))) {
+    await res.arrayBuffer().catch(() => {});
+    return null;
+  }
+  if (Number(res.headers.get('content-length')) > MAX_FILE) return null;
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of res.body || []) {
+    size += chunk.length;
+    if (size > MAX_FILE) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+/*
+ * The uploads our records still point at (/uploads/<folder>/<file>: proofs,
+ * invoices, ID documents), copied an allowance a pass, four at a time, and
+ * swapped in as "acfile:<id>" — the same file, kept here, so the switch-over
+ * does not lose them and the watch page shows them from our copy. Not a
+ * change of the record: no history entry, no lock. The swap re-reads each
+ * record under a lock, so a person's edit made meanwhile is kept.
+ */
+async function copyUploads(stats) {
+  if (!config.accounts.configured || config.accounts.filesPerPass <= 0) return;
+  const { rows } = await query("SELECT id, data FROM accounts_items WHERE deleted_at IS NULL AND data::text LIKE '%/uploads/%' ORDER BY updated_at DESC LIMIT 2000");
+  if (!rows.length) return;
+  const now = Date.now();
+  const wanted = [...new Set(rows.flatMap((r) => [...uploadRefs(r.data)]))];
+  const map = await copiedMap(wanted);
+  const todo = wanted.filter((ref) => !map.has(ref) && now - (refused.get(ref) || 0) >= REFUSED_FOR).slice(0, config.accounts.filesPerPass);
+  if (todo.length) {
+    const cookie = await erpSessionCookie();
+    if (!cookie) return;
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const ref = todo[next];
+        next += 1;
+        try {
+          const buffer = await getUpload(ref, cookie);
+          if (buffer) {
+            map.set(ref, await storeFile(buffer, ref));
+            stats.filesCopied += 1;
+            continue;
+          }
+        } catch (err) {
+          if (err.status !== 415) console.warn(`[accounts] upload ${ref}: ${err.message}`);
+        }
+        refused.set(ref, now);
+        if (refused.size > 20_000) refused.clear();
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  }
+  for (const r of rows) {
+    if (stable(localise(r.data, map)) === stable(r.data)) continue;
+    await tx(async (db) => {
+      const { rows: cur } = await db.query('SELECT data FROM accounts_items WHERE id = $1 FOR UPDATE', [r.id]);
+      if (!cur[0]) return;
+      const next = localise(cur[0].data, map);
+      if (stable(next) !== stable(cur[0].data)) await db.query('UPDATE accounts_items SET data = $2 WHERE id = $1', [r.id, next]);
+    });
+  }
 }
 
 /* ── one record into ours ──────────────────────────────────────────── */
@@ -298,7 +397,7 @@ const MAIN = ['entries', 'clients'];
 export async function syncAccounts({ user, quiet = false, only = null, state: given } = {}) {
   if (!config.accounts.configured) throw new Error('The accounts app is not configured — set ACCOUNTS_USERNAME and ACCOUNTS_PASSWORD');
   const run = quiet ? null : await startRun('accounts', only ? 'changed' : 'full', user);
-  const stats = { records: 0, kinds: 0, created: 0, updated: 0, unchanged: 0, restored: 0, gone: 0, files: 0, failed: 0, refused: {} };
+  const stats = { records: 0, kinds: 0, created: 0, updated: 0, unchanged: 0, restored: 0, gone: 0, files: 0, filesCopied: 0, failed: 0, refused: {} };
   try {
     const state = given || (await fetchAccountsState(only));
     if (!state || typeof state !== 'object' || Array.isArray(state)) throw new Error('The accounts app answered without its collections — not reading that as an empty app');
@@ -359,10 +458,13 @@ export async function syncAccounts({ user, quiet = false, only = null, state: gi
     } finally {
       client.release();
     }
-    if (!only) lastRead = new Date();
+    if (!only) {
+      await copyUploads(stats);
+      lastRead = new Date();
+    }
     if (run) {
       // A pass that found nothing new leaves no run behind.
-      const changed = stats.created + stats.updated + stats.restored + stats.gone + stats.failed + Object.keys(stats.refused).length;
+      const changed = stats.created + stats.updated + stats.restored + stats.gone + stats.filesCopied + stats.failed + Object.keys(stats.refused).length;
       if (!changed && !user) await query('DELETE FROM import_runs WHERE id = $1', [run]);
       else await finishRun(run, { ok: !stats.failed, stats });
     }

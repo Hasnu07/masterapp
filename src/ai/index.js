@@ -43,17 +43,70 @@ The ERP holds three things about every watch, kept apart and given to you as JSO
 - "accounts": the accounts app's ledger (a PAYABLE is a purchase leg — what we owe the seller; a RECEIVABLE is a sale leg — what the buyer owes us; each with payments, their wallets, paid, outstanding; quick sales, invoices, expenses, commission). "source" says whether it came from the ERP's copy, live from the app, or could not be read.
 Write for the people who run the business: plain, exact, short. Money always with its currency, as given (no conversion unless both figures are given). Dates as "5 Sept 2026". Name people and companies as the data names them. Say when the three apps disagree (a watch sold in the accounts app but in stock in the ERP; a payment outstanding on a watch already delivered). Say what is missing or unclear instead of guessing. Never invent a figure, a date or a name.`;
 
+const money = (what) => ({
+  type: 'object',
+  additionalProperties: false,
+  required: ['amount', 'ccy'],
+  properties: { amount: { type: 'number', description: `${what}; 0 when there is none.` }, ccy: { type: 'string', description: 'Its currency code as the data gives it; empty when none or not stated.' } },
+});
+/*
+ * The brief as DATA for a picture, not prose (asked 4 Nov 2026: "instead of
+ * showing this overwhelming data show diagrams and a timeline, easy to
+ * understand"): the watch's journey as stages, the money as figures the page
+ * draws as bars, the key moments only, and at most a few flags.
+ */
 const BRIEF_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['headline', 'lines', 'money', 'where', 'attention', 'missing'],
+  required: ['headline', 'journey', 'money', 'moments', 'attention', 'missing'],
   properties: {
-    headline: { type: 'string', description: 'One sentence: what this watch is and where it stands now, across all three apps.' },
-    lines: { type: 'array', items: { type: 'string' }, description: '3 to 7 short facts a person wants first, each one line, combining the apps: the deal, the money, the place, the timing.' },
-    money: { type: 'string', description: 'The money in one or two sentences: bought for and paid, sold for and received, what is outstanding each way, through which wallets. Empty string if there is no ledger.' },
-    where: { type: 'string', description: 'Where it physically is or last was, from the logistics app, in one sentence. Empty string if the logistics app has nothing.' },
-    attention: { type: 'array', items: { type: 'string' }, description: 'Things a person should act on or check: disagreements between the apps, money overdue or outstanding on a delivered watch, a status that looks wrong, a sale with no buyer. Empty if nothing.' },
-    missing: { type: 'array', items: { type: 'string' }, description: 'What the data does not say that it should: a currency not stated, no sale price, no ledger entry for a sold watch, no photos. Empty if nothing.' },
+    headline: { type: 'string', description: 'One short sentence, at most 18 words: what it is and where it stands now.' },
+    journey: {
+      type: 'array',
+      description: 'The watch\'s path, one entry per stage in this order: bought, paid (we paid the seller), shipped, arrived, in_stock, sold, delivered (to the buyer), received (the buyer\'s money). Every stage once.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['stage', 'state', 'date', 'label'],
+        properties: {
+          stage: { type: 'string', enum: ['bought', 'paid', 'shipped', 'arrived', 'in_stock', 'sold', 'delivered', 'received'] },
+          state: { type: 'string', enum: ['done', 'partial', 'pending', 'not_yet', 'unknown'], description: 'done: happened; partial: part way (part paid); pending: expected or in progress; not_yet: not reached; unknown: the data does not say.' },
+          date: { type: 'string', description: 'YYYY-MM-DD when known, else empty.' },
+          label: { type: 'string', description: 'At most 6 words under the stage: who, where or how much ("from Gaetano", "Dubai, by FedEx", "EUR 130,000"). Empty when nothing to say.' },
+        },
+      },
+    },
+    money: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['bought', 'paid', 'sold', 'received', 'costs', 'note'],
+      properties: {
+        bought: money('The purchase price'),
+        paid: money('What we have paid the seller so far'),
+        sold: money('The sale price'),
+        received: money('What the buyer has paid us so far'),
+        costs: { type: 'array', items: money('A cost on this watch (shipping, customs, polish)'), description: 'At most 5, each with its currency; the label goes in note.' },
+        note: { type: 'string', description: 'At most 25 words on anything the bars cannot show: a part payment, two currencies, a cost still pending. Empty when nothing.' },
+      },
+    },
+    moments: {
+      type: 'array',
+      description: 'The 5 to 10 moments that matter, in date order: what happened, where it came from. Not every record — the turning points.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['date', 'source', 'title', 'detail', 'tone'],
+        properties: {
+          date: { type: 'string', description: 'YYYY-MM-DD, or empty when unknown.' },
+          source: { type: 'string', enum: ['erp', 'chronokey', 'logistics', 'accounts'] },
+          title: { type: 'string', description: 'At most 7 words.' },
+          detail: { type: 'string', description: 'At most 16 words. Empty when the title says it all.' },
+          tone: { type: 'string', enum: ['here', 'moving', 'sold', 'warn', 'quiet'], description: 'here: arrived/in stock/paid; moving: shipped/incoming; sold: a sale; warn: something owed or odd; quiet: plain.' },
+        },
+      },
+    },
+    attention: { type: 'array', items: { type: 'string' }, description: 'At most 4 lines, each at most 20 words: money outstanding, the apps disagreeing on something that matters, a status that looks wrong. The most important first. Empty if nothing.' },
+    missing: { type: 'array', items: { type: 'string' }, description: 'At most 3 lines, each at most 12 words: what the data should say and does not. Empty if nothing.' },
   },
 };
 
@@ -79,7 +132,7 @@ export async function briefWatch(id, { cookie = '' } = {}) {
     messages: [
       {
         role: 'user',
-        content: `Here is everything the ERP holds on one watch, as JSON. Write its brief.\n\n${JSON.stringify(picture)}`,
+        content: `Here is everything the ERP holds on one watch, as JSON. Fill in its brief: the journey's eight stages, the money as figures, the five to ten moments that matter, and at most a few flags — short, for a picture, not an essay.\n\n${JSON.stringify(picture)}`,
       },
     ],
   });

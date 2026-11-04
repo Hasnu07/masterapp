@@ -25,6 +25,10 @@
   'use strict';
   var inErp = window.parent !== window;
   var PREFIX = '/acc-app';
+  // Inside the ERP the app opens in its light theme, the console's own look — unless the person has chosen one in the app (its toggle writes the same key).
+  try {
+    if (inErp && !localStorage.getItem('app-theme')) localStorage.setItem('app-theme', 'light');
+  } catch (e) { /* storage unavailable */ }
   var ours = { watches: {}, clients: {} }; // stock number → our watch; a name, lower-cased → our client
   var asked = { stock: {}, clients: {} }; // what the ERP has been asked about already
 

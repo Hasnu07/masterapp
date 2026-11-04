@@ -22,6 +22,7 @@ const hits = [];
 const sessions = new Set();
 let state;
 let revs = { entries: 3, clients: 2, currencies: 1 };
+let UPLOAD_JPEG;
 
 const PAGE = `<!doctype html>
 <html lang="en">
@@ -66,6 +67,7 @@ async function fixture() {
 
 before(async () => {
   state = await fixture();
+  UPLOAD_JPEG = await sharp({ create: { width: 24, height: 24, channels: 3, background: '#c63' } }).jpeg().toBuffer();
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ma-accapp-'));
   railway = http
     .createServer((req, res) => {
@@ -106,8 +108,8 @@ before(async () => {
             res.statusCode = 403;
             return res.end('no');
           }
-          res.setHeader('Content-Type', 'image/png');
-          return res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+          res.setHeader('Content-Type', 'image/jpeg');
+          return res.end(UPLOAD_JPEG);
         }
         if (url.pathname === '/assets/index-Dlk5CG7T.js') {
           res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
@@ -274,14 +276,14 @@ test('the app’s API is passed on with the person’s accounts cookie — and i
   for (const u of ['/acc-app/uploads/CL-001/proof.png', '/uploads/CL-001/proof.png']) {
     const f = await editor.call('GET', u);
     assert.equal(f.status, 200, u);
-    assert.match(f.type, /image\/png/);
+    assert.match(f.type, /image\/jpeg/);
     assert.equal(f.headers.get('cache-control'), 'private, max-age=86400');
   }
   // A viewer has no accounts session: the file comes through the ERP's own (it signs in for it), as on the watch page.
   const logins = hits.filter((h) => h === 'POST /api/auth/login').length;
   const asViewer = await viewer.call('GET', '/uploads/CL-001/proof.png');
   assert.equal(asViewer.status, 200);
-  assert.match(asViewer.type, /image\/png/);
+  assert.match(asViewer.type, /image\/jpeg/);
   assert.equal(hits.filter((h) => h === 'POST /api/auth/login').length, logins + 1, 'the ERP signed in once for it');
   assert.equal((await viewer.call('GET', '/acc-app/uploads/CL-001/proof.png')).status, 200, 'and again without a second sign-in');
   assert.equal(hits.filter((h) => h === 'POST /api/auth/login').length, logins + 1);
@@ -298,6 +300,7 @@ test('the copy: every collection, signed in as the ERP; records by id or code, t
   // 3 clients + 4 entries + 1 invoice + 1 quick sale + 1 expense + 1 settlement + 1 wallet + 2 currencies + 20 driver txns + 3 whole collections
   assert.equal(st.created, 37);
   assert.equal(st.files, 1, 'the inline invoice picture became a file');
+  assert.equal(st.filesCopied, 1, 'the payment proof under /uploads/ was copied with the ERP’s own session');
 
   const q = (sql, p) => pool.query(sql, p).then((r) => r.rows);
   const kinds = Object.fromEntries((await q('SELECT kind, count(*)::int AS n FROM accounts_items GROUP BY kind')).map((r) => [r.kind, r.n]));
@@ -312,6 +315,7 @@ test('the copy: every collection, signed in as the ERP; records by id or code, t
   assert.deepEqual(e2.client_ids, ['CL-002']);
   assert.equal(e2.origin, 'accounts');
   assert.match(e2.data.invoiceProof.dataUrl, /^acfile:\d+$/);
+  assert.match(e2.data.payments[0].proofs[0].url, /^acfile:\d+$/, 'the upload too, for the switch-over');
   assert.equal(e2.data.apiKey, undefined, 'a key is never kept');
   assert.equal(new Date(e2.happened_at).toISOString(), '2026-09-25T00:00:00.000Z');
   const raw = (await q("SELECT data FROM accounts_records WHERE kind = 'entries' AND source_id = 'e2'"))[0].data;
@@ -407,6 +411,21 @@ test('which of our clients the app’s clients are: by the watches on their ledg
   assert.equal((await editor.call('GET', '/api/acc-app/client?name=Omar%20F')).body.acc_client_id, 'CL-002');
   assert.equal((await editor.call('GET', '/api/acc-app/client?name=Nobody')).body.acc_client_id, null);
 
+  // A person decides: Sam Twice (two of ours) is this one; Dealer One is none of ours after all; then forgotten, the watches decide again.
+  const sams = (await editor.call('GET', '/api/clients?q=Sam%20Twice&limit=5')).body.clients;
+  assert.equal(sams.length, 2);
+  assert.equal((await viewer.call('PUT', '/api/acc-app/client-link', { acc_client_id: 'CL-003', client_id: sams[0].id })).status, 403);
+  assert.equal((await editor.call('PUT', '/api/acc-app/client-link', { acc_client_id: 'CL-003', client_id: sams[0].id })).status, 200);
+  const decided = (await acc.linksByClientId(['CL-003'])).get('CL-003');
+  assert.deepEqual([decided.client_id, decided.how], [sams[0].id, 'person']);
+  const picker = await editor.call('GET', '/api/acc-app/app-clients?q=sam');
+  assert.deepEqual(picker.body.clients.map((x) => [x.acc_client_id, x.client_id, x.how]), [['CL-003', sams[0].id, 'person']]);
+  assert.equal((await editor.call('PUT', '/api/acc-app/client-link', { acc_client_id: 'CL-001', client_id: null })).status, 200);
+  assert.equal((await acc.linksByClientId(['CL-001'])).get('CL-001').client_id, null, 'none of ours, over the watches');
+  assert.equal((await editor.call('DELETE', '/api/acc-app/client-link/CL-001')).status, 200);
+  assert.equal((await acc.linksByClientId(['CL-001'])).get('CL-001').client_id, dealer.id, 'forgotten: the watches decide again');
+  assert.equal((await editor.call('PUT', '/api/acc-app/client-link', { acc_client_id: 'CL-999', client_id: null })).status, 404);
+
   // The watch page's window: the ledger on 1668, with its arithmetic, who the clients are, and the invoice by its number.
   const s = await viewer.call('GET', '/api/acc-app/stock/1668');
   assert.equal(s.status, 200, 'for every role: it reads our copy');
@@ -419,7 +438,7 @@ test('which of our clients the app’s clients are: by the watches on their ledg
   assert.ok(s.body.read_at);
   assert.deepEqual(s.body.wallets, { w1: { name: 'WISE (USD)', company: 'PUROSANGUE WATCHES LTD', bank: 'WISE', ccy: 'USD', kind: 'bank' } }, 'the wallet the payment went through');
   const e2 = s.body.entries.find((e) => e.source_id === 'e2');
-  assert.deepEqual(e2.data.payments[0].proofs[0].url, '/uploads/CL-002/receipt.pdf', 'an upload stays a reference, shown through the ERP');
+  assert.match(e2.data.payments[0].proofs[0].url, /^acfile:\d+$/, 'the upload, copied here');
   // The invoice picture the pass copied, served from our copy — full size and as a thumbnail.
   const fileId = e2.data.invoiceProof.dataUrl.match(/^acfile:(\d+)$/)[1];
   const full = await viewer.call('GET', `/api/acc-app/file/${fileId}`);
@@ -451,6 +470,44 @@ test('which of our clients the app’s clients are: by the watches on their ledg
   assert.equal(status.body.counts.accounts_entries, 4);
   assert.equal(status.body.configured.accounts, true);
   assert.equal((await admin.call('POST', '/api/import/run', { job: 'accounts' })).status, 202);
+});
+
+test('a watch’s documents: a PDF and a picture kept with it, served behind the sign-in, in its history', async () => {
+  const w = (await editor.call('GET', '/api/watches?q=1668&limit=1')).body.watches[0];
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
+  const jpg = await sharp({ create: { width: 30, height: 20, channels: 3, background: '#36c' } }).jpeg().toBuffer();
+  const form = () => {
+    const fd = new FormData();
+    fd.append('kind', 'invoice');
+    fd.append('files', new Blob([pdf], { type: 'application/pdf' }), 'invoice.pdf');
+    fd.append('files', new Blob([jpg], { type: 'image/jpeg' }), 'papers.jpg');
+    return fd;
+  };
+  assert.equal((await viewer.call('POST', `/api/watches/${w.id}/documents`, form(), { raw: true })).status, 403);
+  const up = await editor.call('POST', `/api/watches/${w.id}/documents`, form(), { raw: true });
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  assert.equal(up.body.ids.length, 2);
+  const bad = new FormData();
+  bad.append('files', new Blob(['hello'], { type: 'text/plain' }), 'notes.txt');
+  assert.equal((await editor.call('POST', `/api/watches/${w.id}/documents`, bad, { raw: true })).status, 415, 'a text file is neither a PDF nor a picture');
+
+  const list = await viewer.call('GET', `/api/watches/${w.id}/documents`);
+  assert.deepEqual(
+    list.body.documents.map((d) => [d.name, d.kind, d.content_type, d.has_thumb]),
+    [['invoice.pdf', 'invoice', 'application/pdf', false], ['papers.jpg', 'invoice', 'image/jpeg', true]]
+  );
+  const [a, b] = list.body.documents;
+  const f = await viewer.call('GET', `/api/watch-documents/${a.id}`);
+  assert.equal(f.status, 200);
+  assert.match(f.type, /application\/pdf/);
+  assert.equal(f.headers.get('x-frame-options'), 'SAMEORIGIN', 'our own PDF viewer may frame it');
+  assert.match((await viewer.call('GET', `/api/watch-documents/${b.id}?thumb=1`)).type, /image\/jpeg/);
+  assert.equal((await client().call('GET', `/api/watch-documents/${a.id}`)).status, 401);
+  assert.equal((await editor.call('DELETE', `/api/watches/${w.id}/documents/${a.id}`)).status, 200);
+  assert.equal((await viewer.call('GET', `/api/watch-documents/${a.id}`)).status, 404, 'removed: not served');
+  assert.equal((await viewer.call('GET', `/api/watches/${w.id}/documents`)).body.documents.length, 1);
+  const actions = (await editor.call('GET', `/api/watches/${w.id}/events`)).body.events.map((e) => e.action);
+  assert.ok(actions.includes('document_add') && actions.includes('document_remove'), 'both in the watch’s history');
 });
 
 test('without the copy, the window reads the accounts app live — with the person’s own sign-in, else the ERP’s', async () => {

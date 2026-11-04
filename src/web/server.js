@@ -19,6 +19,7 @@ import { mountAccountsApp } from './accapp.js';
 import * as accounts from '../accounts/index.js';
 import { fileById as accFileById } from '../import/accounts/sync.js';
 import * as ai from '../ai/index.js';
+import * as documents from '../watches/documents.js';
 import * as accClients from '../accounts/clients.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
@@ -470,6 +471,41 @@ export function createServer() {
     })
   );
 
+  /* A watch's documents: the invoice, the papers, a customs form — PDFs or pictures, kept with the watch. */
+  app.get('/api/watches/:id/documents', need('viewer'), wrap(async (req, res) => res.json({ documents: await documents.listDocuments(req.params.id), kinds: documents.KINDS })));
+  app.post(
+    '/api/watches/:id/documents',
+    need('editor'),
+    photoUpload.array('files', documents.MAX_DOCS),
+    wrap(async (req, res) => {
+      const files = (req.files || []).map((f) => ({ buffer: f.buffer, name: f.originalname }));
+      if (!files.length) return res.status(400).json({ error: 'No file was sent' });
+      res.status(201).json({ ids: await documents.addDocuments(req.params.id, files, req.user, req.body?.kind) });
+    })
+  );
+  app.delete(
+    '/api/watches/:id/documents/:did',
+    need('editor'),
+    wrap(async (req, res) => {
+      await documents.removeDocument(req.params.id, req.params.did, req.user);
+      res.json({ ok: true });
+    })
+  );
+  /* Behind the sign-in, like the photos: serials, prices and passports are in them. Framed by our own PDF viewer. */
+  app.get(
+    '/api/watch-documents/:did',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await documents.documentFile(req.params.did, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such document' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Frame-Options', 'SAMEORIGIN');
+      if (req.query.download) res.attachment(String(f.name || 'document').replace(/[^\w .()\-]+/g, '_').slice(0, 120) || 'document');
+      res.send(f.buffer);
+    })
+  );
+
   app.get(
     '/api/watches/:id/sold-for',
     need('viewer'),
@@ -714,6 +750,25 @@ export function createServer() {
       const f = await accFileById(req.params.id, { thumb: req.query.thumb === '1' });
       if (!f) return res.status(404).json({ error: 'No such file' });
       sendLgFile(req, res, f);
+    })
+  );
+  /* The accounts clients for the client page's picker, and a person's decision on who of ours one is. */
+  app.get('/api/acc-app/app-clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await accClients.appClients(String(req.query.q || ''), Number(req.query.limit) || 12) })));
+  app.put(
+    '/api/acc-app/client-link',
+    need('editor'),
+    wrap(async (req, res) => {
+      const ours = req.body?.client_id === null || req.body?.client_id === undefined || req.body?.client_id === '' ? null : Number(req.body.client_id);
+      await accClients.setClientLink(String(req.body?.acc_client_id || ''), ours, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.delete(
+    '/api/acc-app/client-link/:accId',
+    need('editor'),
+    wrap(async (req, res) => {
+      await accClients.forgetClientLink(req.params.accId);
+      res.json({ ok: true });
     })
   );
   /* What our copy of the accounts app holds on one stock number: the watch page's Accounts window. */

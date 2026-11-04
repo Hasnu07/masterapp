@@ -24,6 +24,7 @@ src/
   storage/                  photos: Cloudflare R2, or disk under DATA_DIR; same-picture check
   watches/fields.js         THE list of a watch's fields (API, import, form)
   watches/index.js          read / create / edit / delete / photos / history
+  watches/documents.js      a watch's documents: invoice, papers, customs, receipts (PDFs or pictures)
   import/productlist.js     Chrono Key's product list (CSV export or live grid) → fields
   import/apply.js           writing a source's values into a watch, respecting edits
   import/listimport.js      the list → ck_records + watches
@@ -515,8 +516,25 @@ stamps `_createdBy` / `_updatedBy` / `_history` on every record.
   `purchased_from`), a RECEIVABLE a sale (`sold_to`) — each a vote; the winner
   needs twice the runner-up's; one watch alone only when the names look alike;
   a full name that is exactly one of ours decides when no watch does; a
-  person's choice (`accounts_client_links`) always wins. Nothing writes to
-  that table yet (no page for it): the match is shown, with how it was made.
+  person's choice (`accounts_client_links`) always wins. **Set on the client
+  page's Accounts panel** (4 Nov 2026): each match says how it was made, and
+  an editor can *Confirm* it, say *Not them* (none of ours, over the watches),
+  *Undo* a decision (the watches decide again), or *Link an accounts client*
+  from a picker over the copied clients (`GET /api/acc-app/app-clients?q=`,
+  `PUT /api/acc-app/client-link {acc_client_id, client_id|null}`,
+  `DELETE /api/acc-app/client-link/:accId` — `setClientLink`,
+  `forgetClientLink`).
+- **The app's uploads are copied** (4 Nov 2026, for the switch-over): each
+  full pass, every `/uploads/<folder>/<file>` our records point at (proofs,
+  invoices, ID documents) is fetched with the ERP's own session —
+  `ACCOUNTS_FILES_PER_PASS` (200) a pass, four at a time, at most 50 MB,
+  pictures and PDFs only — stored once in `accounts_files` (`source_ref` =
+  the address) and swapped into our record as `acfile:<id>` (`copyUploads`;
+  the raw record keeps the address). Not a change of the record: no history
+  entry, no lock. An address that gave nothing is not asked again for a day.
+- **Inside the ERP the app opens in its light theme** (the console's look):
+  the bridge sets the app's own `app-theme` key to `light` only when the
+  person has never chosen one; the app's toggle still rules after that.
 - **The Accounts button — on the watch page and on every Inventory card**
   (asked 4 Nov 2026: "see its payments, wallet, history, remaining / paid, and
   its timeline") opens a window in the console's look (`showAccountsWindow`,
@@ -567,13 +585,10 @@ stamps `_createdBy` / `_updatedBy` / `_history` on every record.
   **Save as PDF** (the browser's print of the window alone: `@media print`
   hides everything else). Within a day the order is each app's own stage
   order, the ERP's fact first.
-- **Not done / to decide:** a page to set a person's client link (the table
-  exists); copying the app's `/uploads/` files (they are served live through
-  the proxy; the switch-over needs them copied); the app's own client picker
-  cannot be fed our names (a React SearchSelect over its state); the console
-  shows the app dark (its own theme). Found in the app, for its owner: a
-  break-glass `admin` login exists in its code (disabled unless a strong
-  `ADMIN_PASS` is set); `/api/deploy-log` is public.
+- **Not done / to decide:** the app's own client picker cannot be fed our
+  names (a React SearchSelect over its state). Found in the app, for its
+  owner: a break-glass `admin` login exists in its code (disabled unless a
+  strong `ADMIN_PASS` is set); `/api/deploy-log` is public.
 
 ## Claude in the ERP (4 Nov 2026)
 
@@ -601,14 +616,21 @@ nothing the model says is written anywhere, and it has no tool that writes.
   through `trim`: pictures, papers, inline files, provenance histories and
   secrets out; lists capped at 60; texts at 400 characters.
 - **The brief** (`GET /api/ai/watch/:id/brief`, `briefWatch`): the picture in
-  one request, the answer in a fixed shape (structured output,
-  `output_config.format` json_schema): `headline`, `lines` (3–7), `money`,
-  `where`, `attention` (the apps disagreeing, money outstanding on a delivered
-  watch, a status that looks wrong), `missing` (a currency not stated, no
-  ledger for a sold watch …). Held ten minutes per watch while the picture's
-  hash is the same. Shown at the top of the watch's **Timeline** ("In one
-  read", `aiBrief` in `ask.js`) with a line saying the model wrote it and to
-  check a figure before acting on it.
+  one request, the answer as DATA FOR A PICTURE (structured output,
+  `output_config.format` json_schema; asked the same day after the first
+  prose version: "instead of this overwhelming data show diagrams and a
+  timeline, easy to understand"): `headline` (one short sentence), `journey`
+  (eight stages — bought, paid, shipped, arrived, in_stock, sold, delivered,
+  received — each done / partial / pending / not_yet / unknown with a date
+  and a few words), `money` (bought, paid, sold, received, costs as figures
+  with their currency, one note), `moments` (5–10 turning points with their
+  source and tone), `attention` (≤ 4), `missing` (≤ 3). Held ten minutes per
+  watch while the picture's hash is the same. Drawn at the top of the watch's
+  **Timeline** ("In one read", `aiBrief` in `ask.js`): the journey as a
+  stepper (a dot per stage, filled when done), the money as two bars (paid of
+  bought, received of sold) with costs under them, the moments as a short
+  timeline with source tags, then the flags — and a line saying the model
+  drew it and to check a figure before acting on it.
 - **Ask** (`POST /api/ai/ask` `{question, history, watch_id?}`, `ask`): the
   SDK's tool runner (`client.beta.messages.toolRunner`, `betaTool` with raw
   JSON schemas, at most 8 iterations) over six tools — `search_watches`,
@@ -728,6 +750,25 @@ the agreed ones hidden by hand, keeping the larger.
 - **PDFs are not held.** 249 PDFs (invoices, papers) on 136 Chrono Key pages
   were refused as "not a picture". Holding documents is still to do.
 
+## Documents per watch (4 Nov 2026)
+
+On the "not done" list since the start; done with the rest of "fix
+everything". `src/watches/documents.js`, migration 012 (`watch_documents`):
+the invoice, the papers, a customs form, a receipt — a PDF or a picture (the
+same `saveDocument` as an expense's payment copies: a PDF as it is, a picture
+with its 480px thumbnail), with a `kind` (invoice, papers, customs, receipt,
+other) and the name it was uploaded under. `GET/POST
+/api/watches/:id/documents` (editors post, up to 30 a watch, `kind` in the
+form), `DELETE /api/watches/:id/documents/:did` (soft), the file at
+`/api/watch-documents/:did` (`?thumb=1`, `?download=1`) behind the sign-in,
+framed only by our own PDF viewer. Every add and remove is in the watch's
+history (`document_add`, `document_remove`). The watch page's **Papers**
+panel lists them (a PDF opens in the viewer, `lgDocOpen`), with a drop zone
+and the kind for editors; the **Timeline** shows each as an ERP line when it
+was added and in its Papers at the foot; the model's brief lists their names.
+Chrono Key's own 249 PDFs are still not copied (the detail pass refuses them
+as "not a picture") — the next step for this table.
+
 ## Being polite to Chrono Key
 
 Somebody else's server, and the real inventory. Read-only; two pages at a
@@ -838,7 +879,8 @@ photos in `data/`, makes `admin@local` with a random password the first time
 npm install
 cp .env.example .env      # fill in
 npm start                 # migrates, creates the first admin, serves on :3000
-npm test                  # EMPTIES the test database first
+npm test                  # EMPTIES the test database first (TEST_DATABASE_URL)
+npm run test:local        # the same, on a fresh embedded Postgres it starts and stops itself
 npm run import -- csv ProductList.csv
 npm run import -- list | details [new|active|full] [limit] | vault | logistics | accounts | all
 npm run import -- tidy-photos     # hide repeats among photos already copied
@@ -847,6 +889,10 @@ npm run user -- add someone@example.com editor 'a-long-password' Name
 
 Tests need a Postgres at `TEST_DATABASE_URL` (default
 `postgres://postgres@localhost:5433/masterapp_test`) — it is wiped each run.
+`npm run test:local` (`test/run-local.mjs`) needs nothing: it starts a fresh
+embedded Postgres in a temporary folder, runs the suite and stops it. Start
+one each time — an embedded server kept running across whole suite runs was
+seen to start refusing connections (4 Nov 2026).
 
 ## Not done yet / next
 
@@ -865,8 +911,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
   photos on the wrong watch in the source data (11 ↔ 1446, 1570, 739 ↔ 1346,
   1607 ↔ 1606); buy-backs not linked by `ck_product_id` (same serial: 126/330,
   537/1021, 683/1007, 813/1535, 1048/1433, 1149/1426, 1454/1645).
-- Documents (PDFs) per watch. Storage now takes PDFs (`saveDocument`, used
-  for expense payment copies); a watch's own documents are still to do.
+- (Done 4 Nov 2026: `watch_documents`.) Chrono Key's own PDFs — 249 on 136
+  pages — are still not copied into it.
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.
