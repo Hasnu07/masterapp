@@ -60,10 +60,11 @@ async function showTimelineWindow(watch) {
   tlBind(d);
   const no = tlWin.no;
   const quiet = (p) => p.catch(() => null);
-  const [w, ev, docs, lg, acc] = await Promise.all([
+  const [w, ev, docs, costs, lg, acc] = await Promise.all([
     quiet(api(`/api/watches/${watch.id}`)),
     quiet(api(`/api/watches/${watch.id}/events`)),
     quiet(api(`/api/watches/${watch.id}/documents`)),
+    quiet(api(`/api/watches/${watch.id}/costs`)),
     no && typeof lgAppOn === 'function' && lgAppOn() ? quiet(api(`/api/lg-app/passport?no=${encodeURIComponent(no)}`)) : null,
     no && typeof accAppOn === 'function' && accAppOn() ? quiet(api(`/api/acc-app/stock/${encodeURIComponent(no)}`)) : null,
   ]);
@@ -71,6 +72,7 @@ async function showTimelineWindow(watch) {
   tlWin.w = w || watch;
   tlWin.events = ev?.events || [];
   tlWin.docs = docs?.documents || [];
+  tlWin.costs = costs?.added || [];
   tlWin.lg = lg && !lg.empty ? lg : null;
   tlWin.acc = acc;
   tlRender(d);
@@ -97,7 +99,7 @@ function tlBind(d) {
 }
 
 /* What the ERP itself knows: the deal's two dates, and the history — every status change, by whom. */
-function tlErpEvents(w, events, docs = []) {
+function tlErpEvents(w, events, docs = [], costs = []) {
   const ev = [];
   const src = w.origin === 'chronokey' ? 'chronokey' : 'erp';
   const add = (t, title, detail = '', tone = '', stage = 50, from = src) => ev.push({ t, title, detail, tone, pics: [], docs: [], src: from, stage });
@@ -123,6 +125,12 @@ function tlErpEvents(w, events, docs = []) {
       docs: d.has_thumb ? [] : [{ url: `/api/watch-documents/${d.id}`, name: d.name || 'document.pdf', type: d.content_type }],
     });
   }
+  // The costs typed here (the watch page's Additional expenditures), on the day they were paid.
+  const COST = { shipping: 'Shipping', customs: 'Customs / duty', service: 'Service / polish', commission: 'Commission', insurance: 'Insurance', travel: 'Travel', other: 'Cost' };
+  for (const c of costs) {
+    const t = c.paid_on ? Date.parse(`${c.paid_on}T00:00:00Z`) : Date.parse(c.created_at);
+    add(t, `${COST[c.kind] || 'Cost'}${c.title ? ` — ${c.title}` : ''} ${price(c.amount, c.currency)}`.trim(), [c.note, c.user_name ? `added by ${c.user_name}` : ''].filter(Boolean).join(' · '), 'warn', 60, 'erp');
+  }
   return ev;
 }
 
@@ -135,7 +143,7 @@ function tlRender(d) {
   const w = tlWin.w;
   const lg = tlWin.lg && typeof lgStory === 'function' ? lgStory(tlWin.lg) : null;
   const acc = tlWin.acc && typeof accStory === 'function' ? accStory(tlWin.acc) : null;
-  const erp = tlErpEvents(w, tlWin.events, tlWin.docs || []);
+  const erp = tlErpEvents(w, tlWin.events, tlWin.docs || [], tlWin.costs || []);
   // One list, in the order it happened: by day; within a day in the order a deal moves (each app's own stage), the ERP's fact first.
   const all = [
     ...erp.map((e, i) => ({ ...e, seq: i })),

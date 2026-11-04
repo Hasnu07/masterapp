@@ -590,6 +590,42 @@ stamps `_createdBy` / `_updatedBy` / `_history` on every record.
   owner: a break-glass `admin` login exists in its code (disabled unless a
   strong `ADMIN_PASS` is set); `/api/deploy-log` is public.
 
+## Additional expenditures per watch (4 Nov 2026)
+
+Asked for: "an option where I can add a watch's additional expenditures …
+what we know from logistics and accounting such as movement cost, commission;
+but sometimes we sell and move in bulk and it gets confusing, so a manual
+entry per watch that we add by typing" — then: "in the empty space below"
+the prices, and "the manual is not a correction … it's for overview".
+`src/watches/costs.js`, migration 014 (`watch_costs`), the panel under the
+dossier's price line (`renderCosts` in `app.js`, `.dossier-costs`).
+
+- **Two groups, side by side when the dossier's body is 900px or wider**
+  (a container query), stacked otherwise. **From Logistics and Accounts**:
+  read-only, each line tagged with its app — the logistics copy's cost lines
+  (`logisticCosts`, by trip or shipment), shipments' and couriers' costs, the
+  movements and polish on the watch's own stock rows; the accounts app's
+  expenses, the commission settled on the stock number, the costs on a ledger
+  leg (`forStock`: the copy, else live with the person's sign-in). **A line
+  the app ties to several watches at once** (a courier that carried 1700 and
+  1718 — the bulk case) is marked "shared with … · not in the total" and left
+  out of the sums: how it splits is nobody's guess. **Added here**: typed by
+  a person — kind (shipping, customs, service, commission, insurance, travel,
+  other), title, amount and currency (required; never converted), paid on,
+  paid by, note — the ERP's own overview of what the watch cost beyond its
+  price; not a correction of the apps' lines, never written to either app.
+  Totals per currency: the apps', the typed, and all together, in the head.
+- `GET /api/watches/:id/costs` (`costsOf`: `known`, `added`, `totals`,
+  `shared`, where each app's answer came from), `POST` / `PATCH
+  /:cid` / `DELETE /:cid` (editors; at most 100 a watch; a date that does not
+  exist is refused; soft delete). Every add, change and removal is in the
+  watch's history (`cost_add` / `cost_edit` with old → new / `cost_remove`).
+  The **Timeline** shows each typed line as an ERP line on the day it was
+  paid; the model's picture carries them as `costs_added_here`.
+- Test in `test/accapp.test.js` (the accounts copy and two logistics cost
+  rows, one shared). Checked in the browser on this PC's copy with the API
+  stubbed in the page (the backup database stays unwritten).
+
 ## Claude in the ERP (4 Nov 2026)
 
 Asked for: "add api to the tool so it can read through everything easily and

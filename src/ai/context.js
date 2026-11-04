@@ -5,6 +5,7 @@ import { passport } from '../logistics/passport.js';
 import * as lgClients from '../logistics/clients.js';
 import * as accounts from '../accounts/index.js';
 import * as accClients from '../accounts/clients.js';
+import { listCosts } from '../watches/costs.js';
 
 /*
  * What the model reads (asked 4 Nov 2026: "add api to the tool so it can read
@@ -66,7 +67,7 @@ export async function watchPicture(idOrNo, { cookie = '' } = {}) {
     if (rows[0]) w = await watches.getWatch(rows[0].id);
   }
   if (!w) return null;
-  const [links, events, sold, related, lg, acc] = await Promise.all([
+  const [links, events, sold, related, lg, acc, costs] = await Promise.all([
     clients.linksOf(w),
     watches.watchEvents(w.id, 80),
     watches.soldFor(w.id, 10).catch(() => null),
@@ -75,6 +76,7 @@ export async function watchPicture(idOrNo, { cookie = '' } = {}) {
       : [],
     w.stock_no ? passport(w.stock_no).catch(() => null) : null,
     w.stock_no ? accounts.forStock(w.stock_no, { cookie }).catch((err) => ({ error: err.message })) : null,
+    listCosts(w.id).catch(() => []),
   ]);
   const watch = Object.fromEntries(WATCH_KEYS.filter((k) => w[k] !== undefined && w[k] !== null && w[k] !== '').map((k) => [k, w[k]]));
   watch.photo_count = (w.photos || []).length;
@@ -91,6 +93,7 @@ export async function watchPicture(idOrNo, { cookie = '' } = {}) {
     reference_sold_for: sold,
     same_watch_other_purchases: related,
     logistics: lg && !lg.empty ? { ...lg, copied: undefined, copiedAt: lg.copiedAt } : null,
+    costs_added_here: costs.map((c) => ({ kind: c.kind, title: c.title, amount: c.amount, ccy: c.currency, paid_on: c.paid_on, paid_by: c.paid_by, note: c.note, by: c.user_name })),
     accounts: acc,
   });
 }
