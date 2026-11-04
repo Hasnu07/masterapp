@@ -80,14 +80,24 @@ function aibBar(label, price, paid, verb) {
 }
 async function aiBrief(watchId, box) {
   if (!aiOn() || !box) return;
-  box.innerHTML = '<div class="aib"><div class="lgw-eyebrow">In one read</div><p class="count aib-wait">Reading the three apps…</p></div>';
+  box.innerHTML = '<div class="aib"><div class="lgw-eyebrow">In one read</div><p class="count aib-wait">Claude is reading the ERP, the logistics app and the accounts app for this watch — the full story is already below. <span class="aib-secs"></span></p></div>';
+  // The first brief of a watch takes the model a while; after that it is kept and opens at once. The seconds are shown so the wait is not a guess.
+  const t0 = Date.now();
+  const secs = box.querySelector('.aib-secs');
+  const tick = setInterval(() => {
+    if (!secs || !secs.isConnected) return clearInterval(tick);
+    const s = Math.round((Date.now() - t0) / 1000);
+    secs.textContent = s >= 4 ? `${s} s${s >= 25 ? ' — still reading; a watch with a long story takes longer' : ''}` : '';
+  }, 1000);
   let b;
   try {
     b = await api(`/api/ai/watch/${watchId}/brief`);
   } catch (err) {
+    clearInterval(tick);
     box.innerHTML = `<div class="aib"><div class="lgw-eyebrow">In one read</div><p class="count" style="margin:0">${esc(err.message)}</p></div>`;
     return;
   }
+  clearInterval(tick);
   if (!box.isConnected) return;
   const links = await aiLinks([b.headline, ...(b.moments || []).map((m) => `${m.title} ${m.detail}`), ...(b.attention || []), ...(b.missing || [])].join('\n'));
   const inl = (t) => aiText(t, links).replace(/^<p>|<\/p>$/g, '');
@@ -113,7 +123,7 @@ async function aiBrief(watchId, box) {
     }
     ${(b.attention || []).length ? `<div class="aib-att"><div class="k">Needs attention</div><ul>${b.attention.slice(0, 4).map((x) => `<li>${inl(x)}</li>`).join('')}</ul></div>` : ''}
     ${(b.missing || []).length ? `<div class="aib-miss"><div class="k">Not in the data</div><ul>${b.missing.slice(0, 3).map((x) => `<li>${inl(x)}</li>`).join('')}</ul></div>` : ''}
-    <div class="count aib-foot">Drawn by ${esc(b.model || 'Claude')}${b.cached ? ' a few minutes ago' : ''} from the ERP, the logistics app and the accounts app — the full story is below; check a figure before acting on it.</div>
+    <div class="count aib-foot">Drawn by ${esc(b.model || 'Claude')}${b.cached && b.at ? ` on ${esc(fmtWhen(b.at))}, kept until something about the watch changes` : b.took_ms ? ` in ${Math.round(b.took_ms / 1000)} s` : ''} from the ERP, the logistics app and the accounts app — the full story is below; check a figure before acting on it.</div>
   </div>`;
 }
 

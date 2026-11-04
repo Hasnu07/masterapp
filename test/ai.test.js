@@ -154,7 +154,10 @@ test('the watch’s brief: the model reads the three apps together — no pictur
   assert.equal(req.body.model, 'claude-opus-5-5');
   assert.equal(req.body.fallbacks, 'default');
   assert.match(req.headers['anthropic-beta'] || '', /server-side-fallback-2026-07-01/);
-  assert.equal(req.body.output_config.effort, 'medium');
+  assert.equal(req.body.output_config.effort, 'low', 'the brief is extraction: low effort');
+  const { compact } = await import('../src/ai/index.js');
+  assert.equal(compact({ history: Array.from({ length: 40 }, (_, i) => i), logistics: { london: Array.from({ length: 30 }, (_, i) => i) } }).history.length, 15);
+  assert.equal(compact({ logistics: { london: Array.from({ length: 30 }, (_, i) => i) } }).logistics.london.length, 12);
   assert.equal(req.body.output_config.format.type, 'json_schema');
   assert.ok(req.body.system[0].cache_control, 'the house prompt is cached');
   const given = req.body.messages[0].content;
@@ -169,7 +172,15 @@ test('the watch’s brief: the model reads the three apps together — no pictur
 
   const again = await admin.call('GET', `/api/ai/watch/${watchId}/brief`);
   assert.equal(again.body.cached, true);
-  assert.equal(seen.length, 1, 'held: the model was not asked twice');
+  assert.equal(seen.length, 1, 'kept: the model was not asked twice');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM ai_briefs')).rows[0].n, 1, 'kept in the database, not just in memory');
+  // The watch changes: a new brief; the read times alone changing: not.
+  const { fingerprint } = await import('../src/ai/index.js');
+  assert.deepEqual(fingerprint({ a: 1, read_at: 'x', nested: { at: 'y', b: 2 } }), { a: 1, nested: { b: 2 } });
+  assert.equal((await admin.call('PATCH', `/api/watches/${watchId}`, { notes: 'serviced' })).status, 200);
+  const fresh = await admin.call('GET', `/api/ai/watch/${watchId}/brief`);
+  assert.equal(fresh.body.cached, undefined, 'the data moved: drawn again');
+  assert.equal(seen.length, 2);
 });
 
 test('ask: the model reads with its tools and answers; the conversation goes back with the next question', async () => {
