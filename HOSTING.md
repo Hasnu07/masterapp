@@ -35,6 +35,18 @@ copies go straight to R2. Move finished 23 Oct 2026, ~16:30 PKT.
 **Logins for the services** (Cloudflare, DigitalOcean, GitHub) are Hasnain's
 own accounts — with two-factor sign-in.
 
+**Accounts (from 4 Nov 2026).** The Accounts menu is the accounts app itself
+(Purosangue Watches — Accounts, on Railway), read from `ACCOUNTS_APP_URL`
+(default `https://accountancy-app-production.up.railway.app` — nothing to set)
+and served at `/acc-app/` behind the sign-in, editors only; each person signs
+in to it once, inside the frame, with their own accounts account. Its data
+stays in its own MySQL on Railway. **The copy of its records into the ERP is
+ON by default but needs an account:** in the accounts app make one for the ERP
+(sign up, approve it under Admin → Team, set its password), then set
+`ACCOUNTS_USERNAME` and `ACCOUNTS_PASSWORD` on coral-app (encrypted, like the
+others). Until they are set the Import page says "Not configured" and nothing
+is copied. `ACCOUNTS_SYNC=off` is the switch-over for accounts.
+
 **Logistics (from 30 Oct 2026).** The Logistics menu is the logistics app
 itself, read from its Vercel address (`LOGISTICS_APP_URL`, default
 `https://purosangue-watches.vercel.app` — nothing to set) and served at

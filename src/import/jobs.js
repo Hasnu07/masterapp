@@ -5,6 +5,8 @@ import { syncVault, fetchVersion, forgetState } from './vault/sync.js';
 import { syncClients } from './chronokey/clients.js';
 import { syncExpenses } from './chronokey/expenses.js';
 import { syncLogistics, noteLogisticsUnchanged } from './logistics/sync.js';
+import { syncAccounts, noteAccountsUnchanged } from './accounts/sync.js';
+import { fetchAccountsRevs } from './accounts/client.js';
 
 /*
  * The copy from Chrono Key and the vault, run on a timer until the
@@ -51,6 +53,7 @@ export function startJob(name, user) {
     'chronokey-full': () => syncDetails({ mode: 'full', user }),
     vault: () => syncVault({ user }),
     logistics: () => syncLogistics({ user }),
+    accounts: () => syncAccounts({ user }),
     everything: async () => {
       await syncList({ user });
       await syncClients({ user });
@@ -58,6 +61,7 @@ export function startJob(name, user) {
       await syncVault({ user });
       // Its own switch: off is the logistics switch-over, whatever "everything" says.
       if (config.logistics.enabled) await syncLogistics({ user, reuse: true });
+      if (accountsOn()) await syncAccounts({ user });
     },
   };
   const fn = Object.hasOwn(jobs, name) ? jobs[name] : null;
@@ -87,6 +91,7 @@ export async function activeDetailsDue(now = Date.now()) {
 }
 
 const vaultOn = () => config.vault.configured && Boolean(config.vault.token);
+const accountsOn = () => config.accounts.enabled && config.accounts.configured;
 
 /** The light pass: what is new on Chrono Key, the vault, and the logistics app. */
 async function cycle() {
@@ -116,6 +121,17 @@ async function cycle() {
       },
     ]);
   }
+  if (accountsOn()) {
+    steps.push([
+      'accounts',
+      async () => {
+        // The versions this pass reads at: the minute check does not read the same collections again after it.
+        const revs = await fetchAccountsRevs().catch(() => null);
+        await syncAccounts();
+        if (revs) lastRevs = revs;
+      },
+    ]);
+  }
   for (const [name, fn] of steps) {
     try {
       await fn();
@@ -123,6 +139,40 @@ async function cycle() {
       console.error(`[sync] ${name}: ${err.message}`);
     }
   }
+}
+
+/*
+ * Between passes: the accounts app's version number per collection, every
+ * ACCOUNTS_POLL_SEC. Only the collections that moved are read again — a few
+ * bytes to find out, and the ledger alone when the ledger alone changed. The
+ * first read is only noted: the pass a minute after start-up reads everything.
+ */
+let lastRevs = null;
+async function checkAccountsRevs() {
+  if (current) return;
+  let revs;
+  try {
+    revs = await fetchAccountsRevs();
+  } catch (err) {
+    console.warn(`[accounts] versions not read: ${err.message}`);
+    return;
+  }
+  if (!revs || typeof revs !== 'object') return;
+  const first = lastRevs === null;
+  const changed = first ? [] : Object.keys(revs).filter((k) => revs[k] !== lastRevs[k]);
+  if (!first && !changed.length) {
+    noteAccountsUnchanged();
+    return;
+  }
+  lastRevs = revs;
+  if (first) return;
+  runJob('accounts', () => syncAccounts({ quiet: true, only: changed }))
+    .catch((err) => {
+      if (err.status !== 409) console.error(`[accounts] ${err.message}`);
+    })
+    .finally(() => {
+      if (passWaiting) tick();
+    });
 }
 
 /*
@@ -175,22 +225,27 @@ function tick() {
 
 export function startScheduler(log = console.log) {
   const logistics = config.logistics.enabled && vaultOn();
-  if (!config.sync.enabled && !logistics) {
-    log('[sync] off (SYNC=off) — masterapp is the master; nothing is copied from Chrono Key, the vault or the logistics app');
+  const accounts = accountsOn();
+  if (!config.sync.enabled && !logistics && !accounts) {
+    log('[sync] off (SYNC=off) — masterapp is the master; nothing is copied from Chrono Key, the vault, the logistics app or the accounts app');
     return;
   }
-  if (!(config.sync.enabled && (config.chronokey.configured || vaultOn())) && !logistics) {
-    log('[sync] nothing to copy from — set CHRONOKEY_USERNAME/PASSWORD and/or VAULT_TOKEN');
+  if (!(config.sync.enabled && (config.chronokey.configured || vaultOn())) && !logistics && !accounts) {
+    log('[sync] nothing to copy from — set CHRONOKEY_USERNAME/PASSWORD, VAULT_TOKEN and/or ACCOUNTS_USERNAME/PASSWORD');
     return;
   }
   const every = Math.max(5, config.sync.intervalMin) * 60_000;
   // A minute after start-up, not at once: a deploy should come up first.
   setTimeout(tick, 60_000).unref();
   setInterval(tick, every).unref();
-  const what = [config.sync.enabled && 'Chrono Key and the vault', logistics && 'the logistics app'].filter(Boolean).join(' and ');
+  const what = [config.sync.enabled && 'Chrono Key and the vault', logistics && 'the logistics app', accounts && 'the accounts app'].filter(Boolean).join(' and ');
   log(`[sync] copying from ${what} every ${every / 60_000} min`);
   if (logistics && config.logistics.pollSec > 0) {
     setInterval(checkVersion, Math.max(15, config.logistics.pollSec) * 1000).unref();
     log(`[logistics] checking the logistics app for changes every ${Math.max(15, config.logistics.pollSec)} s`);
+  }
+  if (accounts && config.accounts.pollSec > 0) {
+    setInterval(checkAccountsRevs, Math.max(15, config.accounts.pollSec) * 1000).unref();
+    log(`[accounts] checking the accounts app for changes every ${Math.max(15, config.accounts.pollSec)} s`);
   }
 }

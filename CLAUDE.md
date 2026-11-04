@@ -30,11 +30,14 @@ src/
   import/chronokey/         client (ported), page parsers, sync
   import/vault/sync.js      the Watch vault → watches
   import/logistics/sync.js  the logistics app (same worker document) → logistics_items
+  import/accounts/          the accounts app: client.js signs in as the ERP and reads /api/state; sync.js → accounts_items
+  accounts/                 what our copy says about a stock number or a client (index.js), which client of ours an accounts client is (clients.js)
   logistics/                the app's lists (kinds.js), moments and stages (situation.js), which client of ours a logistics client is (clients.js), our watch by stock number (shared.js)
   import/jobs.js            the timer, and the one-job-at-a-time lock
   web/server.js             the API
   web/lgapp.js              the logistics app itself, served inside the ERP at /lg-app/
-  web/public/               the console — no build step, served raw; lgapp-bridge.js runs inside the logistics app
+  web/accapp.js             the accounts app itself, served inside the ERP at /acc-app/
+  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline
 test/                       node:test against stand-ins and a real Postgres
 ```
 
@@ -433,6 +436,136 @@ the logistics app on our own"):
   deliveredAt is milliseconds or a date string; Kashan-plan watches drop out
   of Movement (ids without a prefix); vault notifications can revert a value.
 
+## Accounts (4 Nov 2026)
+
+Asked for: "add accountancy app to the ERP same way as how we did logistic …
+with linked stock and clients, with the watch page showing accountancy info …
+keep the sync on for the accountancy app until things get straight". The
+accounts app (Purosangue Watches — Accounts, repo
+`purosanguewatches94/Accountany-App`, live on Railway at
+`https://accountancy-app-production.up.railway.app`) is a **React build with
+its own Express + MySQL backend**: the payable/receivable ledger (every
+purchase and sale leg with its payments, by stock number and client), clients
+(`CL-001` …), documents/invoices, quick sales, expenses, wallets, currencies
+and rates, the exchange desk, schedules, employees and commission, partner
+desks — about 33 collections, each ONE JSON document in its `app_state` table,
+read whole at `GET /api/state` (or `?only=a,b`), with a version number per
+collection at `GET /api/state/revs`. It signs people in itself
+(express-session, cookie `connect.sid`, sign-up by email + admin approval) and
+stamps `_createdBy` / `_updatedBy` / `_history` on every record.
+
+- **Accounts in the ERP IS the accounts app.** `src/web/accapp.js` reads the
+  app from `ACCOUNTS_APP_URL` (default the Railway address; `off` = no
+  Accounts menu) and serves it at `/acc-app/` — editors only, its own CSP
+  (`appPolicy`: its inline theme script, Google fonts, the currency feeds it
+  reads, Google Maps for addresses, `frame-ancestors 'self'`), a copy held a
+  minute then re-asked with its ETag, the held copy served when Railway is
+  down. Because it is a React build, three things the logistics app never
+  needed: (1) its page names `/assets/…` and its 2.5 MB script calls `/api`
+  by absolute paths (the axios base, a few fetches) — both **rewritten to
+  `/acc-app/…`** as served (`rewritePage`, `rewriteScript`; the Google Maps
+  `…googleapis.com/maps/api/js` is left alone); (2) **its own sign-in stays**:
+  its API calls are passed on with the browser's `connect.sid` and its
+  `Set-Cookie` comes back for this origin (`Path=/`, no `Domain`, `Secure`
+  only in production) — so each person signs in to the accounts app ONCE,
+  inside the frame, with their own accounts account, and it keeps recording
+  who did what; the ERP's `ma_session` is never sent on; (3) its router keeps
+  the frame at the app's own routes (`/clients/CL-001`), so a GET of any such
+  address **asked for by a frame** (`Sec-Fetch-Dest: iframe`) is answered with
+  the app's page, never the console. Its uploads (`/uploads/<folder>/<file>`,
+  proof pictures and invoices on records) are served through `/acc-app/uploads/…`
+  and `/uploads/…` alike, with the cookie. A write must come from our own origin.
+  `test/accapp.test.js` against a stand-in Railway.
+- **`public/accapp-bridge.js`** goes first in its `<head>`: every stock number
+  the app shows that is OUR watch IS the link to our watch, every client name
+  that is OUR client IS the link to our client (`POST /api/acc-app/links` —
+  a name is ours when exactly one of ours carries it, else as the copied
+  ledger ties it to one); a stock number typed into an entry's "Stock no."
+  (placeholder `e.g. 1385`) or a part-exchange row fills the model and serial
+  from the ERP (`GET /api/acc-app/watch`), through React's own value setter;
+  `fetch`/XHR/`window.open` to `/api/…` and `/uploads/…` are re-routed as a
+  safety net; and the page the ERP asks for is opened (`#stock=` → the Stock
+  report searched for it, `#client=` → that client's own profile when the ERP
+  knows which (`GET /api/acc-app/client?name=`), `#path=&q=`), by
+  `pushState` + a `popstate` the app's router hears — after the app's own
+  sign-in, if that comes first. Console: `accounts.js` — one iframe in
+  `#acc-app-host`, kept while other pages show, dropped at sign-out;
+  `#/accounts/<page>/<what>` (`PAGES` in `src/accounts/index.js`).
+- **The copy is ON** (`ACCOUNTS_SYNC`, on by default; off = the switch-over
+  for accounts). `import/accounts/client.js` signs in as the ERP with
+  `ACCOUNTS_USERNAME` / `ACCOUNTS_PASSWORD` — **an account made for the ERP in
+  the app itself (Admin → Team, approved, password set)**; without them nothing
+  is copied and the Import page says so. `import/accounts/sync.js` copies every
+  collection into the same three layers — `accounts_records` (as read),
+  `accounts_items` (ours; `locked_fields`), `accounts_events`; inline base64
+  pictures once each in `accounts_files` (`acfile:<id>`); `stock_nos` and
+  `client_ids` GIN-indexed (migration 011). A list of records with an `id`
+  (or a `code`, the currencies) is one row per record; anything else (a map,
+  a list of plain values) is ONE row under the id `*`, whole. Stock numbers
+  come off `stock` (one, or "1385, 1390"), the lines of a settlement, the
+  part-exchange rows, and an expense's own "1385 | Client | Commission".
+  Deletions mirrored softly (a person's deletion stands; a collection losing
+  more than 3% and ten at once refused). Every 15 minutes the whole state;
+  between passes the versions every `ACCOUNTS_POLL_SEC` (60) and **only the
+  collections that moved** are read again. `npm run import -- accounts`.
+- **Which of OUR clients an accounts client is** (`src/accounts/clients.js`),
+  by the watches, as for logistics: every entry the app posts against a
+  client carries a stock number — a PAYABLE is a purchase (our watch's
+  `purchased_from`), a RECEIVABLE a sale (`sold_to`) — each a vote; the winner
+  needs twice the runner-up's; one watch alone only when the names look alike;
+  a full name that is exactly one of ours decides when no watch does; a
+  person's choice (`accounts_client_links`) always wins. Nothing writes to
+  that table yet (no page for it): the match is shown, with how it was made.
+- **The Accounts button — on the watch page and on every Inventory card**
+  (asked 4 Nov 2026: "see its payments, wallet, history, remaining / paid, and
+  its timeline") opens a window in the console's look (`showAccountsWindow`,
+  the Logistics window's shape) read from OUR COPY (`GET /api/acc-app/stock/:no`),
+  so it works for every role and needs no sign-in to the app: one serif line
+  on where the money stands ("Bought from X for AED 46,000, settled · Sold to
+  Y for USD 14,000, USD 4,000 still owed"); the facts — bought for / sold for
+  with paid and **remaining**, the **wallets** the money went through (the
+  app's `accounts` collection, resolved by `_walletAccId`, returned as
+  `wallets`), the invoice; the **ledger**, each leg with its **track**: to
+  pay / to receive, then every payment with its date, amount (and the amount
+  actually paid when in another currency), the wallet it came from or went
+  into, the method, the note, its proofs, and what was **left** after it, then
+  paid and remaining; **what happened**, in order (legs posted, payments,
+  invoice issued, quick sales, expenses, commission); quick sales, documents
+  (by the entry's invoice number), expenses, commission; every picture; when
+  the copy was read; "See it in the accounts app". `accStory(data)` builds all
+  of it and the Timeline reuses it. Files on a record (`attachments`, `proofs`,
+  `invoiceProof` …): "acfile:<id>" is served from our copy at
+  `/api/acc-app/file/:id` (`?thumb=1`), an app upload (`/uploads/…`) through
+  `/acc-app/uploads/…` — **with the ERP's own accounts session when the person
+  has none** (`erpSessionCookie`, viewers included), a PDF in the same viewer
+  as the logistics papers (`lgDocOpen` takes any same-origin address now).
+  The client page's **Accounts** panel (`GET /api/acc-app/our-client/:id`):
+  which of the app's clients this is and how it was matched, what stands open
+  per currency (owed to us / we owe), and "See <name> in Accounts →" (their
+  profile in the app).
+- **The Timeline button — watch page and Inventory card** (`timeline.js`,
+  asked 4 Nov 2026: "a separate timeline button that shows both accountancy
+  and logistics combined, with attached pdf"): one window, three lines on
+  where it stands (the ERP's status and dates, the logistics line, the
+  accounts line), the accounts facts, then ONE story in the order it happened
+  with a tag on every line saying whose it is — **ERP / Chrono Key** (bought,
+  sold, added, every status change and who made it, from the watch and
+  `/api/watches/:id/events`), **Logistics** (`lgStory`, split out of the
+  Logistics window: from our copy at once, the app's own answer replacing it
+  when the frame has it, editors), **Accounts** (`accStory`) — with the
+  pictures and papers on each line (customs papers, invoices, proofs; a PDF
+  opens in the viewer), all papers and all pictures again at the foot, and
+  **Save as PDF** (the browser's print of the window alone: `@media print`
+  hides everything else). Within a day the order is each app's own stage
+  order, the ERP's fact first.
+- **Not done / to decide:** a page to set a person's client link (the table
+  exists); copying the app's `/uploads/` files (they are served live through
+  the proxy; the switch-over needs them copied); the app's own client picker
+  cannot be fed our names (a React SearchSelect over its state); the console
+  shows the app dark (its own theme). Found in the app, for its owner: a
+  break-glass `admin` login exists in its code (disabled unless a strong
+  `ADMIN_PASS` is set); `/api/deploy-log` is public.
+
 ## Chrono Key's product list — read it right
 
 Checked against the real export (`ProductList_3.csv`, 1,664 rows, 22 Oct 2026):
@@ -645,7 +778,7 @@ cp .env.example .env      # fill in
 npm start                 # migrates, creates the first admin, serves on :3000
 npm test                  # EMPTIES the test database first
 npm run import -- csv ProductList.csv
-npm run import -- list | details [new|active|full] [limit] | vault | all
+npm run import -- list | details [new|active|full] [limit] | vault | logistics | accounts | all
 npm run import -- tidy-photos     # hide repeats among photos already copied
 npm run user -- add someone@example.com editor 'a-long-password' Name
 ```

@@ -15,6 +15,10 @@ import * as lgShared from '../logistics/shared.js';
 import { workerFile, fileById } from '../import/logistics/sync.js';
 import { passport } from '../logistics/passport.js';
 import { mountLogisticsApp, workerOrigin } from './lgapp.js';
+import { mountAccountsApp } from './accapp.js';
+import * as accounts from '../accounts/index.js';
+import { fileById as accFileById } from '../import/accounts/sync.js';
+import * as accClients from '../accounts/clients.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -61,7 +65,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js'];
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'accounts.js', 'timeline.js', 'fxchip.js'];
 // Each page's own stylesheet, versioned with the scripts.
 const CONSOLE_STYLES = [];
 function consolePage() {
@@ -172,9 +176,9 @@ export function createServer() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  // The logistics app's own calls (/lg-app/api/…) are passed on whole, as they came — not read here.
+  // The logistics and accounts apps' own calls (/lg-app/api/…, /acc-app/api/…) are passed on whole, as they came — not read here.
   const json = express.json({ limit: '1mb' });
-  app.use((req, res, next) => (req.path.startsWith('/lg-app/') ? next() : json(req, res, next)));
+  app.use((req, res, next) => (req.path.startsWith('/lg-app/') || req.path.startsWith('/acc-app/') ? next() : json(req, res, next)));
 
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
@@ -214,8 +218,9 @@ export function createServer() {
     next();
   };
 
-  /* The logistics app itself, at /lg-app/ (lgapp.js). */
+  /* The logistics app itself, at /lg-app/ (lgapp.js), and the accounts app at /acc-app/ (accapp.js). */
   mountLogisticsApp(app, need);
+  mountAccountsApp(app, need);
 
   /* ── sign-in ─────────────────────────────────────────────────── */
 
@@ -269,6 +274,7 @@ export function createServer() {
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
       logistics: logistics.catalog(),
+      accounts: accounts.catalog(),
       chronokeyUrl: config.chronokey.url, // the Inventory card links a watch to its Chrono Key page
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
@@ -276,6 +282,7 @@ export function createServer() {
         chronokey: config.chronokey.configured,
         vault: config.vault.configured && Boolean(config.vault.token),
         logistics: config.logistics.enabled && config.vault.configured && Boolean(config.vault.token),
+        accounts: config.accounts.enabled && config.accounts.configured,
       },
     });
   });
@@ -655,6 +662,63 @@ export function createServer() {
     })
   );
 
+  /* ── accounts: the app itself is served at /acc-app/ (accapp.js); here what its bridge and our pages ask ── */
+
+  /*
+   * The ERP's bridge inside the accounts app (accapp-bridge.js) asks which of
+   * the stock numbers and client names the app shows are ours: a stock number
+   * is our watch of that number; a name is our client when exactly one of ours
+   * carries it, else as the copied ledger ties it to one (accounts/clients.js).
+   */
+  app.post(
+    '/api/acc-app/links',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const list = (v, max) => (Array.isArray(v) ? v : []).slice(0, max).map((x) => String(x ?? '').trim()).filter(Boolean);
+      const names = list(req.body?.clients, 2000);
+      const [ours, exact, voted] = await Promise.all([lgShared.oursByNumber(list(req.body?.stock, 5000)), accClients.oursByExactName(names), accClients.linksByName(names)]);
+      const people = new Map([...voted].filter(([, l]) => l.client_id));
+      for (const [name, l] of exact) people.set(name, l);
+      res.json({
+        watches: Object.fromEntries([...ours].map(([no, w]) => [no, { id: w.id, title: w.title, status: w.status }])),
+        clients: Object.fromEntries([...people].map(([name, l]) => [name, { id: l.client_id, name: l.client_name }])),
+      });
+    })
+  );
+  /* One watch of ours by its stock number, for the app's forms. */
+  app.get(
+    '/api/acc-app/watch',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const no = String(req.query.no || '').trim();
+      const w = no ? (await lgShared.oursByNumber([no])).get(no) : null;
+      if (!w) return res.status(404).json({ error: 'No watch of ours has that stock number' });
+      res.json({ watch: { id: w.id, stock_no: w.stock_no, title: w.title, brand: w.brand, model: w.model, reference: w.reference, serial: w.serial, watch_date: w.watch_date, status: w.status, bought_from: w.bought_from, sold_to: w.sold_to } });
+    })
+  );
+  /* Every client of ours by name. */
+  app.get('/api/acc-app/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await accClients.ourClientNames() })));
+  /* The accounts app's own client for a name, when exactly one carries it — so a link of ours opens its profile there. */
+  app.get(
+    '/api/acc-app/client',
+    need('viewer'),
+    wrap(async (req, res) => res.json({ acc_client_id: await accClients.accountsClientIdFor(String(req.query.name || '')) }))
+  );
+  /* A picture or paper the pass copied out of an accounts record ("acfile:<id>"): an invoice, a proof. */
+  app.get(
+    '/api/acc-app/file/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await accFileById(req.params.id, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      sendLgFile(req, res, f);
+    })
+  );
+  /* What our copy of the accounts app holds on one stock number: the watch page's Accounts window. */
+  app.get('/api/acc-app/stock/:no', need('viewer'), wrap(async (req, res) => res.json(await accounts.forStock(String(req.params.no || '').trim().slice(0, 20)))));
+  /* What it says about one of OUR clients: the client page's panel. */
+  app.get('/api/acc-app/our-client/:id', need('viewer'), wrap(async (req, res) => res.json(await accounts.forOurClient(Number(req.params.id) || 0))));
+
   /* ── import ──────────────────────────────────────────────────── */
 
   app.get(
@@ -673,6 +737,8 @@ export function createServer() {
                  (SELECT count(*)::int FROM ck_records WHERE error IS NOT NULL) AS ck_errors,
                  (SELECT count(*)::int FROM vault_records) AS vault_records,
                  (SELECT count(*)::int FROM logistics_items WHERE deleted_at IS NULL) AS logistics_items,
+                 (SELECT count(*)::int FROM accounts_items WHERE deleted_at IS NULL) AS accounts_items,
+                 (SELECT count(*)::int FROM accounts_items WHERE deleted_at IS NULL AND kind = 'entries') AS accounts_entries,
                  (SELECT count(*)::int FROM watch_photos WHERE deleted_at IS NULL) AS photos,
                  (SELECT count(*)::int FROM watches WHERE deleted_at IS NULL AND purchase_price > 0
                      AND purchase_currency = '') AS currency_not_stated`),
@@ -686,6 +752,8 @@ export function createServer() {
           vault: config.vault.configured && Boolean(config.vault.token),
           sync: config.sync.enabled,
           logistics: config.logistics.enabled,
+          accounts: config.accounts.enabled,
+          accounts_app: config.accounts.configured,
         },
       });
     })
@@ -697,7 +765,10 @@ export function createServer() {
    * `npm run import`, still can — deliberately.)
    */
   const syncOn = (req, res, next) => {
-    // The logistics app has its own switch (LOGISTICS_SYNC): its switch-over need not be Chrono Key's.
+    // The logistics and accounts apps have their own switches (LOGISTICS_SYNC, ACCOUNTS_SYNC): their switch-over need not be Chrono Key's.
+    if (req.body?.job === 'accounts') {
+      return config.accounts.enabled ? next() : res.status(409).json({ error: 'Accounts sync is off (ACCOUNTS_SYNC=off): masterapp is the master for accounts' });
+    }
     if (req.body?.job === 'logistics') {
       return config.logistics.enabled
         ? next()
@@ -733,6 +804,9 @@ export function createServer() {
       }
       if ((job === 'vault' || job === 'logistics') && !(config.vault.configured && config.vault.token)) {
         return res.status(400).json({ error: 'The Watch vault needs its key — set VAULT_TOKEN' });
+      }
+      if (job === 'accounts' && !config.accounts.configured) {
+        return res.status(400).json({ error: 'The accounts app needs an account for the ERP — set ACCOUNTS_USERNAME and ACCOUNTS_PASSWORD' });
       }
       startJob(job, req.user);
       res.status(202).json({ started: job });

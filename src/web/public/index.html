@@ -111,8 +111,9 @@ header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255
 /* The console fills the screen (asked 27 Oct 2026: "wide screen the whole app instead of aligned at middle"). */
 main { width: 100%; padding: 18px 20px 60px; }
 /* The logistics app itself, inside the ERP (asked 30 Oct 2026): one frame filling the screen under the bar; its height is set by lgAppFit(). */
-#lg-app-host { width: 100%; background: #f4f3fb; }
-#lg-app-host iframe { display: block; width: 100%; height: 100%; border: 0; }
+#lg-app-host, #acc-app-host { width: 100%; background: #f4f3fb; }
+#acc-app-host { background: #0c0b09; }
+#lg-app-host iframe, #acc-app-host iframe { display: block; width: 100%; height: 100%; border: 0; }
 /* The watch's logistics as a window in the console's look (showLogisticsWindow): one line on where it is, then its story. */
 .lgw { width: min(920px, 94vw); max-height: 92vh; padding: 0; border: 0; border-radius: 14px; background: var(--card); color: var(--ink);
   box-shadow: 0 24px 64px rgba(0,0,0,.35); overflow: hidden; }
@@ -158,6 +159,33 @@ main { width: 100%; padding: 18px 20px 60px; }
   .lgdoc-head { flex-wrap: wrap; }
 }
 /* A shipment's papers — customs documents, invoices — by name, each opening on its own. */
+/* The Accounts window's track of a leg: posted, each payment with its wallet and what was left, the remainder (showAccountsWindow). */
+.acc-track { margin-top: 8px; border-top: 1px dashed var(--line); }
+.acc-track > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.acc-track > div:last-child { border-bottom: 0; }
+.acc-track .acc-pay > span:first-child { min-width: 0; }
+.acc-track .acc-left { white-space: nowrap; color: var(--muted); }
+.acc-track .lgw-total { font-weight: 600; }
+/* The watch's Timeline (timeline.js): the three apps' lines on where it stands, then one story with a tag per line saying whose it is. */
+.tl-nows { display: grid; gap: 6px; margin: 12px 0 10px; }
+.tl-now { font: 500 17px/1.35 var(--serif); }
+.tl-now.sold { color: var(--gold); } .tl-now.moving { color: var(--blue); } .tl-now.warn { color: var(--warn); } .tl-now.here { color: var(--good); }
+.tl-src { display: inline-block; font: 600 10.5px/1 var(--sans); letter-spacing: .8px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px 2px; margin-right: 8px; vertical-align: 2px; }
+.tl-src.tl-logistics { color: var(--blue); border-color: currentColor; }
+.tl-src.tl-accounts { color: var(--gold); border-color: currentColor; }
+.tl-src.tl-chronokey, .tl-src.tl-erp { color: var(--ink); }
+.tl-printed { display: none; }
+@media print {
+  body > *:not(#tl-win) { display: none !important; }
+  #tl-win, #tl-win[open] { position: static; display: block; width: auto; max-width: none; max-height: none; height: auto; border: 0; box-shadow: none; border-radius: 0; color: #000; background: #fff; }
+  #tl-win .lgw-body { overflow: visible; padding: 0; }
+  #tl-win .lgw-head { padding: 0 0 10px; }
+  .tl-noprint { display: none !important; }
+  .tl-printed { display: block; margin-top: 18px; font-size: 12px; color: #666; }
+  .lgw-tl li { break-inside: avoid; }
+  .lgw-pic { width: 64px; height: 64px; }
+  a { color: inherit; text-decoration: none; }
+}
 .lgw-docs { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 13px; }
 .lgw-docs a { color: var(--gold); overflow-wrap: anywhere; }
 .lgw-pic.gone img { display: none; }
@@ -470,6 +498,8 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
   <symbol id="i-inventory" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></symbol>
   <symbol id="i-clients" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></symbol>
   <symbol id="i-expenses" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></symbol>
+  <symbol id="i-accounts" viewBox="0 0 24 24"><path d="M5 3h14v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h4"/></symbol>
+  <symbol id="i-timeline" viewBox="0 0 24 24"><path d="M12 3v18"/><circle cx="12" cy="7" r="2"/><circle cx="12" cy="17" r="2"/><path d="M14 7h6M4 17h6"/></symbol>
   <symbol id="i-logistics" viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
   <symbol id="i-new" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></symbol>
   <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></symbol>
@@ -503,6 +533,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
       <a href="#/clients" data-nav="clients" title="Clients"><svg class="i"><use href="#i-clients"/></svg><span class="lbl">Clients</span></a>
       <a href="#/expenses" data-nav="expenses" title="Expenses"><svg class="i"><use href="#i-expenses"/></svg><span class="lbl">Expenses</span></a>
       <a href="#/logistics" data-nav="logistics" title="Logistics"><svg class="i"><use href="#i-logistics"/></svg><span class="lbl">Logistics</span></a>
+      <a href="#/accounts" data-nav="accounts" title="Accounts"><svg class="i"><use href="#i-accounts"/></svg><span class="lbl">Accounts</span></a>
       <a href="#/new" data-nav="new" data-role="editor" title="New watch"><svg class="i"><use href="#i-new"/></svg><span class="lbl">New watch</span></a>
       <a href="#/import" data-nav="import" title="Import"><svg class="i"><use href="#i-import"/></svg><span class="lbl">Import</span></a>
       <a href="#/users" data-nav="users" data-role="admin" title="Users"><svg class="i"><use href="#i-users"/></svg><span class="lbl">Users</span></a>
@@ -521,11 +552,14 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
     </header>
     <main id="app"></main>
     <div id="lg-app-host" class="hide"></div>
+    <div id="acc-app-host" class="hide"></div>
   </div>
 </div>
 <div class="scrim hide" id="scrim"></div>
 <script src="/app.js"></script>
 <script src="/logistics.js"></script>
+<script src="/accounts.js"></script>
+<script src="/timeline.js"></script>
 <script src="/fxchip.js"></script>
 </body>
 </html>

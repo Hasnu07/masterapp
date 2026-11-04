@@ -150,8 +150,9 @@ function route() {
   const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
   $$('#nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   crumb(section, page, id);
-  // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
+  // The logistics and accounts apps' frames stay loaded while another page shows (hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
+  if (typeof accAppHide === 'function') accAppHide();
   menu(false);
   window.scrollTo(0, 0);
   // The Inventory opens on what is in stock (asked 3 Nov 2026); its parts are #/stock/<status>, #/stock/all for everything.
@@ -168,6 +169,7 @@ function route() {
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
   if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'logistics') return showLogistics(id, more);
+  if (page === 'accounts') return showAccounts(id, more);
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -176,14 +178,14 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
-const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', new: 'New watch', import: 'Import', users: 'Users' };
+const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', new: 'New watch', import: 'Import', users: 'Users' };
 const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
 function crumb(section, page, id) {
   const name = SECTION_NAMES[section] || 'Purosangue';
   const leaf =
     { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] ||
     (page === 'stock' || !page ? STOCK_NAMES[id || 'in_stock'] || id : '') ||
-    (section === 'logistics' && id ? id : '');
+    ((section === 'logistics' || section === 'accounts') && id ? id : '');
   $('#crumb-title').textContent = name;
   $('#crumb-path').textContent = `Home · ${name}${leaf ? ` · ${leaf}` : ''}`;
 }
@@ -251,6 +253,7 @@ function showLogin() {
   document.body.classList.add('out');
   // The logistics app's frame goes with the session: its page holds the key to its records.
   if (typeof lgAppDrop === 'function') lgAppDrop();
+  if (typeof accAppDrop === 'function') accAppDrop();
   $('#app').innerHTML = `
     <div class="login panel">
       <h1>Purosangue ERP</h1>
@@ -476,6 +479,19 @@ async function loadList(more = false) {
       if (w && typeof showLogisticsWindow === 'function') showLogisticsWindow(w.stock_no, w.title);
     })
   );
+  // Its Accounts window, and its Timeline, from the list too.
+  $$('#grid [data-acc]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.acc));
+      if (w && typeof showAccountsWindow === 'function') showAccountsWindow(w.stock_no, w.title);
+    })
+  );
+  $$('#grid [data-tl]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.tl));
+      if (w && typeof showTimelineWindow === 'function') showTimelineWindow(w);
+    })
+  );
   $('#more').classList.toggle('hide', shown.length >= r.total);
 }
 
@@ -509,6 +525,8 @@ function tile(w) {
   const ckUrl = w.ck_id && state.meta?.chronokeyUrl ? `${state.meta.chronokeyUrl}/Stock/InstockDetailPage/${encodeURIComponent(w.ck_id)}` : '';
   const editor = can('editor') && !w.deleted_at;
   const lg = editor && w.stock_no && typeof lgAppOn === 'function' && lgAppOn();
+  const acc = w.stock_no && typeof accAppOn === 'function' && accAppOn();
+  const tl = w.stock_no && typeof tlOn === 'function' && tlOn();
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
   return `<article class="tile st-${esc(status)}" data-id="${w.id}" title="${esc(w.title)}">
     <div class="pic">${
@@ -536,6 +554,8 @@ function tile(w) {
       ${moveButtons(w, 'move')}
       ${editor ? `<a href="#/watch/${w.id}/edit" title="Edit this watch">${icon('edit')}Edit</a>` : ''}
       ${lg ? `<button type="button" data-lg="${w.id}" title="Where it is and what happened to it, from the logistics app">${icon('logistics')}Logistics</button>` : ''}
+      ${acc ? `<button type="button" data-acc="${w.id}" title="What was paid and received on it, through which wallets, from the accounts app">${icon('accounts')}Accounts</button>` : ''}
+      ${tl ? `<button type="button" data-tl="${w.id}" title="Its whole story in order — the ERP, the logistics and the accounts — with the papers">${icon('timeline')}Timeline</button>` : ''}
       ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="This watch on Chrono Key">${icon('link')}Chrono Key</a>` : ''}
       <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
     </div>
@@ -799,6 +819,8 @@ function renderWatch() {
           <div class="row actions">
             ${current.editing ? '' : moveButtons(w, 'btn gold')}
             ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
+            ${w.stock_no && typeof accAppOn === 'function' && accAppOn() ? '<button class="btn" id="acc-open">Accounts</button>' : ''}
+            ${w.stock_no && typeof tlOn === 'function' && tlOn() ? '<button class="btn" id="tl-open">Timeline</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
             ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
           </div>
@@ -822,6 +844,10 @@ function renderWatch() {
   renderDetails(groups);
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
+  // And whatever our copy of the accounts app has on it — the ledger, its payments — the same way.
+  $('#acc-open')?.addEventListener('click', () => showAccountsWindow(w.stock_no, w.display_title));
+  // Everything together, in order — the ERP's own history, the logistics, the accounts — with the papers (timeline.js).
+  $('#tl-open')?.addEventListener('click', () => showTimelineWindow(w));
   $$('.actions [data-move]').forEach((b) => b.addEventListener('click', () => openMove(w.id, b.dataset.move, () => showWatch(w.id))));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {
@@ -1395,6 +1421,7 @@ function renderClient(c, editing) {
             ? `<div class="panel"><h3>Logistics</h3><p class="count" style="margin:0"><a href="${lgAppLink('contacts', c.name)}">See ${esc(c.name)} in Logistics →</a></p></div>`
             : ''
         }
+        ${typeof accAppOn === 'function' && accAppOn() ? '<div class="panel" id="cacc"><h3>Accounts</h3><p class="count" style="margin:0">Reading the accounts…</p></div>' : ''}
         ${
           editing
             ? `<form class="panel" id="cform"><h3>Client</h3><div class="form-grid">${F.map((f) =>
@@ -1420,6 +1447,7 @@ function renderClient(c, editing) {
     const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
     $$('.cw-row').forEach((a) => (a.hidden = !words.every((w) => a.dataset.text.includes(w))));
   });
+  if ($('#cacc')) renderClientAccounts(c);
   $('#cedit')?.addEventListener('click', () => renderClient(c, true));
   $('#ccancel')?.addEventListener('click', () => renderClient(c, false));
   $('#cform')?.addEventListener('submit', async (e) => {
@@ -1437,6 +1465,33 @@ function renderClient(c, editing) {
       flash(err.message, true);
     }
   });
+}
+
+/*
+ * What the accounts app says about this client (from our copy): which of its
+ * clients this is, what stands open with them per currency — owed to us, owed
+ * by us — and the way into the app itself, on their profile.
+ */
+async function renderClientAccounts(c) {
+  const box = $('#cacc');
+  if (!box) return;
+  let a;
+  try {
+    a = await api(`/api/acc-app/our-client/${c.id}`);
+  } catch (err) {
+    box.innerHTML = `<h3>Accounts</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (!$('#cacc')) return;
+  const amount = (n, cur) => `${esc(cur)} ${Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const lines = Object.entries(a.balances || {}).map(
+    ([cur, b]) => `<div><span>${b.owed_to_us ? `Owed to us <b>${amount(b.owed_to_us, cur)}</b>` : ''}${b.owed_to_us && b.we_owe ? ' · ' : ''}${b.we_owe ? `We owe <b>${amount(b.we_owe, cur)}</b>` : ''}</span></div>`
+  );
+  const named = a.links.map((l) => `${esc(l.name)} <span class="count" style="margin:0">(${esc(l.acc_client_id)}${l.how === 'person' ? ', set here' : l.how === 'name' ? ', by name' : ', by the watches'})</span>`);
+  box.innerHTML = `<h3>Accounts</h3>
+    ${named.length ? `<p style="margin:0 0 6px">In the accounts app as ${named.join(', ')} · ${a.entries} ledger entr${a.entries === 1 ? 'y' : 'ies'}${a.last_at ? `, last ${esc(fmtDate(String(a.last_at).slice(0, 10)))}` : ''}</p>` : '<p class="count" style="margin:0 0 6px">Not matched to a client of the accounts app yet.</p>'}
+    ${lines.length ? `<div class="lgw-costs" style="margin:0 0 8px">${lines.join('')}</div>` : named.length ? '<p class="count" style="margin:0 0 6px">Nothing outstanding.</p>' : ''}
+    <p class="count" style="margin:0"><a href="${accAppLink('clients', a.links[0]?.name || c.name)}">See ${esc(a.links[0]?.name || c.name)} in Accounts →</a></p>`;
 }
 
 function showNewClient() {
@@ -1890,6 +1945,9 @@ async function showImport() {
       'chronokey/details-full': 'Watch pages & photos — everything',
       'chronokey/details-rolling': 'Watch pages & photos — the longest unread',
       'vault/full': 'Watch vault',
+      'logistics/full': 'Logistics app',
+      'accounts/full': 'Accounts app',
+      'accounts/changed': 'Accounts app — what changed',
     })[`${r.source}/${r.mode}`] || `${r.source} ${r.mode}`;
   const statsLine = (st) =>
     Object.entries(st || {})
@@ -1940,6 +1998,7 @@ async function showImport() {
           <div><b>${c.ck_details}</b><span>watch pages read (photos, € figures)</span></div>
           <div><b>${c.vault_records}</b><span>Watch vault records</span></div>
           <div><b>${c.photos}</b><span>photos stored</span></div>
+          ${c.accounts_items ? `<div><b>${c.accounts_entries}</b><span>accounts app ledger entries (${c.accounts_items} records)</span></div>` : ''}
           <div><b>${c.currency_not_stated}</b><span>purchases with no currency stated</span></div>
         </div>
         ${c.ck_errors ? `<p class="note" style="margin-top:12px">${c.ck_errors} Chrono Key page${c.ck_errors === 1 ? '' : 's'} could not be read — see the runs below.</p>` : ''}
@@ -1974,6 +2033,20 @@ async function showImport() {
         ${s.configured.vault ? '' : '<p class="note">Not configured — set VAULT_TOKEN (the worker’s WORKER_TOKEN) on the server.</p>'}
         <p class="sub">Brings in B2B, B2C and Chrono24 prices, the vault's photos, and watches only the vault holds.</p>
         <button class="btn gold" data-job="vault">Import the Watch vault</button>
+      </div>`
+          : ''
+      }
+      ${
+        admin
+          ? `<div class="panel">
+        <h2>4 · The accounts app</h2>
+        ${
+          !s.configured.accounts
+            ? '<p class="note info" style="margin:0">Accounts sync is off (ACCOUNTS_SYNC=off): masterapp is the master for accounts.</p>'
+            : !s.configured.accounts_app
+            ? '<p class="note">Not configured — make an account for the ERP in the accounts app (approved there) and set ACCOUNTS_USERNAME and ACCOUNTS_PASSWORD on the server.</p>'
+            : '<p class="sub">Every collection of the accounts app — the ledger with its payments, clients, invoices, quick sales, expenses, wallets, rates, partner desks — copied here, every 15 minutes and within a minute of a change. The app stays the master until the switch-over.</p><button class="btn gold" data-job="accounts">Read the accounts app now</button>'
+        }
       </div>`
           : ''
       }
