@@ -60,15 +60,17 @@ async function showTimelineWindow(watch) {
   tlBind(d);
   const no = tlWin.no;
   const quiet = (p) => p.catch(() => null);
-  const [w, ev, lg, acc] = await Promise.all([
+  const [w, ev, docs, lg, acc] = await Promise.all([
     quiet(api(`/api/watches/${watch.id}`)),
     quiet(api(`/api/watches/${watch.id}/events`)),
+    quiet(api(`/api/watches/${watch.id}/documents`)),
     no && typeof lgAppOn === 'function' && lgAppOn() ? quiet(api(`/api/lg-app/passport?no=${encodeURIComponent(no)}`)) : null,
     no && typeof accAppOn === 'function' && accAppOn() ? quiet(api(`/api/acc-app/stock/${encodeURIComponent(no)}`)) : null,
   ]);
   if (tlWin.id !== watch.id) return;
   tlWin.w = w || watch;
   tlWin.events = ev?.events || [];
+  tlWin.docs = docs?.documents || [];
   tlWin.lg = lg && !lg.empty ? lg : null;
   tlWin.acc = acc;
   tlRender(d);
@@ -95,7 +97,7 @@ function tlBind(d) {
 }
 
 /* What the ERP itself knows: the deal's two dates, and the history — every status change, by whom. */
-function tlErpEvents(w, events) {
+function tlErpEvents(w, events, docs = []) {
   const ev = [];
   const src = w.origin === 'chronokey' ? 'chronokey' : 'erp';
   const add = (t, title, detail = '', tone = '', stage = 50, from = src) => ev.push({ t, title, detail, tone, pics: [], docs: [], src: from, stage });
@@ -112,6 +114,15 @@ function tlErpEvents(w, events) {
     const st = e.changes?.status;
     if (Array.isArray(st) && st[1]) add(t, `Status ${statusLabel(st[0] || 'other')} → ${statusLabel(st[1])}`, `by ${by(e)}`, st[1] === 'sold' ? 'sold' : st[1] === 'in_stock' ? 'here' : 'moving', 50, e.source === 'chronokey' || e.source === 'vault' ? 'chronokey' : 'erp');
   }
+  // The watch's own papers, as they were added.
+  const KIND = { invoice: 'Invoice', papers: 'Papers', customs: 'Customs form', receipt: 'Receipt', other: 'Document' };
+  for (const d of docs) {
+    ev.push({
+      t: Date.parse(d.created_at), title: `${KIND[d.kind] || 'Document'} added — ${d.name || ''}`.trim(), detail: d.user_name ? `by ${d.user_name}` : '', tone: '', src: 'erp', stage: 50,
+      pics: d.has_thumb ? [{ thumb: `/api/watch-documents/${d.id}?thumb=1`, full: `/api/watch-documents/${d.id}`, label: KIND[d.kind] || '' }] : [],
+      docs: d.has_thumb ? [] : [{ url: `/api/watch-documents/${d.id}`, name: d.name || 'document.pdf', type: d.content_type }],
+    });
+  }
   return ev;
 }
 
@@ -124,7 +135,7 @@ function tlRender(d) {
   const w = tlWin.w;
   const lg = tlWin.lg && typeof lgStory === 'function' ? lgStory(tlWin.lg) : null;
   const acc = tlWin.acc && typeof accStory === 'function' ? accStory(tlWin.acc) : null;
-  const erp = tlErpEvents(w, tlWin.events);
+  const erp = tlErpEvents(w, tlWin.events, tlWin.docs || []);
   // One list, in the order it happened: by day; within a day in the order a deal moves (each app's own stage), the ERP's fact first.
   const all = [
     ...erp.map((e, i) => ({ ...e, seq: i })),

@@ -146,6 +146,8 @@ export const config = {
     enabled: bool(process.env.ACCOUNTS_SYNC, true),
     pollSec: Number(process.env.ACCOUNTS_POLL_SEC ?? 60),
     timeoutMs: Number(process.env.ACCOUNTS_TIMEOUT_MS || 60_000),
+    // The app's own uploads (proofs, invoices) copied here this many a pass, for the switch-over.
+    filesPerPass: Number(process.env.ACCOUNTS_FILES_PER_PASS || 200),
     get configured() {
       return Boolean(this.appUrl && this.username && this.password);
     },

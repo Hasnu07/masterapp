@@ -836,6 +836,7 @@ function renderWatch() {
       <form class="panel" id="details"></form>
       <div class="stack">
         <div class="panel" id="wclients"></div>
+        <div class="panel" id="papers"></div>
         <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
       </div>
@@ -843,6 +844,7 @@ function renderWatch() {
 
   renderGallery();
   renderWatchClients();
+  renderPapers();
   renderDetails(groups);
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
@@ -1489,11 +1491,64 @@ async function renderClientAccounts(c) {
   const lines = Object.entries(a.balances || {}).map(
     ([cur, b]) => `<div><span>${b.owed_to_us ? `Owed to us <b>${amount(b.owed_to_us, cur)}</b>` : ''}${b.owed_to_us && b.we_owe ? ' · ' : ''}${b.we_owe ? `We owe <b>${amount(b.we_owe, cur)}</b>` : ''}</span></div>`
   );
-  const named = a.links.map((l) => `${esc(l.name)} <span class="count" style="margin:0">(${esc(l.acc_client_id)}${l.how === 'person' ? ', set here' : l.how === 'name' ? ', by name' : ', by the watches'})</span>`);
+  const editor = can('editor');
+  // Each accounts client this is: how it was decided, and — for an editor — a way to confirm it, deny it, or undo a decision.
+  const named = a.links.map(
+    (l) => `<span class="acl" data-acc="${esc(l.acc_client_id)}">${esc(l.name)} <span class="count" style="margin:0">(${esc(l.acc_client_id)}${l.how === 'person' ? ', set here' : l.how === 'name' ? ', by name' : ', by the watches'})</span>${
+      editor ? (l.how === 'person' ? ' <button type="button" class="btn small" data-acl-undo>Undo</button>' : ' <button type="button" class="btn small" data-acl-yes>Confirm</button> <button type="button" class="btn small" data-acl-no>Not them</button>') : ''
+    }</span>`
+  );
   box.innerHTML = `<h3>Accounts</h3>
     ${named.length ? `<p style="margin:0 0 6px">In the accounts app as ${named.join(', ')} · ${a.entries} ledger entr${a.entries === 1 ? 'y' : 'ies'}${a.last_at ? `, last ${esc(fmtDate(String(a.last_at).slice(0, 10)))}` : ''}</p>` : '<p class="count" style="margin:0 0 6px">Not matched to a client of the accounts app yet.</p>'}
     ${lines.length ? `<div class="lgw-costs" style="margin:0 0 8px">${lines.join('')}</div>` : named.length ? '<p class="count" style="margin:0 0 6px">Nothing outstanding.</p>' : ''}
+    ${editor ? `<p style="margin:0 0 6px"><button type="button" class="btn small" id="acl-pick">${named.length ? 'Link another accounts client' : 'Link an accounts client'}</button></p>
+      <div class="wc-pick hide" id="acl-picker"><input type="search" placeholder="Search the accounts app’s clients — name, company, CL-…"><div class="wc-hits"></div></div>` : ''}
     <p class="count" style="margin:0"><a href="${accAppLink('clients', a.links[0]?.name || c.name)}">See ${esc(a.links[0]?.name || c.name)} in Accounts →</a></p>`;
+  if (!editor) return;
+  const decide = async (method, url, body) => {
+    try {
+      await api(url, { method, body });
+      renderClientAccounts(c);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $$('.acl', box).forEach((el) => {
+    const acc = el.dataset.acc;
+    $('[data-acl-yes]', el)?.addEventListener('click', () => decide('PUT', '/api/acc-app/client-link', { acc_client_id: acc, client_id: c.id }));
+    $('[data-acl-no]', el)?.addEventListener('click', () => decide('PUT', '/api/acc-app/client-link', { acc_client_id: acc, client_id: null }));
+    $('[data-acl-undo]', el)?.addEventListener('click', () => decide('DELETE', `/api/acc-app/client-link/${encodeURIComponent(acc)}`));
+  });
+  const pick = $('#acl-picker');
+  const input = $('input', pick);
+  let timer;
+  const search = async () => {
+    const r = await api(`/api/acc-app/app-clients?${new URLSearchParams({ q: input.value, limit: 10 })}`).catch(() => ({ clients: [] }));
+    $('.wc-hits', pick).innerHTML =
+      r.clients
+        .map(
+          (x) => `<button type="button" class="wc-hit" data-acc="${esc(x.acc_client_id)}"><b>${esc(x.name)}</b> <span class="count" style="margin:0">${esc(
+            [x.acc_client_id, x.company, x.client_id ? `now ${x.client_id === c.id ? 'this client' : x.client_name}` : 'not linked'].filter(Boolean).join(' · ')
+          )}</span></button>`
+        )
+        .join('') || '<p class="count" style="margin:6px 0 0">No accounts client matches.</p>';
+  };
+  $('#acl-pick').addEventListener('click', () => {
+    pick.classList.toggle('hide');
+    if (!pick.classList.contains('hide')) {
+      input.value = c.name;
+      input.focus();
+      search();
+    }
+  });
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(search, 200);
+  });
+  pick.addEventListener('click', (e) => {
+    const b = e.target.closest('.wc-hit');
+    if (b) decide('PUT', '/api/acc-app/client-link', { acc_client_id: b.dataset.acc, client_id: c.id });
+  });
 }
 
 function showNewClient() {
@@ -1521,6 +1576,86 @@ function showNewClient() {
       flash(err.message, true);
     }
   });
+}
+
+/*
+ * A watch's documents (4 Nov 2026): the invoice, the papers, a customs form,
+ * a receipt — PDFs or pictures, dropped on the panel or chosen, each with
+ * what it is; a PDF opens in the viewer. Removing one is soft and in the
+ * history.
+ */
+const PAPER_KINDS = { invoice: 'Invoice', papers: 'Papers', customs: 'Customs', receipt: 'Receipt', other: 'Other' };
+async function renderPapers() {
+  const { w } = current;
+  const box = $('#papers');
+  if (!box) return;
+  let r;
+  try {
+    r = await api(`/api/watches/${w.id}/documents`);
+  } catch (err) {
+    box.innerHTML = `<h3>Papers</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (current?.w.id !== w.id || !$('#papers')) return;
+  const editor = can('editor') && !w.deleted_at;
+  const tile = (d) => `<div class="xfile">
+      <a href="/api/watch-documents/${d.id}" target="_blank" rel="noopener" ${d.content_type === 'application/pdf' ? `data-pdf="/api/watch-documents/${d.id}" data-name="${esc(d.name || 'document.pdf')}"` : ''}>${
+        d.has_thumb ? `<img src="/api/watch-documents/${d.id}?thumb=1" alt="">` : '<span class="xpdf">PDF</span>'
+      }<span class="xname">${d.kind ? `<b>${esc(PAPER_KINDS[d.kind] || d.kind)}</b> · ` : ''}${esc(d.name || 'Document')}</span>
+      <span class="count" style="margin:0">${esc(fmtDate(String(d.created_at).slice(0, 10)))}${d.user_name ? ` · ${esc(d.user_name)}` : ''}</span></a>
+      ${editor ? `<button type="button" class="btn small danger" data-rmdoc="${d.id}">Remove</button>` : ''}
+    </div>`;
+  box.innerHTML = `<h3>Papers${r.documents.length ? ` · ${r.documents.length}` : ''}</h3>
+    ${r.documents.length ? `<div class="xfiles">${r.documents.map(tile).join('')}</div>` : `<p class="count" style="margin:0">${editor ? 'No documents yet.' : 'No documents.'}</p>`}
+    ${
+      editor
+        ? `<div class="row" style="margin-top:10px;align-items:center"><label class="count" style="margin:0">This is <select id="pkind">${Object.entries(PAPER_KINDS)
+            .map(([k, l]) => `<option value="${k}">${l}</option>`)
+            .join('')}</select></label></div>
+           <label class="drop" id="pdrop">The invoice, the papers, a customs form, a receipt — PDFs or pictures: <u>choose files</u>
+             <input type="file" id="pfile" accept="application/pdf,image/*" multiple hidden></label>`
+        : ''
+    }`;
+  const upload = async (files) => {
+    if (!files.length) return;
+    const fd = new FormData();
+    fd.append('kind', $('#pkind')?.value || '');
+    for (const f of files) fd.append('files', f, f.name);
+    try {
+      await api(`/api/watches/${w.id}/documents`, { method: 'POST', body: fd });
+      flash(files.length === 1 ? 'Document added' : `${files.length} documents added`);
+      renderPapers();
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $('#pfile')?.addEventListener('change', (ev) => upload([...ev.target.files]));
+  const drop = $('#pdrop');
+  if (drop) {
+    drop.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      drop.classList.add('over');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      drop.classList.remove('over');
+      upload([...ev.dataTransfer.files]);
+    });
+  }
+  $$('[data-rmdoc]', box).forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this document? It stays in the history.')) return;
+      await api(`/api/watches/${w.id}/documents/${b.dataset.rmdoc}`, { method: 'DELETE' }).then(renderPapers, (err) => flash(err.message, true));
+    })
+  );
+  $$('a[data-pdf]', box).forEach((a) =>
+    a.addEventListener('click', (e) => {
+      if (typeof lgDocOpen !== 'function') return;
+      e.preventDefault();
+      lgDocOpen(a.dataset.pdf, a.dataset.name);
+    })
+  );
 }
 
 /*

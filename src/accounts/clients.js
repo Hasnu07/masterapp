@@ -165,6 +165,47 @@ export async function accountsClientsOf(ourClientId) {
   return snap.clients.filter((c) => linkOf(c, snap).client_id === ourClientId).map((c) => ({ acc_client_id: c.cid, name: c.name, company: c.company, how: linkOf(c, snap).how }));
 }
 
+/** The accounts clients found by words (name, company, code), each with who of ours it is now — for the client page's picker. */
+export async function appClients(q, limit = 12) {
+  const snap = await snapshot();
+  const words = String(q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = (c) => !words.length || words.every((w) => `${c.name} ${c.company} ${c.cid}`.toLowerCase().includes(w));
+  return snap.clients
+    .filter(hit)
+    .slice(0, Math.min(Math.max(Number(limit) || 12, 1), 50))
+    .map((c) => {
+      const l = linkOf(c, snap);
+      return { acc_client_id: c.cid, name: c.name, company: c.company, client_id: l.client_id, client_name: l.client_name, how: l.how };
+    });
+}
+
+/**
+ * A person's decision: this accounts client is OUR client N (or, client_id
+ * null, none of ours). It wins over the worked-out match from then on, and
+ * the sync never changes it. Kept in accounts_client_links by the copied
+ * record's row.
+ */
+export async function setClientLink(accClientId, clientId, user) {
+  const { rows } = await query("SELECT id FROM accounts_items WHERE kind = 'clients' AND deleted_at IS NULL AND source_id = $1", [String(accClientId || '').trim()]);
+  if (!rows[0]) throw Object.assign(new Error('No such client in the accounts app'), { status: 404 });
+  if (clientId !== null) {
+    const { rows: ours } = await query('SELECT id FROM clients WHERE id = $1 AND deleted_at IS NULL', [Number(clientId) || 0]);
+    if (!ours[0]) throw Object.assign(new Error('No such client of ours'), { status: 404 });
+  }
+  await query(
+    `INSERT INTO accounts_client_links(item_id, client_id, user_id, at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (item_id) DO UPDATE SET client_id = EXCLUDED.client_id, user_id = EXCLUDED.user_id, at = now()`,
+    [rows[0].id, clientId === null ? null : Number(clientId), user?.id ?? null]
+  );
+  forgetAccountsClientSnapshot();
+}
+
+/** The decision forgotten: the worked-out match shows again. */
+export async function forgetClientLink(accClientId) {
+  await query("DELETE FROM accounts_client_links WHERE item_id IN (SELECT id FROM accounts_items WHERE kind = 'clients' AND source_id = $1)", [String(accClientId || '').trim()]);
+  forgetAccountsClientSnapshot();
+}
+
 /** The accounts app's own client id for a typed name, when exactly one carries it — for opening its profile there. */
 export async function accountsClientIdFor(name) {
   const snap = await snapshot();
