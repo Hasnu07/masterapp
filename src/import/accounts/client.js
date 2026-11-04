@@ -90,6 +90,23 @@ export async function erpSessionCookie() {
   return cookie;
 }
 
+/**
+ * The named collections, read with a session GIVEN — the person's own accounts
+ * cookie out of the frame, or the ERP's — never signing in and never touching
+ * the ERP's held session. For the watch page when the ERP's copy is not there.
+ */
+export async function fetchStateAs(cookie, only) {
+  if (!config.accounts.appUrl) throw new Error('The accounts app is not set up here (ACCOUNTS_APP_URL)');
+  const path = only?.length ? `/api/state?only=${only.map(encodeURIComponent).join(',')}` : '/api/state';
+  const res = await fetch(url(path), { headers: { Accept: 'application/json', Cookie: cookie }, redirect: 'manual', signal: AbortSignal.timeout(config.accounts.timeoutMs) });
+  if (res.status === 401 || res.status === 403) {
+    await res.arrayBuffer();
+    throw Object.assign(new Error('Not signed in to the accounts app'), { status: res.status });
+  }
+  if (!res.ok) throw new Error(`The accounts app answered ${await describe(res)}`);
+  return res.json();
+}
+
 /** Every collection, or the named ones: { entries: [...], clients: [...], … }. */
 export const fetchAccountsState = (only = null) => getJson(only?.length ? `/api/state?only=${only.map(encodeURIComponent).join(',')}` : '/api/state');
 

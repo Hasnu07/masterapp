@@ -192,7 +192,7 @@ function accStory(data) {
     const owed = l.outstanding > 0.005 && l.status !== 'cancelled' ? `, ${accAmount(l.outstanding, l.e.ccy)} still owed` : l.status === 'settled' ? ', settled' : l.status === 'cancelled' ? ' (cancelled)' : '';
     return { text: `${verb} ${l.whoHtml} for ${accAmount(l.e.amount, l.e.ccy)}${l.e.date ? ` on ${esc(accDay(l.e.date))}` : ''}${owed}`, warn: l.outstanding > 0.005 && l.status !== 'cancelled' };
   };
-  let now = { html: `Nothing in the accounts app for stock ${esc(no)}`, tone: 'quiet' };
+  let now = { html: data.source === 'none' ? `The accounts app could not be read for stock ${esc(no)}` : `Nothing in the accounts app for stock ${esc(no)}`, tone: 'quiet' };
   const parts = [];
   if (buys[0]) parts.push(say(buys[0], 'Bought from'));
   if (sales[0]) parts.push(say(sales[0], 'Sold to'));
@@ -239,6 +239,13 @@ function accStory(data) {
     docs.push(...e.docs);
   }
   return { now, facts, legs, ev, pics, docs, wallets: walletsUsed };
+}
+
+/* Where the window's figures came from: the ERP's copy, the app itself (live, with a sign-in), or nowhere — and what to do about it. */
+function accSourceNote(data) {
+  if (data.source === 'live') return `Read live from the accounts app${data.sync ? ', the ERP’s copy has not run yet' : ' — the ERP’s copy is not set up: an account for the ERP in the app, and ACCOUNTS_USERNAME / ACCOUNTS_PASSWORD on the server'}`;
+  if (data.source === 'none') return `${esc(data.why || 'The accounts app could not be read')}. Open Accounts and sign in to the app, or set up the ERP’s copy (ACCOUNTS_USERNAME / ACCOUNTS_PASSWORD on the server).`;
+  return data.read_at ? `Copy read ${esc(fmtWhen(data.read_at))}${data.sync ? '' : ' · sync off'}` : '';
 }
 
 /*
@@ -347,7 +354,7 @@ function accWinRender(d, data) {
     ${lines('Commission', data.settlements || [], (r) => `<div class="lgw-card"><div class="lgw-card-top"><b>${esc(r.data.employee || r.data.empName || 'Settlement')}</b><span class="count" style="margin:0">${esc(accDay(r.data.date))}</span></div><div class="lgw-d">${(r.data.lines || []).filter((x) => String(x.stock || '').trim() === String(no)).map((x) => `${x.role ? `${esc(x.role)} · ` : ''}commission ${accAmount(x.commission, 'USD')}`).join('; ')}</div></div>`)}
     ${s.pics.length ? `<h3>Pictures</h3>${accPics(s.pics)}` : ''}
     <p class="lgw-foot"><button type="button" class="linkish" id="accw-app">See it in the accounts app</button>
-      ${data.read_at ? `<span class="count" style="margin:0 0 0 12px">Copy read ${esc(fmtWhen(data.read_at))}${data.sync ? '' : ' · sync off'}</span>` : ''}</p>`;
+      <span class="count" style="margin:0 0 0 12px">${accSourceNote(data)}</span></p>`;
   accBindFiles(body);
   d.querySelector('#accw-app')?.addEventListener('click', () => {
     d.close();

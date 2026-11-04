@@ -1,7 +1,9 @@
 import { query } from '../db/index.js';
 import { config } from '../config.js';
-import { lastAccountsRead } from '../import/accounts/sync.js';
-import { linksByClientId, accountsClientsOf } from './clients.js';
+import { lastAccountsRead, stockNosOf, clientIdsOf, happenedAt } from '../import/accounts/sync.js';
+import { fetchStateAs, erpSessionCookie } from '../import/accounts/client.js';
+import { linksByClientId, accountsClientsOf, oursByExactName } from './clients.js';
+import { accountsCookies } from '../web/accapp.js';
 
 /*
  * Accounts in the ERP is the accounts app itself (web/accapp.js), served at
@@ -59,12 +61,95 @@ export const statusOf = (e) => {
 const KINDS_FOR_STOCK = ['entries', 'quickSales', 'invoices', 'expenses', 'commissionSettlements'];
 
 /**
- * Everything our copy of the accounts app holds on one stock number: the
- * ledger's purchase and sale legs with their payments, quick sales, invoices,
- * expenses and commission lines naming it — and who its clients are, in the
- * app and in the ERP.
+ * Everything the accounts app holds on one stock number: the ledger's
+ * purchase and sale legs with their payments, quick sales, invoices, expenses
+ * and commission lines naming it — and who its clients are, in the app and in
+ * the ERP. From OUR COPY when the copy is running (`source: 'copy'`); when it
+ * is not there yet (no account for the ERP in the app, or the first pass still
+ * to come — seen live 4 Nov 2026: "accountancy info not showing up"), from
+ * the app itself, read with the person's own accounts sign-in out of the
+ * frame, else the ERP's (`source: 'live'`); and when neither can read it,
+ * empty, saying why (`source: 'none'`).
  */
-export async function forStock(no) {
+export async function forStock(no, { cookie = '' } = {}) {
+  const copy = await copyForStock(no);
+  const { rows } = await query("SELECT EXISTS(SELECT 1 FROM accounts_items WHERE deleted_at IS NULL AND kind = 'entries') AS any");
+  if (rows[0].any) return { ...copy, source: 'copy' };
+  try {
+    const live = await liveForStock(no, cookie);
+    if (live) return live;
+    return { ...copy, source: 'none', why: 'Not signed in to the accounts app' };
+  } catch (err) {
+    return { ...copy, source: 'none', why: err.message };
+  }
+}
+
+const LIVE_LISTS = ['entries', 'clients', 'accounts', 'invoices', 'quickSales', 'expenses', 'commissionSettlements'];
+/* The app's answer held a minute per session: a watch page opens the Accounts window and the Timeline close together. */
+const liveHeld = new Map();
+async function liveState(cookieHeader) {
+  let cookie = accountsCookies(cookieHeader);
+  if (!/connect\.sid=/.test(cookie)) cookie = await erpSessionCookie();
+  if (!cookie) return null;
+  const had = liveHeld.get(cookie);
+  if (had && Date.now() - had.at < 60_000) return had.state;
+  const state = await fetchStateAs(cookie, LIVE_LISTS);
+  if (liveHeld.size > 50) liveHeld.clear();
+  liveHeld.set(cookie, { at: Date.now(), state });
+  return state;
+}
+export const forgetLive = () => liveHeld.clear();
+
+async function liveForStock(no, cookieHeader) {
+  const state = await liveState(cookieHeader);
+  if (!state || typeof state !== 'object') return null;
+  const items = [];
+  for (const kind of KINDS_FOR_STOCK) {
+    for (const r of Array.isArray(state[kind]) ? state[kind] : []) {
+      if (!r || typeof r !== 'object' || !stockNosOf(kind, r).includes(String(no))) continue;
+      items.push({ id: null, kind, source_id: r.id == null ? null : String(r.id), happened_at: happenedAt(r), data: r, client_ids: clientIdsOf(r) });
+    }
+  }
+  const invoiceNos = new Set(items.filter((r) => r.kind === 'entries').map((r) => String(r.data.invoiceNo || '').trim().toLowerCase()).filter(Boolean));
+  for (const r of Array.isArray(state.invoices) ? state.invoices : []) {
+    if (r && invoiceNos.has(String(r.invoiceNo || '').trim().toLowerCase()) && !items.some((x) => x.kind === 'invoices' && x.data === r)) {
+      items.push({ id: null, kind: 'invoices', source_id: r.id == null ? null : String(r.id), happened_at: happenedAt(r), data: r, client_ids: clientIdsOf(r) });
+    }
+  }
+  items.sort((a, b) => String(b.happened_at || '').localeCompare(String(a.happened_at || '')));
+  // Its clients, by the app's ids — ours when exactly one of ours carries the name (the copy's ledger match needs the copy).
+  const cids = [...new Set(items.flatMap((r) => r.client_ids))];
+  const appClients = new Map((Array.isArray(state.clients) ? state.clients : []).filter((c) => c && c.id != null).map((c) => [String(c.id), c]));
+  const named = await oursByExactName(cids.map((id) => appClients.get(id)?.name).filter(Boolean));
+  const clients = {};
+  for (const id of cids) {
+    const c = appClients.get(id);
+    if (!c) continue;
+    const ours = named.get(String(c.name || '').trim());
+    clients[id] = { acc_client_id: id, name: c.name || '', company: c.company || '', client_id: ours?.client_id || null, client_name: ours?.client_name || '', how: ours ? 'name' : null };
+  }
+  const walletIds = new Set(items.flatMap((r) => [...(r.data.payments || []).map((p) => p._walletAccId || p.walletAccId || p.accountId), r.data.walletAccId]).filter(Boolean).map(String));
+  const wallets = {};
+  for (const w of Array.isArray(state.accounts) ? state.accounts : []) {
+    if (w && walletIds.has(String(w.id))) wallets[String(w.id)] = { name: w.name || '', company: w.company || '', bank: w.bankName || '', ccy: w.ccy || '', kind: w.kind || '' };
+  }
+  const entries = items.filter((r) => r.kind === 'entries').map((r) => ({ ...r, status: statusOf(r.data), paid: paidOf(r.data), target: targetOf(r.data), outstanding: outstandingOf(r.data) }));
+  return {
+    stock: String(no),
+    entries,
+    quick_sales: items.filter((r) => r.kind === 'quickSales'),
+    invoices: items.filter((r) => r.kind === 'invoices'),
+    expenses: items.filter((r) => r.kind === 'expenses'),
+    settlements: items.filter((r) => r.kind === 'commissionSettlements'),
+    clients,
+    wallets,
+    read_at: new Date().toISOString(),
+    sync: catalog().sync,
+    source: 'live',
+  };
+}
+
+async function copyForStock(no) {
   const { rows } = await query(
     `SELECT id, kind, source_id, data, happened_at, client_ids FROM accounts_items
       WHERE deleted_at IS NULL AND kind = ANY($1) AND stock_nos @> ARRAY[$2]::text[]

@@ -715,7 +715,7 @@ export function createServer() {
     })
   );
   /* What our copy of the accounts app holds on one stock number: the watch page's Accounts window. */
-  app.get('/api/acc-app/stock/:no', need('viewer'), wrap(async (req, res) => res.json(await accounts.forStock(String(req.params.no || '').trim().slice(0, 20)))));
+  app.get('/api/acc-app/stock/:no', need('viewer'), wrap(async (req, res) => res.json(await accounts.forStock(String(req.params.no || '').trim().slice(0, 20), { cookie: req.get('cookie') }))));
   /* What it says about one of OUR clients: the client page's panel. */
   app.get('/api/acc-app/our-client/:id', need('viewer'), wrap(async (req, res) => res.json(await accounts.forOurClient(Number(req.params.id) || 0))));
 
