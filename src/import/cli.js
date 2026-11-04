@@ -5,6 +5,7 @@ import { importProductCsv } from './listimport.js';
 import { syncList, syncDetails } from './chronokey/sync.js';
 import { syncVault } from './vault/sync.js';
 import { syncLogistics } from './logistics/sync.js';
+import { syncAccounts } from './accounts/sync.js';
 import { runJob } from './jobs.js';
 import { tidyDuplicatePhotos } from '../watches/index.js';
 
@@ -15,7 +16,8 @@ import { tidyDuplicatePhotos } from '../watches/index.js';
  *                                     each watch's page and photos
  * npm run import -- vault             the Watch vault
  * npm run import -- logistics         the logistics app's records (the same worker document)
- * npm run import -- all               list, new details, vault, logistics
+ * npm run import -- accounts          the accounts app's records (its /api/state, signed in as the ERP)
+ * npm run import -- all               list, new details, vault, logistics, accounts
  * npm run import -- tidy-photos       hide repeats among photos already copied
  */
 const [cmd, ...args] = process.argv.slice(2);
@@ -36,13 +38,15 @@ try {
       );
     } else if (cmd === 'vault') show(await syncVault());
     else if (cmd === 'logistics') show(await syncLogistics());
+    else if (cmd === 'accounts') show(await syncAccounts());
     else if (cmd === 'all') {
       show(await syncList());
       show(await syncDetails({ mode: 'new' }));
       show(await syncVault());
       show(await syncLogistics({ reuse: true }));
+      show(await syncAccounts());
     } else if (cmd === 'tidy-photos') show(await tidyDuplicatePhotos());
-    else console.log('usage: npm run import -- csv <file> | list | details [new|active|full] [limit] | vault | logistics | all | tidy-photos');
+    else console.log('usage: npm run import -- csv <file> | list | details [new|active|full] [limit] | vault | logistics | accounts | all | tidy-photos');
   });
 } catch (err) {
   console.error(err.message);

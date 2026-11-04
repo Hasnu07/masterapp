@@ -110,4 +110,28 @@ export const config = {
     // Logistics menu (asked 30 Oct 2026), and its vault page is the tabs' "Watch Vault ↗" link. `off`: neither.
     appUrl: (process.env.LOGISTICS_APP_URL ?? 'https://purosangue-watches.vercel.app').trim().replace(/^off$/i, '').replace(/\/+$/, ''),
   },
+
+  /*
+   * The accounts app (Purosangue Watches — Accounts, repo
+   * purosanguewatches94/Accountany-App, live on Railway). Served inside the ERP
+   * at /acc-app/ from ACCOUNTS_APP_URL (`off`: no Accounts menu), and its whole
+   * state — every collection of its MySQL document store — copied here through
+   * its own API, signed in as ACCOUNTS_USERNAME / ACCOUNTS_PASSWORD (an account
+   * made for the ERP in the app itself, approved there). ACCOUNTS_SYNC=off is
+   * its switch-over; it is on by default ("keep the sync on for the accountancy
+   * app until things get straight", 4 Nov 2026). Its per-collection version
+   * numbers (a few bytes) are checked every ACCOUNTS_POLL_SEC and only the
+   * collections that moved are read again; 0 leaves only the 15-minute pass.
+   */
+  accounts: {
+    appUrl: (process.env.ACCOUNTS_APP_URL ?? 'https://accountancy-app-production.up.railway.app').trim().replace(/^off$/i, '').replace(/\/+$/, ''),
+    username: (process.env.ACCOUNTS_USERNAME || '').trim(),
+    password: process.env.ACCOUNTS_PASSWORD || '',
+    enabled: bool(process.env.ACCOUNTS_SYNC, true),
+    pollSec: Number(process.env.ACCOUNTS_POLL_SEC ?? 60),
+    timeoutMs: Number(process.env.ACCOUNTS_TIMEOUT_MS || 60_000),
+    get configured() {
+      return Boolean(this.appUrl && this.username && this.password);
+    },
+  },
 };

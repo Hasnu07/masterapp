@@ -149,8 +149,9 @@ function route() {
   const [, page, id, more] = hash.split('/');
   const section = { watch: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
-  // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
+  // The logistics and accounts apps' frames stay loaded while another page shows (hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
+  if (typeof accAppHide === 'function') accAppHide();
   menu(false);
   window.scrollTo(0, 0);
   if (!page) return showInventory();
@@ -160,6 +161,7 @@ function route() {
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
   if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'logistics') return showLogistics(id, more);
+  if (page === 'accounts') return showAccounts(id, more);
   if (page === 'new') return showNew();
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -195,6 +197,7 @@ function showLogin() {
   $('#bar').classList.add('hide');
   // The logistics app's frame goes with the session: its page holds the key to its records.
   if (typeof lgAppDrop === 'function') lgAppDrop();
+  if (typeof accAppDrop === 'function') accAppDrop();
   $('#app').innerHTML = `
     <div class="login panel">
       <h1>Purosangue ERP</h1>
@@ -523,6 +526,7 @@ function renderWatch() {
           </div>
           <div class="row actions">
             ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
+            ${w.stock_no && typeof accAppOn === 'function' && accAppOn() ? '<button class="btn" id="acc-open">Accounts</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
             ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
           </div>
@@ -546,6 +550,8 @@ function renderWatch() {
   renderDetails(groups);
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
+  // And whatever our copy of the accounts app has on it — the ledger, its payments — the same way.
+  $('#acc-open')?.addEventListener('click', () => showAccountsWindow(w.stock_no, w.display_title));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {
     current.editing = true;
@@ -1118,6 +1124,7 @@ function renderClient(c, editing) {
             ? `<div class="panel"><h3>Logistics</h3><p class="count" style="margin:0"><a href="${lgAppLink('contacts', c.name)}">See ${esc(c.name)} in Logistics →</a></p></div>`
             : ''
         }
+        ${typeof accAppOn === 'function' && accAppOn() ? '<div class="panel" id="cacc"><h3>Accounts</h3><p class="count" style="margin:0">Reading the accounts…</p></div>' : ''}
         ${
           editing
             ? `<form class="panel" id="cform"><h3>Client</h3><div class="form-grid">${F.map((f) =>
@@ -1143,6 +1150,7 @@ function renderClient(c, editing) {
     const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
     $$('.cw-row').forEach((a) => (a.hidden = !words.every((w) => a.dataset.text.includes(w))));
   });
+  if ($('#cacc')) renderClientAccounts(c);
   $('#cedit')?.addEventListener('click', () => renderClient(c, true));
   $('#ccancel')?.addEventListener('click', () => renderClient(c, false));
   $('#cform')?.addEventListener('submit', async (e) => {
@@ -1160,6 +1168,33 @@ function renderClient(c, editing) {
       flash(err.message, true);
     }
   });
+}
+
+/*
+ * What the accounts app says about this client (from our copy): which of its
+ * clients this is, what stands open with them per currency — owed to us, owed
+ * by us — and the way into the app itself, on their profile.
+ */
+async function renderClientAccounts(c) {
+  const box = $('#cacc');
+  if (!box) return;
+  let a;
+  try {
+    a = await api(`/api/acc-app/our-client/${c.id}`);
+  } catch (err) {
+    box.innerHTML = `<h3>Accounts</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (!$('#cacc')) return;
+  const amount = (n, cur) => `${esc(cur)} ${Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const lines = Object.entries(a.balances || {}).map(
+    ([cur, b]) => `<div><span>${b.owed_to_us ? `Owed to us <b>${amount(b.owed_to_us, cur)}</b>` : ''}${b.owed_to_us && b.we_owe ? ' · ' : ''}${b.we_owe ? `We owe <b>${amount(b.we_owe, cur)}</b>` : ''}</span></div>`
+  );
+  const named = a.links.map((l) => `${esc(l.name)} <span class="count" style="margin:0">(${esc(l.acc_client_id)}${l.how === 'person' ? ', set here' : l.how === 'name' ? ', by name' : ', by the watches'})</span>`);
+  box.innerHTML = `<h3>Accounts</h3>
+    ${named.length ? `<p style="margin:0 0 6px">In the accounts app as ${named.join(', ')} · ${a.entries} ledger entr${a.entries === 1 ? 'y' : 'ies'}${a.last_at ? `, last ${esc(fmtDate(String(a.last_at).slice(0, 10)))}` : ''}</p>` : '<p class="count" style="margin:0 0 6px">Not matched to a client of the accounts app yet.</p>'}
+    ${lines.length ? `<div class="lgw-costs" style="margin:0 0 8px">${lines.join('')}</div>` : named.length ? '<p class="count" style="margin:0 0 6px">Nothing outstanding.</p>' : ''}
+    <p class="count" style="margin:0"><a href="${accAppLink('clients', a.links[0]?.name || c.name)}">See ${esc(a.links[0]?.name || c.name)} in Accounts →</a></p>`;
 }
 
 function showNewClient() {
@@ -1613,6 +1648,9 @@ async function showImport() {
       'chronokey/details-full': 'Watch pages & photos — everything',
       'chronokey/details-rolling': 'Watch pages & photos — the longest unread',
       'vault/full': 'Watch vault',
+      'logistics/full': 'Logistics app',
+      'accounts/full': 'Accounts app',
+      'accounts/changed': 'Accounts app — what changed',
     })[`${r.source}/${r.mode}`] || `${r.source} ${r.mode}`;
   const statsLine = (st) =>
     Object.entries(st || {})
@@ -1663,6 +1701,7 @@ async function showImport() {
           <div><b>${c.ck_details}</b><span>watch pages read (photos, € figures)</span></div>
           <div><b>${c.vault_records}</b><span>Watch vault records</span></div>
           <div><b>${c.photos}</b><span>photos stored</span></div>
+          ${c.accounts_items ? `<div><b>${c.accounts_entries}</b><span>accounts app ledger entries (${c.accounts_items} records)</span></div>` : ''}
           <div><b>${c.currency_not_stated}</b><span>purchases with no currency stated</span></div>
         </div>
         ${c.ck_errors ? `<p class="note" style="margin-top:12px">${c.ck_errors} Chrono Key page${c.ck_errors === 1 ? '' : 's'} could not be read — see the runs below.</p>` : ''}
@@ -1697,6 +1736,20 @@ async function showImport() {
         ${s.configured.vault ? '' : '<p class="note">Not configured — set VAULT_TOKEN (the worker’s WORKER_TOKEN) on the server.</p>'}
         <p class="sub">Brings in B2B, B2C and Chrono24 prices, the vault's photos, and watches only the vault holds.</p>
         <button class="btn gold" data-job="vault">Import the Watch vault</button>
+      </div>`
+          : ''
+      }
+      ${
+        admin
+          ? `<div class="panel">
+        <h2>4 · The accounts app</h2>
+        ${
+          !s.configured.accounts
+            ? '<p class="note info" style="margin:0">Accounts sync is off (ACCOUNTS_SYNC=off): masterapp is the master for accounts.</p>'
+            : !s.configured.accounts_app
+            ? '<p class="note">Not configured — make an account for the ERP in the accounts app (approved there) and set ACCOUNTS_USERNAME and ACCOUNTS_PASSWORD on the server.</p>'
+            : '<p class="sub">Every collection of the accounts app — the ledger with its payments, clients, invoices, quick sales, expenses, wallets, rates, partner desks — copied here, every 15 minutes and within a minute of a change. The app stays the master until the switch-over.</p><button class="btn gold" data-job="accounts">Read the accounts app now</button>'
+        }
       </div>`
           : ''
       }

@@ -55,8 +55,9 @@ nav a.on { color: var(--ink); background: var(--gold-soft); }
 /* The console fills the screen (asked 27 Oct 2026: "wide screen the whole app instead of aligned at middle"). */
 main { width: 100%; padding: 18px 20px 60px; }
 /* The logistics app itself, inside the ERP (asked 30 Oct 2026): one frame filling the screen under the bar; its height is set by lgAppFit(). */
-#lg-app-host { width: 100%; background: #f4f3fb; }
-#lg-app-host iframe { display: block; width: 100%; height: 100%; border: 0; }
+#lg-app-host, #acc-app-host { width: 100%; background: #f4f3fb; }
+#acc-app-host { background: #0c0b09; }
+#lg-app-host iframe, #acc-app-host iframe { display: block; width: 100%; height: 100%; border: 0; }
 /* The watch's logistics as a window in the console's look (showLogisticsWindow): one line on where it is, then its story. */
 .lgw { width: min(920px, 94vw); max-height: 92vh; padding: 0; border: 0; border-radius: 14px; background: var(--card); color: var(--ink);
   box-shadow: 0 24px 64px rgba(0,0,0,.35); overflow: hidden; }
@@ -396,6 +397,7 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
     <a href="#/clients" data-nav="clients">Clients</a>
     <a href="#/expenses" data-nav="expenses">Expenses</a>
     <a href="#/logistics" data-nav="logistics">Logistics</a>
+    <a href="#/accounts" data-nav="accounts">Accounts</a>
     <a href="#/new" data-nav="new" data-role="editor">New watch</a>
     <a href="#/import" data-nav="import">Import</a>
     <a href="#/users" data-nav="users" data-role="admin">Users</a>
@@ -404,8 +406,10 @@ details.fold > summary:focus-visible { outline: 2px solid var(--gold-soft); outl
 </aside>
 <main id="app"></main>
 <div id="lg-app-host" class="hide"></div>
+<div id="acc-app-host" class="hide"></div>
 <script src="/app.js"></script>
 <script src="/logistics.js"></script>
+<script src="/accounts.js"></script>
 <script src="/fxchip.js"></script>
 </body>
 </html>
