@@ -184,6 +184,47 @@ test('search: a bare number is a stock number, exactly', async () => {
   assert.ok(f.some((b) => b.k === 'Patek Philippe'), 'the brand counts ignore the brand filter itself');
 });
 
+test('jewellery and bags: the same stock number sequence, their own fields, counted by category', async () => {
+  // The next number comes after every stock number held — the watches' run, not a run of its own.
+  const next = (await editor.call('GET', '/api/watches/next-stock-no')).body.stock_no;
+  assert.equal(next, '5001', 'one more than the highest (5000); deleted records count too');
+  assert.equal((await viewer.call('GET', '/api/watches/next-stock-no')).status, 403, 'for those who can add');
+
+  const ring = await editor.call('POST', '/api/watches', {
+    stock_no: next, category: 'jewellery', brand: 'Cartier', jewel_type: 'Ring', material: '18k yellow gold',
+    gemstones: '3 diamonds', carats: '2.05 ct', gem_colour: 'G', gem_clarity: 'VS1', ring_size: '52', purchase_price: '12000', purchase_currency: 'AED',
+  });
+  assert.equal(ring.status, 201, JSON.stringify(ring.body));
+  const r = (await viewer.call('GET', `/api/watches/${ring.body.id}`)).body;
+  assert.equal(r.category, 'jewellery');
+  assert.equal(r.carats, '2.05 ct');
+  assert.equal(r.display_title, 'Cartier ring', 'named by its brand and type when it has no model');
+
+  const bag = await editor.call('POST', '/api/watches', {
+    stock_no: '5002', category: 'bag', brand: 'Hermès', model: 'Birkin 25', bag_material: 'Togo leather', bag_colour: 'Gold', hardware: 'Palladium', date_code: 'Z 2021',
+  });
+  assert.equal(bag.status, 201, JSON.stringify(bag.body));
+  assert.equal((await editor.call('POST', '/api/watches', { stock_no: '5003', category: 'shoes' })).status, 400, 'only the three categories');
+  assert.equal((await editor.call('POST', '/api/watches', { stock_no: '5002', category: 'bag' })).status, 409, 'one sequence: a number is taken across categories');
+
+  const list = (await viewer.call('GET', '/api/watches?category=bag')).body;
+  assert.deepEqual(list.watches.map((w) => [w.stock_no, w.title, w.bag_colour]), [['5002', 'Hermès Birkin 25', 'Gold']]);
+  const cats = Object.fromEntries(list.facets.category.map((c) => [c.k, c.n]));
+  assert.equal(cats.bag, 1);
+  assert.equal(cats.jewellery, 1);
+  assert.ok(cats.watch >= 2, 'the category counts ignore the category filter itself');
+  assert.equal((await viewer.call('GET', '/api/watches?q=togo')).body.total, 1, 'found by its leather');
+  assert.equal((await viewer.call('GET', '/api/watches?q=diamonds')).body.total, 1, 'and by its stones');
+
+  // Re-filed as a bag, like any edit — in its history, and the next number moves on.
+  const e = await editor.call('PATCH', `/api/watches/${ring.body.id}`, { category: 'bag', bag_type: 'Clutch' });
+  assert.deepEqual(e.body.changed.sort(), ['bag_type', 'category']);
+  assert.equal((await editor.call('GET', '/api/watches/next-stock-no')).body.stock_no, '5003');
+  const meta = (await viewer.call('GET', '/api/meta')).body;
+  assert.deepEqual(meta.categories.map((c) => c.key), ['watch', 'jewellery', 'bag']);
+  assert.ok(meta.fields.find((f) => f.key === 'carats').only === 'jewellery' && meta.fields.find((f) => f.key === 'dial').only === 'watch', 'the form knows whose field is whose');
+});
+
 test('what a reference has sold for: newest first, the vault beside it, the ones in stock', async () => {
   const add = async (w) => (await editor.call('POST', '/api/watches', { brand: 'Rolex', reference: '278271', ...w })).body.id;
   const old = await add({ stock_no: '6001', status: 'sold', sale_date: '2026-05-09', sale_price: '22500', sale_price_eur: '19080' });

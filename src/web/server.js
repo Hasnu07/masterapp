@@ -22,7 +22,7 @@ import * as ai from '../ai/index.js';
 import * as documents from '../watches/documents.js';
 import * as costs from '../watches/costs.js';
 import * as accClients from '../accounts/clients.js';
-import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
+import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS, CATEGORIES } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
 import { startJob, running, runJob } from '../import/jobs.js';
@@ -270,6 +270,7 @@ export function createServer() {
     res.json({
       fields: FIELDS,
       statuses: STATUSES,
+      categories: CATEGORIES,
       locations: LOCATIONS,
       currencies: CURRENCIES,
       paymentKinds: PAYMENT_KINDS,
@@ -303,6 +304,7 @@ export function createServer() {
           status: req.query.status,
           location: req.query.location,
           brand: req.query.brand,
+          category: req.query.category,
           sort: req.query.sort,
           limit: req.query.limit,
           offset: req.query.offset,
@@ -328,6 +330,13 @@ export function createServer() {
         throw err;
       }
     })
+  );
+
+  /* The next stock number in the sequence, for the New item form (watches, jewellery and bags share it). */
+  app.get(
+    '/api/watches/next-stock-no',
+    need('editor'),
+    wrap(async (req, res) => res.json({ stock_no: await watches.nextStockNo() }))
   );
 
   app.get(

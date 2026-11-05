@@ -15,7 +15,7 @@ const esc = (v) =>
 const state = {
   user: null,
   meta: null,
-  list: { q: '', status: '', location: '', brand: '', sort: 'newest', deleted: false },
+  list: { q: '', status: '', location: '', brand: '', category: '', sort: 'newest', deleted: false },
   clients: { q: '', type: '' },
   expenses: { q: '', type: '', from: '', to: '' },
 };
@@ -89,6 +89,19 @@ function money(n, cur, { plain = false } = {}) {
   return esc(sym ? `${sym}${s}` : `${s} ${cur}`);
 }
 const statusLabel = (k) => state.meta?.statuses.find((s) => s.key === k)?.label || k;
+/* What a record is — a watch, a piece of jewellery or a bag (5 Nov 2026) — and the fields that category has. */
+const catOf = (k) => state.meta?.categories.find((c) => c.key === (k || 'watch')) || { key: 'watch', label: 'Watch', plural: 'Watches', a: 'a watch' };
+const fieldsFor = (category) => state.meta.fields.filter((f) => !f.only || f.only === (category || 'watch'));
+const enumLabel = (f, o) => f.labels?.[o] ?? statusLabel(o);
+/* The headings over the groups: the first group is "Watch" on a watch and "Item" on anything else. */
+const groupName = (g, category) => (g === 'Watch' && (category || 'watch') !== 'watch' ? 'Item' : g);
+/* "140 watches", "3 bags", "2 pieces of jewellery", "1709 items". */
+const countOf = (n, category) => {
+  if (!category) return `${n} item${n === 1 ? '' : 's'}`;
+  if (category === 'jewellery') return `${n} piece${n === 1 ? '' : 's'} of jewellery`;
+  if (category === 'bag') return `${n} bag${n === 1 ? '' : 's'}`;
+  return `${n} watch${n === 1 ? '' : 'es'}`;
+};
 const chip = (k) => `<span class="chip ${esc(k)}">${esc(statusLabel(k))}</span>`;
 const fmtDate = (iso) => {
   if (!iso) return '';
@@ -126,7 +139,7 @@ function display(f, w) {
     case 'bool':
       return esc(yesNo(v));
     case 'enum':
-      return f.key === 'status' ? chip(v) : esc(v);
+      return f.key === 'status' ? chip(v) : esc(enumLabel(f, v));
     case 'payments': {
       const parts = Object.entries(v || {}).map(
         ([k, n]) => `${esc(state.meta.paymentKinds.find((p) => p.key === k)?.label || k)} ${esc(Number(n).toLocaleString('en-GB'))}`
@@ -170,7 +183,7 @@ function route() {
   if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'logistics') return showLogistics(id, more);
   if (page === 'accounts') return showAccounts(id, more);
-  if (page === 'new') return showNew();
+  if (page === 'new') return showNew(id);
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
   location.hash = '#/';
@@ -178,7 +191,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
-const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', new: 'New watch', import: 'Import', users: 'Users' };
+const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', new: 'New item', import: 'Import', users: 'Users' };
 const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
 function crumb(section, page, id) {
   const name = SECTION_NAMES[section] || 'Purosangue';
@@ -338,12 +351,12 @@ async function showInventory() {
     sold: 'Sold, newest sale first by stock number.',
     returned: 'Returned to their clients, as Chrono Key’s Returned consignments list them.',
     other: 'On none of Chrono Key’s lists, or held only by the Watch vault.',
-    '': 'Every watch, from Chrono Key, the Watch vault and added here.',
+    '': 'Everything — watches, jewellery and bags — from Chrono Key, the Watch vault and added here.',
   };
   $('#app').innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
       <div><h1>${esc(STOCK_NAMES[L.status] || (L.status ? statusLabel(L.status) : 'All stock'))}</h1><p class="sub" style="margin:0">${esc(about[L.status] || '')}</p></div>
-      ${can('editor') ? '<a class="btn gold" href="#/new">+ New watch</a>' : ''}
+      ${can('editor') ? '<a class="btn gold" href="#/new">+ New item</a>' : ''}
     </div>
     <div class="filters">
       <input class="q" type="search" id="q" placeholder="Stock number, reference, serial, brand, model, supplier, client…" value="${esc(L.q)}">
@@ -360,6 +373,7 @@ async function showInventory() {
     <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:10px">
       <div class="stack">
         <div class="pills" id="p-status"></div>
+        <div class="pills" id="p-category"></div>
         <div class="pills" id="p-location"></div>
       </div>
       <label class="card-zoom count" title="Card size — fewer cards across means bigger cards. Remembered in this browser."><span>Card size</span><small>−</small><input type="range" id="card-size" min="2" max="8" step="1" value="${10 - cardsAcross()}" aria-label="Card size"><small>+</small></label>
@@ -428,6 +442,7 @@ async function loadList(more = false) {
     status: L.status === 'in_stock' && L.alsoIncoming ? 'in_stock,incoming' : L.status,
     location: L.location,
     brand: L.brand,
+    category: L.category,
     sort: L.sort,
     limit: 60,
     offset: more ? shown.length : 0,
@@ -443,21 +458,21 @@ async function loadList(more = false) {
   shown = more ? [...shown, ...r.watches] : r.watches;
 
   // The pills in a fixed order (asked 3 Nov 2026): In stock, Incoming, Sold …, and Dubai, UK, Europe, HK …; "All" last.
-  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'] };
+  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'], category: ['watch', 'jewellery', 'bag'] };
   const rank = (key, k) => {
     const i = (ORDER[key] || []).indexOf(k);
     return i === -1 ? 99 : i;
   };
   const pills = (el, key, facet, label) => {
     const total = facet.reduce((a, f) => a + f.n, 0);
+    // Every category has its pill, even with nothing in it yet (5 Nov 2026): the three are the shape of the stock.
+    if (key === 'category') facet = state.meta.categories.map((c) => ({ k: c.key, n: facet.find((f) => f.k === c.key)?.n || 0 }));
+    const name = (k) => (key === 'status' ? statusLabel(k) : key === 'category' ? catOf(k).plural : k);
     el.innerHTML =
       facet
         .filter((f) => f.k)
         .sort((a, b) => rank(key, a.k) - rank(key, b.k) || b.n - a.n)
-        .map(
-          (f) =>
-            `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(key === 'status' ? statusLabel(f.k) : f.k)}<b>${f.n}</b></button>`
-        )
+        .map((f) => `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(name(f.k))}<b>${f.n}</b></button>`)
         .join('') + `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>`;
     // A filter in force that now has no watches keeps its pill, so it can be lifted.
     if (L[key] && !facet.some((f) => f.k === L[key])) {
@@ -473,6 +488,7 @@ async function loadList(more = false) {
     );
   };
   pills($('#p-status'), 'status', r.facets.status, 'statuses');
+  pills($('#p-category'), 'category', r.facets.category || [], 'categories');
   pills($('#p-location'), 'location', r.facets.location, 'places');
 
   const sel = $('#brand');
@@ -485,7 +501,7 @@ async function loadList(more = false) {
     (L.brand && !r.facets.brand.some((b) => b.k === L.brand) ? `<option value="${esc(L.brand)}">${esc(L.brand)} (0)</option>` : '');
   sel.value = L.brand;
 
-  $('#count').textContent = `${shown.length} of ${r.total} watch${r.total === 1 ? '' : 'es'}${L.deleted ? ' (deleted)' : ''}`;
+  $('#count').textContent = `${shown.length} of ${countOf(r.total, L.category)}${L.deleted ? ' (deleted)' : ''}`;
   $('#grid').innerHTML = shown.length ? shown.map(tile).join('') : '<p class="sub">Nothing matches.</p>';
   $$('#grid .tile').forEach((t) =>
     t.addEventListener('click', (e) => {
@@ -571,12 +587,10 @@ function tile(w) {
     <span class="badge chip ${esc(status)}">${esc(status === 'in_stock' ? 'Available' : statusLabel(status))}</span>
     <div class="body">
       <div class="t">${esc(w.title)}</div>
-      ${f('Reference', esc(w.reference))}
-      ${f('Serial number', esc(w.serial))}
+      ${tileFacts(w, f)}
       ${f('Stock number', esc(w.stock_no))}
-      ${f('Watch date', esc(w.watch_date))}
       ${f('Owner', esc(w.order_type))}
-      ${f('Category', esc(w.location))}
+      ${f('Place', esc(w.location))}
       ${f('From', esc(w.bought_from))}
       ${f('Retail price', plain(w.retail_price, w.retail_currency))}
       ${f('Website price', plain(w.website_price, w.website_currency))}
@@ -594,6 +608,41 @@ function tile(w) {
       <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
     </div>
   </article>`;
+}
+
+/*
+ * The item's own facts on its card, by category (5 Nov 2026): a watch's
+ * reference, serial and date; a piece of jewellery's type, metal, stones and
+ * carats; a bag's type, leather, colour and size.
+ */
+function tileFacts(w, f) {
+  if (w.category === 'jewellery') {
+    return [
+      f('Category', 'Jewellery'),
+      f('Type', esc(w.jewel_type)),
+      f('Material', esc(w.material)),
+      f('Gemstones', esc(w.gemstones)),
+      f('Carats', esc(w.carats)),
+      f('Colour', esc(w.gem_colour)),
+      f('Chain length', esc(w.chain_length)),
+      f('Reference', esc(w.reference)),
+      f('Serial number', esc(w.serial)),
+    ].join('');
+  }
+  if (w.category === 'bag') {
+    return [
+      f('Category', 'Bag'),
+      f('Type', esc(w.bag_type)),
+      f('Material', esc(w.bag_material)),
+      f('Colour', esc(w.bag_colour)),
+      f('Size', esc(w.bag_size)),
+      f('Hardware', esc(w.hardware)),
+      f('Date code', esc(w.date_code)),
+      f('Reference', esc(w.reference)),
+      f('Serial number', esc(w.serial)),
+    ].join('');
+  }
+  return [f('Reference', esc(w.reference)), f('Serial number', esc(w.serial)), f('Watch date', esc(w.watch_date))].join('');
 }
 
 /*
@@ -700,12 +749,18 @@ async function openMove(id, key, after) {
 /* What the copy button puts on the clipboard: the card as text, for a WhatsApp message. */
 function cardText(w) {
   const plain = (n, cur) => (n === null || n === undefined ? '' : money(n, cur, { plain: true }));
+  const own =
+    w.category === 'jewellery'
+      ? [['Type', w.jewel_type], ['Material', w.material], ['Gemstones', w.gemstones], ['Carats', w.carats], ['Colour', w.gem_colour], ['Chain length', w.chain_length]]
+      : w.category === 'bag'
+        ? [['Type', w.bag_type], ['Material', w.bag_material], ['Colour', w.bag_colour], ['Size', w.bag_size], ['Hardware', w.hardware], ['Date code', w.date_code]]
+        : [['Watch date', w.watch_date]];
   const lines = [
     w.title,
     ['Reference', w.reference],
     ['Serial', w.serial],
     ['Stock number', w.stock_no],
-    ['Watch date', w.watch_date],
+    ...own,
     ['Location', w.location],
     ['Retail price', plain(w.retail_price, w.retail_currency)],
     ['Website price', plain(w.website_price, w.website_currency)],
@@ -751,9 +806,11 @@ function priceStrip(w) {
  * already; box, papers and service papers as one sentence.
  */
 const HERO_SKIP = new Set(['stock_no', 'brand', 'model', 'reference', 'title', 'status', 'location', 'box', 'papers', 'service_papers']);
+/* The groups whose facts sit in the dossier's head: the item's own, and its category's. */
+const HEAD_GROUPS = new Set(['Watch', 'Specification', 'Jewellery', 'Bag']);
 function heroSpec(w) {
-  const facts = state.meta.fields
-    .filter((f) => (f.group === 'Watch' || f.group === 'Specification') && !HERO_SKIP.has(f.key) && !f.key.endsWith('_currency'))
+  const facts = fieldsFor(w.category)
+    .filter((f) => HEAD_GROUPS.has(f.group) && !HERO_SKIP.has(f.key) && f.key !== 'category' && !f.key.endsWith('_currency'))
     .map((f) => [f.label, display(f, w), lockMarkOf(w, f.key)])
     .filter(([, v]) => v);
   const yes = [w.box === true && 'box', w.papers === true && 'papers', w.service_papers === true && 'service papers'].filter(Boolean);
@@ -824,7 +881,6 @@ async function showWatch(id, { keepEdit = false, edit = false } = {}) {
 function renderWatch() {
   const { w } = current;
   const editor = can('editor') && !w.deleted_at;
-  const groups = [...new Set(state.meta.fields.map((f) => f.group))];
   // The dossier (30 Oct 2026): the brand small over the model and reference, as on a certificate; the watch's own
   // facts beside its picture; the money as one ledger line at the foot. The rest of the record is below.
   const brand = w.brand && w.display_title.toLowerCase().startsWith(w.brand.toLowerCase()) ? w.brand : '';
@@ -846,6 +902,7 @@ function renderWatch() {
             ${brand ? `<div class="brand-line">${esc(brand)}</div>` : ''}
             <h1>${esc(title)}</h1>
             <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
+              ${w.category && w.category !== 'watch' ? `<span>${esc(catOf(w.category).label)}</span>` : ''}
               ${w.location ? `<span>${esc(w.location)}</span>` : ''}
               <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
             ${statusLine(w)}
@@ -879,7 +936,7 @@ function renderWatch() {
   renderWatchClients();
   renderPapers();
   renderCosts();
-  renderDetails(groups);
+  renderDetails();
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
   // And whatever our copy of the accounts app has on it — the ledger, its payments — the same way.
@@ -1169,7 +1226,7 @@ function inputFor(f, w) {
   const name = `name="${f.key}"`;
   switch (f.type) {
     case 'enum':
-      return `<select ${name}>${f.options.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>${esc(statusLabel(o))}</option>`).join('')}</select>`;
+      return `<select ${name}>${f.options.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>${esc(enumLabel(f, o))}</option>`).join('')}</select>`;
     case 'bool':
       return `<select ${name}><option value="">Not stated</option><option value="true" ${v === true ? 'selected' : ''}>Yes</option><option value="false" ${v === false ? 'selected' : ''}>No</option></select>`;
     case 'date':
@@ -1194,11 +1251,16 @@ function inputFor(f, w) {
   }
 }
 
-function renderDetails(groups) {
+function renderDetails() {
   const { w } = current;
   const form = $('#details');
   const locked = new Set(w.locked_fields || []);
   const lockMark = (k) => lockMarkOf(w, k);
+  // The fields of ITS category (5 Nov 2026). While editing, the category picked in the form rules — a watch
+  // re-filed as jewellery shows the jewellery fields at once, what was typed so far kept (current.draft).
+  const shown = current.editing && current.draft ? current.draft : w;
+  const fields = fieldsFor(shown.category);
+  const groups = [...new Set(fields.map((f) => f.group))];
 
   // Reading: the rest of the record — Purchase, Prices, Sale, Notes — two across where the screen allows (.fgroups),
   // one list down a phone. The Watch and Specification facts are in the dossier's head (heroSpec); the description
@@ -1208,8 +1270,8 @@ function renderDetails(groups) {
     let empty = 0;
     const sections = groups
       .map((g) => {
-        const inHead = g === 'Watch' || g === 'Specification';
-        const fs = state.meta.fields.filter((f) => f.group === g && !f.key.endsWith('_currency') && f.key !== 'description');
+        const inHead = HEAD_GROUPS.has(g);
+        const fs = fields.filter((f) => f.group === g && !f.key.endsWith('_currency') && f.key !== 'description');
         const rows = fs
           .map((f) => {
             const shown = display(f, w);
@@ -1220,7 +1282,7 @@ function renderDetails(groups) {
             return show ? `<dt>${esc(f.label)}</dt><dd>${shown || '<span class="blank">—</span>'}${lockMark(f.key)}</dd>` : '';
           })
           .join('');
-        return rows ? `<section class="fgroup"><h3>${esc(g)}</h3><dl class="fields">${rows}</dl></section>` : '';
+        return rows ? `<section class="fgroup"><h3>${esc(groupName(g, w.category))}</h3><dl class="fields">${rows}</dl></section>` : '';
       })
       .join('');
     form.innerHTML =
@@ -1232,7 +1294,7 @@ function renderDetails(groups) {
         : '');
     $('#show-empty')?.addEventListener('click', () => {
       current.showEmpty = !current.showEmpty;
-      renderDetails(groups);
+      renderDetails();
     });
     $$('#app [data-unlock]').forEach((a) =>
       a.addEventListener('click', async (e) => {
@@ -1249,25 +1311,19 @@ function renderDetails(groups) {
 
   form.innerHTML = `
     ${w.origin !== 'manual' ? `<p class="note info" style="margin-top:0">Until the switch-over Chrono Key is the master. A field you change here is kept as you set it: the next copy from Chrono Key leaves it alone.</p>` : ''}
-    ${groups
-      .map(
-        (g) => `<h3 style="margin-top:14px">${esc(g)}</h3><div class="form-grid">${state.meta.fields
-          .filter((f) => f.group === g)
-          .map(
-            (f) =>
-              `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(f.label)}${inputFor(f, w)}${
-                f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''
-              }</label>`
-          )
-          .join('')}</div>`
-      )
-      .join('')}
+    ${formGroups(fields, shown)}
     <datalist id="currencies">${state.meta.currencies.map((c) => `<option value="${c}">`).join('')}</datalist>
     <div class="err" id="form-err"></div>
     <div class="sticky-save"><button class="btn primary">Save changes</button><button type="button" class="btn" id="cancel">Cancel</button></div>`;
 
+  // Another category: the form is drawn again with that category's fields, what was typed kept.
+  form.elements.category?.addEventListener('change', (e) => {
+    current.draft = { ...(current.draft || w), ...formValues(form), category: e.target.value };
+    renderDetails();
+  });
   $('#cancel').addEventListener('click', () => {
     current.editing = false;
+    current.draft = null;
     renderWatch();
     loadSide(w.id);
   });
@@ -1287,6 +1343,40 @@ function renderDetails(groups) {
       $('#form-err').textContent = err.message;
     }
   };
+}
+
+/* The form's groups, each heading over its fields — the item's category deciding which (fieldsFor). */
+function formGroups(fields, values) {
+  const groups = [...new Set(fields.map((f) => f.group))];
+  return groups
+    .map(
+      (g) => `<h3 style="margin-top:14px">${esc(groupName(g, values.category))}</h3><div class="form-grid">${fields
+        .filter((f) => f.group === g)
+        .map(
+          (f) =>
+            `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(f.label)}${inputFor(f, values)}${
+              f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''
+            }</label>`
+        )
+        .join('')}</div>`
+    )
+    .join('');
+}
+
+/* Everything the form holds, as typed — to carry across a redraw. */
+function formValues(form) {
+  const out = {};
+  for (const f of state.meta.fields) {
+    if (f.type === 'payments') {
+      const pay = {};
+      for (const inp of $$(`[data-pay="${f.key}"] input`, form)) if (inp.value.trim()) pay[inp.dataset.kind] = inp.value.trim();
+      if ($(`[data-pay="${f.key}"]`, form)) out[f.key] = pay;
+      continue;
+    }
+    const el = form.elements[f.key];
+    if (el) out[f.key] = f.type === 'bool' ? (el.value === 'true' ? true : el.value === 'false' ? false : null) : el.value;
+  }
+  return out;
 }
 
 /** Only the fields that differ from what is held, so an edit never resends — and re-locks — the rest. */
@@ -2164,35 +2254,57 @@ function showNewExpense() {
 
 /* ── new watch ────────────────────────────────────────────────────── */
 
-function showNew() {
+/*
+ * A new item (5 Nov 2026: jewellery and bags beside the watches): first what
+ * it is — a watch, a piece of jewellery or a bag — then that category's form.
+ * The stock number is the next in the one sequence, already filled in; it can
+ * be changed. `#/new/jewellery` and `#/new/bag` open on that category.
+ */
+async function showNew(cat) {
   if (!can('editor')) return (location.hash = '#/');
-  const blank = { status: 'in_stock', locked_fields: [] };
+  const blank = { status: 'in_stock', category: catOf(cat).key, locked_fields: [] };
   for (const f of state.meta.fields) if (!(f.key in blank)) blank[f.key] = f.type === 'payments' ? {} : null;
-  const groups = [...new Set(state.meta.fields.map((f) => f.group))];
-  $('#app').innerHTML = `<h1>New watch</h1><p class="sub">Photos can be added once it is saved.</p>
-    <form class="panel" id="newform">${groups
-      .map(
-        (g) => `<h3 style="margin-top:14px">${esc(g)}</h3><div class="form-grid">${state.meta.fields
-          .filter((f) => f.group === g)
-          .map((f) => `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(f.label)}${inputFor(f, blank)}</label>`)
-          .join('')}</div>`
-      )
-      .join('')}
-      <datalist id="currencies">${state.meta.currencies.map((c) => `<option value="${c}">`).join('')}</datalist>
-      <div class="err" id="form-err"></div>
-      <div class="sticky-save"><button class="btn primary">Create watch</button><a class="btn" href="#/">Cancel</a></div>
-    </form>`;
-  $('#newform').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const patch = readForm(e.target, blank);
-    patch.status = e.target.elements.status.value;
-    try {
-      const r = await api('/api/watches', { method: 'POST', body: patch });
-      location.hash = `#/watch/${r.id}`;
-    } catch (err) {
-      $('#form-err').textContent = err.message;
-    }
-  });
+  let next = '';
+  try {
+    next = (await api('/api/watches/next-stock-no')).stock_no;
+  } catch {}
+  blank.stock_no = next;
+  const draw = () => {
+    const c = catOf(blank.category);
+    const fields = fieldsFor(c.key).filter((f) => f.key !== 'category');
+    $('#app').innerHTML = `<h1>New item</h1><p class="sub">What is it? Photos can be added once it is saved.</p>
+      <div class="pills" id="new-cat" style="margin-bottom:12px">${state.meta.categories
+        .map((k) => `<button type="button" class="pill ${k.key === c.key ? 'on' : ''}" data-v="${esc(k.key)}">${esc(k.label)}</button>`)
+        .join('')}</div>
+      <form class="panel" id="newform">
+        <input type="hidden" name="category" value="${esc(c.key)}">
+        ${formGroups(fields, blank)}
+        <datalist id="currencies">${state.meta.currencies.map((x) => `<option value="${x}">`).join('')}</datalist>
+        <div class="err" id="form-err"></div>
+        <div class="sticky-save"><button class="btn primary">Create ${esc(c.label.toLowerCase())}</button><a class="btn" href="#/">Cancel</a></div>
+      </form>`;
+    if (next) $('#newform').elements.stock_no.title = `Next in the sequence: ${next}`;
+    $$('#new-cat .pill').forEach((b) =>
+      b.addEventListener('click', () => {
+        Object.assign(blank, formValues($('#newform')), { category: b.dataset.v });
+        draw();
+      })
+    );
+    $('#newform').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const patch = formValues(e.target);
+      for (const k of Object.keys(patch)) if (patch[k] === null || patch[k] === '' || (typeof patch[k] === 'object' && !Object.keys(patch[k]).length)) delete patch[k];
+      patch.category = c.key;
+      patch.status = e.target.elements.status.value;
+      try {
+        const r = await api('/api/watches', { method: 'POST', body: patch });
+        location.hash = `#/watch/${r.id}`;
+      } catch (err) {
+        $('#form-err').textContent = err.message;
+      }
+    });
+  };
+  draw();
 }
 
 /* ── import ───────────────────────────────────────────────────────── */

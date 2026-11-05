@@ -17,31 +17,66 @@ export const STATUSES = [
 ];
 
 export const LOCATIONS = ['Dubai', 'UK', 'Europe', 'HK'];
+
+/*
+ * What a record IS (asked 5 Nov 2026): a watch, a piece of jewellery or a bag
+ * — one stock number sequence for all three. A field marked `only` belongs to
+ * that category alone: the form, the page and the model's picture leave it
+ * out on the others (`fieldsFor`). Everything copied from Chrono Key and the
+ * vault is a watch; jewellery and bags are added here.
+ */
+export const CATEGORIES = [
+  { key: 'watch', label: 'Watch', plural: 'Watches', a: 'a watch' },
+  { key: 'jewellery', label: 'Jewellery', plural: 'Jewellery', a: 'a piece of jewellery' },
+  { key: 'bag', label: 'Bag', plural: 'Bags', a: 'a bag' },
+];
+export const CATEGORY = Object.fromEntries(CATEGORIES.map((c) => [c.key, c]));
 export const CURRENCIES = ['EUR', 'USD', 'GBP', 'AED', 'HKD', 'CHF', 'USDT'];
 
 export const FIELDS = [
   { key: 'stock_no', label: 'Stock number', type: 'text', group: 'Watch' },
+  { key: 'category', label: 'Category', type: 'enum', options: CATEGORIES.map((c) => c.key), labels: Object.fromEntries(CATEGORIES.map((c) => [c.key, c.label])), group: 'Watch' },
   { key: 'brand', label: 'Brand', type: 'text', group: 'Watch' },
   { key: 'model', label: 'Model', type: 'text', group: 'Watch' },
   { key: 'reference', label: 'Reference', type: 'text', group: 'Watch' },
   { key: 'serial', label: 'Serial', type: 'text', group: 'Watch' },
-  { key: 'watch_date', label: 'Watch date', type: 'text', group: 'Watch', hint: 'As on the card, e.g. 04/2026' },
+  { key: 'watch_date', label: 'Watch date', type: 'text', group: 'Watch', hint: 'As on the card, e.g. 04/2026', only: 'watch' },
   { key: 'title', label: 'Title', type: 'text', group: 'Watch', hint: 'Blank: brand, model and reference' },
-  { key: 'status', label: 'Status', type: 'enum', options: STATUSES.map((s) => s.key), group: 'Watch' },
+  { key: 'status', label: 'Status', type: 'enum', options: STATUSES.map((s) => s.key), labels: Object.fromEntries(STATUSES.map((s) => [s.key, s.label])), group: 'Watch' },
   { key: 'location', label: 'Location', type: 'text', suggest: LOCATIONS, group: 'Watch' },
 
   { key: 'condition', label: 'Condition', type: 'text', suggest: ['New', 'Unworn', 'Pre Owned'], group: 'Specification' },
-  { key: 'dial', label: 'Dial', type: 'text', group: 'Specification' },
-  { key: 'case_material', label: 'Case', type: 'text', group: 'Specification' },
-  { key: 'case_size', label: 'Size', type: 'text', group: 'Specification' },
-  { key: 'bezel', label: 'Bezel', type: 'text', group: 'Specification' },
-  { key: 'bracelet', label: 'Bracelet / strap', type: 'text', group: 'Specification' },
-  { key: 'movement', label: 'Movement / calibre', type: 'text', group: 'Specification' },
+  { key: 'dial', label: 'Dial', type: 'text', group: 'Specification', only: 'watch' },
+  { key: 'case_material', label: 'Case', type: 'text', group: 'Specification', only: 'watch' },
+  { key: 'case_size', label: 'Size', type: 'text', group: 'Specification', only: 'watch' },
+  { key: 'bezel', label: 'Bezel', type: 'text', group: 'Specification', only: 'watch' },
+  { key: 'bracelet', label: 'Bracelet / strap', type: 'text', group: 'Specification', only: 'watch' },
+  { key: 'movement', label: 'Movement / calibre', type: 'text', group: 'Specification', only: 'watch' },
   { key: 'box', label: 'Box', type: 'bool', group: 'Specification' },
   { key: 'papers', label: 'Papers', type: 'bool', group: 'Specification' },
-  { key: 'service_papers', label: 'Service papers', type: 'bool', group: 'Specification' },
+  { key: 'service_papers', label: 'Service papers', type: 'bool', group: 'Specification', only: 'watch' },
   { key: 'accessories', label: 'Accessories', type: 'text', group: 'Specification' },
   { key: 'customisation', label: 'Customisation', type: 'text', group: 'Specification' },
+
+  // A piece of jewellery's own description (5 Nov 2026) — written as it is on the certificate or the tag, never converted.
+  { key: 'jewel_type', label: 'Type', type: 'text', suggest: ['Ring', 'Necklace', 'Bracelet', 'Earrings', 'Pendant', 'Brooch', 'Cufflinks', 'Set'], group: 'Jewellery', only: 'jewellery' },
+  { key: 'material', label: 'Material', type: 'text', suggest: ['18k yellow gold', '18k white gold', '18k rose gold', 'Platinum', 'Silver'], group: 'Jewellery', only: 'jewellery' },
+  { key: 'gemstones', label: 'Gemstones', type: 'text', suggest: ['Diamond', 'Sapphire', 'Emerald', 'Ruby', 'Pearl'], group: 'Jewellery', only: 'jewellery', hint: 'What the stones are, and how many' },
+  { key: 'carats', label: 'Carats', type: 'text', group: 'Jewellery', only: 'jewellery', hint: 'The stones\u2019 weight, e.g. 2.05 ct' },
+  { key: 'gem_colour', label: 'Colour', type: 'text', group: 'Jewellery', only: 'jewellery', hint: 'The stone\u2019s colour or grade, e.g. G' },
+  { key: 'gem_clarity', label: 'Clarity', type: 'text', suggest: ['FL', 'IF', 'VVS1', 'VVS2', 'VS1', 'VS2', 'SI1', 'SI2'], group: 'Jewellery', only: 'jewellery' },
+  { key: 'chain_length', label: 'Chain length', type: 'text', group: 'Jewellery', only: 'jewellery', hint: 'e.g. 45 cm' },
+  { key: 'ring_size', label: 'Ring size', type: 'text', group: 'Jewellery', only: 'jewellery' },
+  { key: 'weight', label: 'Weight', type: 'text', group: 'Jewellery', only: 'jewellery', hint: 'e.g. 12.4 g' },
+  { key: 'certificate', label: 'Certificate / hallmark', type: 'text', group: 'Jewellery', only: 'jewellery', hint: 'GIA or IGI number, hallmark' },
+
+  // A bag's (5 Nov 2026).
+  { key: 'bag_type', label: 'Type', type: 'text', suggest: ['Tote', 'Shoulder bag', 'Crossbody', 'Clutch', 'Backpack', 'Wallet', 'Travel bag'], group: 'Bag', only: 'bag' },
+  { key: 'bag_material', label: 'Material', type: 'text', suggest: ['Togo leather', 'Epsom leather', 'Caviar leather', 'Lambskin', 'Canvas', 'Crocodile', 'Ostrich'], group: 'Bag', only: 'bag' },
+  { key: 'bag_colour', label: 'Colour', type: 'text', group: 'Bag', only: 'bag' },
+  { key: 'bag_size', label: 'Size', type: 'text', group: 'Bag', only: 'bag', hint: 'e.g. 25 cm, Medium' },
+  { key: 'hardware', label: 'Hardware', type: 'text', suggest: ['Gold', 'Palladium', 'Silver-tone', 'Ruthenium', 'Rose gold'], group: 'Bag', only: 'bag' },
+  { key: 'date_code', label: 'Date code / year', type: 'text', group: 'Bag', only: 'bag', hint: 'The maker\u2019s stamp, e.g. Z 2021' },
 
   { key: 'order_type', label: 'Order type', type: 'text', suggest: ['INVENTORY', 'CONSIGNMENT'], group: 'Purchase' },
   { key: 'purchase_date', label: 'Purchase date', type: 'date', group: 'Purchase' },
@@ -92,6 +127,9 @@ export const PAYMENT_KINDS = [
 // No prototype: a key from a request ("constructor", "toString") must not
 // pass as a field — field names go into SQL as column names.
 export const FIELD = Object.assign(Object.create(null), Object.fromEntries(FIELDS.map((f) => [f.key, f])));
+
+/** The fields a record of this category has: the shared ones, and its own. */
+export const fieldsFor = (category) => FIELDS.filter((f) => !f.only || f.only === (category || 'watch'));
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 
@@ -214,5 +252,8 @@ export function displayTitle(w) {
   if (brand && model.toLowerCase().startsWith(`${brand.toLowerCase()} `)) model = model.slice(brand.length + 1);
   // …and "Richard Mille RM 67-01 RM 67-01": a model that already names the reference.
   const ref = w.reference && !model.toLowerCase().includes(String(w.reference).toLowerCase()) ? w.reference : '';
-  return [brand, model, ref].filter(Boolean).join(' ').trim() || (w.stock_no ? `Stock ${w.stock_no}` : 'Untitled watch');
+  // A piece of jewellery or a bag with no model: "Cartier ring", "Hermès tote".
+  const kind = w.category === 'jewellery' ? w.jewel_type : w.category === 'bag' ? w.bag_type : '';
+  const named = model || ref ? [brand, model, ref].filter(Boolean).join(' ').trim() : [brand, kind && String(kind).toLowerCase()].filter(Boolean).join(' ').trim();
+  return named || (w.stock_no ? `Stock ${w.stock_no}` : `Untitled ${(CATEGORY[w.category] || CATEGORY.watch).label.toLowerCase()}`);
 }
