@@ -324,7 +324,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .tile.st-sold { border-bottom-color: var(--gold); }
 .tile.st-deleted { border-bottom-color: var(--bad); }
 .tile .pic { aspect-ratio: 1 / 1; background: #f1ede6; display: grid; place-items: center; color: var(--muted); font-size: 13px; overflow: hidden; position: relative; }
-.tile .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; } /* pinned: see .gallery .main img */
 .tile .pic-n { position: absolute; top: 8px; right: 8px; background: rgba(29, 27, 24, .78); color: #fff; font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 999px; }
 .tile .badge { position: absolute; top: 8px; left: 8px; font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; padding: 3px 7px; border-radius: 3px;
   box-shadow: 0 1px 3px rgba(0,0,0,.18); }
@@ -443,7 +443,9 @@ table.list.clients a { text-decoration: none; }
    long list, each label close to its value. */
 .watch-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
 .gallery .main { aspect-ratio: 1/1; background: #f1ede6; border-radius: var(--radius); display: grid; place-items: center; overflow: hidden; position: relative; }
-.gallery .main img { width: 100%; height: 100%; object-fit: contain; background: #f1ede6; }
+/* Pinned to the box, not laid in the grid: a grid row grows to a portrait picture's own height, and the square box then
+   clipped its foot instead of fitting it whole (reported 5 Nov 2026: "the picture is not aligned as middle"). */
+.gallery .main img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #f1ede6; }
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; margin-top: 10px; }
 .thumb { position: relative; aspect-ratio: 1/1; border-radius: 8px; overflow: hidden; border: 2px solid transparent; background: #eee; cursor: pointer; padding: 0; }
 .thumb.on { border-color: var(--gold); }
