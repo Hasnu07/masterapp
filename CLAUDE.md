@@ -813,6 +813,61 @@ was added and in its Papers at the foot; the model's brief lists their names.
 Chrono Key's own 249 PDFs are still not copied (the detail pass refuses them
 as "not a picture") — the next step for this table.
 
+## Jewellery and bags (5 Nov 2026)
+
+Asked for: "add category of jewellery and bags here too; stock number
+sequence stays the same, but new categories with accompanying detail
+categories for those — material, carats, gemstones, colour, chain length etc.;
+same with bags". Migration 015 (`category` on `watches`, and the two
+categories' own columns).
+
+- **One table, one sequence.** A piece of jewellery or a bag is a record in
+  `watches` like any watch: the same stock number run (the unique index as it
+  was — a number is taken across categories), the same purchase, prices,
+  sale, moves, photos, papers, costs, history, Logistics / Accounts / Timeline
+  by stock number. `category` ∈ watch · jewellery · bag, default `watch`:
+  everything copied from Chrono Key and the vault is a watch, and the syncs
+  never write the column, so a record re-filed here keeps its category
+  (locked like any edit on a copied record).
+- **Whose field is whose** (`fields.js`): a field with `only` belongs to that
+  category — the watch's dial, case, size, bezel, bracelet, movement, service
+  papers and watch date are `only: 'watch'`; group **Jewellery** (type,
+  material, gemstones, carats, colour, clarity, chain length, ring size,
+  weight, certificate / hallmark) is `only: 'jewellery'`; group **Bag** (type,
+  material, colour, size, hardware, date code / year) `only: 'bag'`. Brand,
+  model, reference, serial, title, status, location, condition, box, papers,
+  accessories, customisation and everything about the money are shared.
+  `fieldsFor(category)` is the list the form, the page's head and the model's
+  picture use; `CATEGORIES` goes out in `/api/meta`. An enum field carries
+  its `labels` now (status, category), so the console does not assume every
+  enum is a status. All of it is written as typed (text) — "2.05 ct",
+  "45 cm" — never converted.
+- **Inventory**: a third row of pills — Watches / Jewellery / Bags, every one
+  shown even at 0, "All categories" — between the statuses and the places
+  (`?category=`, its own facet, the counts over what the other filters
+  allow). The count line says "watches", "bags", "pieces of jewellery" or
+  "items". The card's facts are the category's (`tileFacts`): a watch's
+  reference, serial and date; jewellery's type, metal, stones, carats, colour,
+  chain length; a bag's type, leather, colour, size, hardware, date code — and
+  the card's "Category" row (Chrono Key's name for the place) is now
+  **"Place"**, because Category means watch / jewellery / bag. Search finds a
+  piece by its material, stones or type. The Share text carries the same.
+- **The page**: the head's facts are the category's; the group "Watch" is
+  headed "Item" on anything else; the category stands beside the stock number
+  when it is not a watch. In the edit form, changing Category redraws the
+  form with that category's fields at once, keeping what was typed
+  (`current.draft`, `formValues`). `displayTitle`: a piece with no model is
+  "Cartier ring", "Hermès tote".
+- **New item** (`#/new`, `#/new/jewellery`, `#/new/bag`; the menu's "New
+  watch" is "New item"): first what it is — three pills — then that
+  category's form, with the stock number already filled in as the **next in
+  the sequence** (`GET /api/watches/next-stock-no`: one more than the highest
+  number held, deleted records included; editors), changeable.
+- Test in `test/api.test.js` ("jewellery and bags …"). Not asked for and not
+  done: a CSV or Chrono Key import of jewellery (Chrono Key's "Jewellery"
+  category is a PLACE, HK, and stays one); a category filter on the sidebar
+  (its parts are the statuses).
+
 ## Being polite to Chrono Key
 
 Somebody else's server, and the real inventory. Read-only; two pages at a

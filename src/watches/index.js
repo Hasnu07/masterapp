@@ -35,7 +35,7 @@ const SORTS = Object.assign(Object.create(null), {
  * pill never promises a number its tap does not give.
  */
 export async function listWatches(opts = {}) {
-  const { q = '', status = '', location = '', brand = '', deleted = false, sort = 'newest' } = opts;
+  const { q = '', status = '', location = '', brand = '', category = '', deleted = false, sort = 'newest' } = opts;
   const limit = Math.min(Math.max(Number(opts.limit) || 60, 1), 200);
   const offset = Math.max(Number(opts.offset) || 0, 0);
 
@@ -58,6 +58,8 @@ export async function listWatches(opts = {}) {
           `(w.brand ILIKE '%'||$?||'%' OR w.model ILIKE '%'||$?||'%' OR w.reference ILIKE '%'||$?||'%'
             OR w.serial ILIKE '%'||$?||'%' OR w.title ILIKE '%'||$?||'%' OR w.dial ILIKE '%'||$?||'%'
             OR w.purchased_from ILIKE '%'||$?||'%' OR w.sold_to ILIKE '%'||$?||'%' OR w.notes ILIKE '%'||$?||'%'
+            OR w.material ILIKE '%'||$?||'%' OR w.gemstones ILIKE '%'||$?||'%' OR w.bag_material ILIKE '%'||$?||'%'
+            OR w.jewel_type ILIKE '%'||$?||'%' OR w.bag_type ILIKE '%'||$?||'%'
             OR w.stock_no = $?)`,
           word
         );
@@ -89,13 +91,15 @@ export async function listWatches(opts = {}) {
     status: ['w.status', statuses.length > 1 ? statuses : statuses[0] || ''],
     location: ['w.location', location],
     brand: ['w.brand', brand],
+    category: ['w.category', category],
   };
   const others = (skip) => Object.entries(f).filter(([k, [, v]]) => k !== skip && v).map(([, cv]) => cv);
 
-  const [byStatus, byLocation, byBrand] = await Promise.all([
+  const [byStatus, byLocation, byBrand, byCategory] = await Promise.all([
     facet('w.status', others('status')),
     facet('w.location', others('location')),
     facet('w.brand', others('brand')),
+    facet('w.category', others('category')),
   ]);
 
   for (const [col, v] of others(null)) add(is(col, v, '?'), v);
@@ -126,8 +130,20 @@ export async function listWatches(opts = {}) {
   return {
     total: rows[0]?.total ?? 0,
     watches: rows.map(summary),
-    facets: { status: byStatus, location: byLocation, brand: byBrand.slice(0, 40) },
+    facets: { status: byStatus, location: byLocation, brand: byBrand.slice(0, 40), category: byCategory },
   };
+}
+
+/*
+ * The next stock number in the one sequence (5 Nov 2026: jewellery and bags
+ * take their numbers from the same run as the watches): one more than the
+ * highest number held, deleted records included — a number is never reused.
+ */
+export async function nextStockNo() {
+  const { rows } = await query(
+    `SELECT max(NULLIF(regexp_replace(stock_no, '\\D', '', 'g'), '')::bigint) AS n FROM watches WHERE stock_no ~ '^\\d+$'`
+  );
+  return String((Number(rows[0]?.n) || 0) + 1);
 }
 
 const summary = (w) => ({
@@ -141,6 +157,20 @@ const summary = (w) => ({
   watch_date: w.watch_date,
   location: w.location,
   status: w.status,
+  category: w.category,
+  // What the card says about the item itself, by category (5 Nov 2026).
+  jewel_type: w.jewel_type,
+  material: w.material,
+  carats: w.carats,
+  gemstones: w.gemstones,
+  gem_colour: w.gem_colour,
+  chain_length: w.chain_length,
+  bag_type: w.bag_type,
+  bag_material: w.bag_material,
+  bag_colour: w.bag_colour,
+  bag_size: w.bag_size,
+  hardware: w.hardware,
+  date_code: w.date_code,
   box: w.box,
   papers: w.papers,
   b2b_price: w.b2b_price,

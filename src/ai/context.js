@@ -49,7 +49,10 @@ export function trim(v, depth = 0) {
 }
 
 const WATCH_KEYS = [
-  'id', 'stock_no', 'display_title', 'brand', 'model', 'reference', 'serial', 'watch_date', 'status', 'location', 'origin', 'condition', 'dial', 'size', 'case_material', 'bezel', 'bracelet',
+  'id', 'stock_no', 'category', 'display_title', 'brand', 'model', 'reference', 'serial', 'watch_date', 'status', 'location', 'origin', 'condition', 'dial', 'size', 'case_material', 'bezel', 'bracelet',
+  // jewellery and bags (5 Nov 2026) — blank on a watch
+  'jewel_type', 'material', 'carats', 'gemstones', 'gem_colour', 'gem_clarity', 'chain_length', 'ring_size', 'weight', 'certificate',
+  'bag_type', 'bag_material', 'bag_colour', 'bag_size', 'hardware', 'date_code',
   'papers', 'service_papers', 'box', 'description', 'notes', 'purchase_date', 'purchased_from', 'purchase_price', 'purchase_currency', 'purchase_price_eur', 'purchase_payments',
   'sale_date', 'sold_to', 'sale_price', 'sale_currency', 'sale_price_eur', 'sale_payments', 'retail_price', 'retail_currency', 'website_price', 'website_currency',
   'b2b_price', 'b2c_price', 'chrono24_price', 'order_type', 'ck_product_id', 'locked_fields', 'deleted_at', 'created_at', 'updated_at',
