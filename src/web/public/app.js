@@ -306,6 +306,30 @@ function showStock(key) {
   $$('#subnav a').forEach((a) => a.classList.toggle('on', a.dataset.stock === state.list.status));
   return showInventory();
 }
+/*
+ * Card size (asked 5 Nov 2026: "a slider to zoom in and zoom out cards by
+ * preference"): how many cards fit across, 2 to 8, kept in this browser;
+ * four unless set. The slider runs from small to large, so its value is the
+ * other way round from the count. A narrow screen still caps the count as
+ * the stylesheet does, and the gutters grow with the cards.
+ */
+const CARDS_KEY = 'masterapp.cardsAcross';
+function cardsAcross() {
+  const n = Number(localStorage.getItem(CARDS_KEY));
+  return n >= 2 && n <= 8 ? n : 4;
+}
+function applyCardSize() {
+  const g = $('#grid');
+  if (!g) return;
+  const w = window.innerWidth;
+  const cap = w <= 420 ? 1 : w <= 900 ? 2 : w <= 1200 ? 3 : w <= 1500 ? 4 : 8;
+  const n = Math.min(cardsAcross(), cap);
+  g.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+  const gx = Math.max(12, Math.round(160 / n));
+  g.style.gap = `${gx + 4}px ${gx}px`;
+}
+window.addEventListener('resize', applyCardSize);
+
 async function showInventory() {
   const L = state.list;
   const about = {
@@ -333,9 +357,12 @@ async function showInventory() {
         <option value="brand">Brand A–Z</option>
       </select>
     </div>
-    <div class="stack" style="margin-bottom:10px">
-      <div class="pills" id="p-status"></div>
-      <div class="pills" id="p-location"></div>
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+      <div class="stack">
+        <div class="pills" id="p-status"></div>
+        <div class="pills" id="p-location"></div>
+      </div>
+      <label class="card-zoom count" title="Card size — fewer cards across means bigger cards. Remembered in this browser."><span>Card size</span><small>−</small><input type="range" id="card-size" min="2" max="8" step="1" value="${10 - cardsAcross()}" aria-label="Card size"><small>+</small></label>
     </div>
     <div class="row" style="justify-content:space-between">
       <div class="count" id="count"></div>
@@ -352,6 +379,11 @@ async function showInventory() {
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="more">Load more</button></div>`;
 
   $('#sort').value = L.sort;
+  applyCardSize();
+  $('#card-size').addEventListener('input', (e) => {
+    localStorage.setItem(CARDS_KEY, String(10 - Number(e.target.value)));
+    applyCardSize();
+  });
   let timer;
   $('#q').addEventListener('input', (e) => {
     clearTimeout(timer);
