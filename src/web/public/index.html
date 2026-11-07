@@ -111,8 +111,9 @@ header.bar { position: sticky; top: 0; z-index: 20; background: rgba(255,255,255
 /* The console fills the screen (asked 27 Oct 2026: "wide screen the whole app instead of aligned at middle"). */
 main { width: 100%; padding: 18px 20px 60px; }
 /* The logistics app itself, inside the ERP (asked 30 Oct 2026): one frame filling the screen under the bar; its height is set by lgAppFit(). */
-#lg-app-host { width: 100%; background: #f4f3fb; }
-#lg-app-host iframe { display: block; width: 100%; height: 100%; border: 0; }
+#lg-app-host, #acc-app-host { width: 100%; background: #f4f3fb; }
+#acc-app-host { background: #0c0b09; }
+#lg-app-host iframe, #acc-app-host iframe { display: block; width: 100%; height: 100%; border: 0; }
 /* The watch's logistics as a window in the console's look (showLogisticsWindow): one line on where it is, then its story. */
 .lgw { width: min(920px, 94vw); max-height: 92vh; padding: 0; border: 0; border-radius: 14px; background: var(--card); color: var(--ink);
   box-shadow: 0 24px 64px rgba(0,0,0,.35); overflow: hidden; }
@@ -158,6 +159,85 @@ main { width: 100%; padding: 18px 20px 60px; }
   .lgdoc-head { flex-wrap: wrap; }
 }
 /* A shipment's papers — customs documents, invoices — by name, each opening on its own. */
+/* The Accounts window's track of a leg: posted, each payment with its wallet and what was left, the remainder (showAccountsWindow). */
+.acc-track { margin-top: 8px; border-top: 1px dashed var(--line); }
+.acc-track > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.acc-track > div:last-child { border-bottom: 0; }
+.acc-track .acc-pay > span:first-child { min-width: 0; }
+.acc-track .acc-left { white-space: nowrap; color: var(--muted); }
+.acc-track .lgw-total { font-weight: 600; }
+/* The watch's Timeline (timeline.js): the three apps' lines on where it stands, then one story with a tag per line saying whose it is. */
+.tl-nows { display: grid; gap: 6px; margin: 12px 0 10px; }
+.tl-now { font: 500 17px/1.35 var(--serif); }
+.tl-now.sold { color: var(--gold); } .tl-now.moving { color: var(--blue); } .tl-now.warn { color: var(--warn); } .tl-now.here { color: var(--good); }
+.tl-src { display: inline-block; font: 600 10.5px/1 var(--sans); letter-spacing: .8px; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px 2px; margin-right: 8px; vertical-align: 2px; }
+.tl-src.tl-logistics { color: var(--blue); border-color: currentColor; }
+.tl-src.tl-accounts { color: var(--gold); border-color: currentColor; }
+.tl-src.tl-chronokey, .tl-src.tl-erp { color: var(--ink); }
+/* Claude in the console (ask.js): the brief at the top of a Timeline, and the Ask thread. */
+.ask-btn { margin-left: auto; }
+.aib { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px 12px; margin: 12px 0 4px; background: linear-gradient(180deg, rgba(201,168,92,.08), transparent); }
+.aib-head { font: 600 20px/1.3 var(--serif); margin: 4px 0 12px; }
+/* The journey: eight stages on a line, a dot each — filled when done, half when part way, hollow when pending, faint when not reached. */
+.aib-journey { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0; position: relative; }
+.aib-journey::before { content: ''; position: absolute; left: 6%; right: 6%; top: 7px; height: 2px; background: var(--line); }
+.aib-journey li { position: relative; text-align: center; font-size: 12px; line-height: 1.3; padding: 0 3px; color: var(--muted); }
+.aib-journey .dot { display: block; width: 16px; height: 16px; margin: 0 auto 6px; border-radius: 50%; border: 2px solid var(--line); background: var(--card); position: relative; z-index: 1; }
+.aib-journey li b { display: block; font-weight: 600; color: var(--ink); }
+.aib-journey li time { display: block; color: var(--muted); }
+.aib-journey li small { display: block; font-size: 11px; overflow-wrap: anywhere; }
+.aib-journey li.st-done .dot { background: var(--gold); border-color: var(--gold); }
+.aib-journey li.st-partial .dot { background: linear-gradient(90deg, var(--gold) 50%, var(--card) 50%); border-color: var(--gold); }
+.aib-journey li.st-pending .dot { border-color: var(--blue); border-style: dashed; }
+.aib-journey li.st-pending time { color: var(--blue); }
+.aib-journey li.st-not_yet, .aib-journey li.st-unknown { opacity: .55; }
+.aib-journey li.st-not_yet b, .aib-journey li.st-unknown b { font-weight: 500; }
+/* The money: a bar per side of the deal. */
+.aib-money { display: grid; gap: 8px; margin: 0 0 6px; }
+.aib-bar { display: grid; grid-template-columns: 64px minmax(80px, 180px) 1fr; gap: 10px; align-items: center; font-size: 13.5px; }
+.aib-bar.none { grid-template-columns: 64px 1fr; }
+.aib-bar .track { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.aib-bar .track i { display: block; height: 100%; background: var(--gold); }
+.aib-bar .fig b { color: var(--warn); }
+.aib-costs, .aib-note { font-size: 13px; }
+.aib-moments { margin: 10px 0 0; }
+.aib-moments li { padding: 7px 0; }
+.aib-moments .lgw-ev { font-size: 14px; }
+@media (max-width: 640px) {
+  .aib-journey { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 14px; }
+  .aib-journey::before { display: none; }
+  .aib-bar { grid-template-columns: 56px 1fr; }
+  .aib-bar .fig { grid-column: 1 / -1; }
+}
+.aib-lines { margin: 0 0 8px; padding-left: 18px; font-size: 14.5px; line-height: 1.5; }
+.aib-lines li, .aib-att li, .aib-miss li { margin: 2px 0; }
+.aib-p { margin: 6px 0; font-size: 14.5px; line-height: 1.5; }
+.aib .k { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; margin-right: 6px; }
+.aib-att, .aib-miss { margin-top: 8px; font-size: 14px; }
+.aib-att ul, .aib-miss ul { margin: 4px 0 0; padding-left: 18px; }
+.aib-att { color: var(--warn); }
+.aib-miss { color: var(--muted); }
+.aib-foot { margin: 10px 0 0; }
+.aia { margin-top: 18px; }
+.aia-thread { display: grid; gap: 8px; margin-bottom: 10px; }
+.aia-q { justify-self: end; max-width: 85%; background: var(--ink); color: #fff; border-radius: 12px 12px 2px 12px; padding: 8px 12px; font-size: 14.5px; }
+.aia-a { justify-self: start; max-width: 95%; border: 1px solid var(--line); border-radius: 12px 12px 12px 2px; padding: 8px 14px; font-size: 14.5px; line-height: 1.5; }
+.aia-a p { margin: 4px 0; } .aia-a ul { margin: 4px 0; padding-left: 18px; }
+.aia-tools { margin: 6px 0 0; }
+.aia-form { display: flex; gap: 8px; }
+.aia-form input { flex: 1; min-width: 0; }
+.tl-printed { display: none; }
+@media print {
+  body > *:not(#tl-win) { display: none !important; }
+  #tl-win, #tl-win[open] { position: static; display: block; width: auto; max-width: none; max-height: none; height: auto; border: 0; box-shadow: none; border-radius: 0; color: #000; background: #fff; }
+  #tl-win .lgw-body { overflow: visible; padding: 0; }
+  #tl-win .lgw-head { padding: 0 0 10px; }
+  .tl-noprint { display: none !important; }
+  .tl-printed { display: block; margin-top: 18px; font-size: 12px; color: #666; }
+  .lgw-tl li { break-inside: avoid; }
+  .lgw-pic { width: 64px; height: 64px; }
+  a { color: inherit; text-decoration: none; }
+}
 .lgw-docs { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; font-size: 13px; }
 .lgw-docs a { color: var(--gold); overflow-wrap: anywhere; }
 .lgw-pic.gone img { display: none; }
@@ -227,15 +307,20 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .filters { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 12px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 14px; }
 /* The Inventory card as Chrono Key's (asked 3 Nov 2026, "the cards to be this size and have buttons as info"): the
-   picture with the status over it, the facts one under the other, a row of buttons. Six a row at most (then, the same
-   day: eleven across a wide screen was "too many watches, less readability"), fewer as the screen narrows.
+   picture with the status over it, the facts one under the other, a row of buttons. Four a row at most, with wide
+   gutters (asked 5 Nov 2026: "wider and a lot of space between them", then "more"; six a row and 14px until then;
+   eleven across a wide screen had been "too many watches, less readability"), fewer as the screen narrows.
    Colour still says status only — the badge, and the line along the foot. */
-#grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }
-@media (max-width: 1500px) { #grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
-@media (max-width: 1200px) { #grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 900px) { #grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 640px) { #grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } }
+#grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 44px 40px; }
+@media (max-width: 1500px) { #grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px 28px; } }
+@media (max-width: 1200px) { #grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px 24px; } }
+@media (max-width: 900px) { #grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 16px; } }
+@media (max-width: 640px) { #grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; } }
 @media (max-width: 420px) { #grid { grid-template-columns: minmax(0, 1fr); } }
+.card-zoom { display: inline-flex; align-items: center; gap: 8px; margin: 0; white-space: nowrap; cursor: default; }
+.card-zoom input[type=range] { width: 140px; accent-color: var(--gold); margin: 0; cursor: pointer; }
+.card-zoom small { font-size: 15px; line-height: 1; color: var(--muted); }
+@media (max-width: 900px) { .card-zoom { display: none; } } /* two across or one: nothing to choose */
 .tile { background: var(--card); border: 1px solid var(--line); border-bottom: 3px solid var(--line); border-radius: 4px; overflow: hidden; cursor: pointer;
   text-align: left; padding: 0; box-shadow: var(--shadow); display: flex; flex-direction: column; position: relative; }
 .tile:hover { border-color: #cdbf9f; }
@@ -244,11 +329,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .tile.st-sold { border-bottom-color: var(--gold); }
 .tile.st-deleted { border-bottom-color: var(--bad); }
 .tile .pic { aspect-ratio: 1 / 1; background: #f1ede6; display: grid; place-items: center; color: var(--muted); font-size: 13px; overflow: hidden; position: relative; }
-.tile .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile .pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; } /* pinned: see .gallery .main img */
 .tile .pic-n { position: absolute; top: 8px; right: 8px; background: rgba(29, 27, 24, .78); color: #fff; font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 999px; }
 .tile .badge { position: absolute; top: 8px; left: 8px; font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; padding: 3px 7px; border-radius: 3px;
   box-shadow: 0 1px 3px rgba(0,0,0,.18); }
-.tile .body { padding: 12px 13px 8px; display: grid; gap: 3px; }
+.tile .body { padding: 16px 18px 12px; display: grid; gap: 4px; }
 .tile .t { font-weight: 700; font-size: 14px; line-height: 1.25; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
 /* Each fact one line: the label small and quiet, the value as written. */
 .tile .f { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.6; }
@@ -290,6 +375,36 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-soft);
 .spec dd { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
 .with { margin: 14px 0 0; font-size: 15px; }
 .dossier .desc { margin-top: 14px; }
+/* Beside the facts, the watch's additional expenditures (4 Nov 2026): what the apps know on top, what was typed here under it. */
+.dossier-body { container-type: inline-size; min-width: 0; }
+/* Under the prices, in the dossier's empty space (asked 4 Nov 2026: "add in the empty space below"): the apps' lines and the typed lines, side by side when the body is wide enough. */
+.dossier-costs { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); min-width: 0; }
+.xc-groups { display: grid; gap: 0 48px; }
+@container (min-width: 900px) {
+  .xc-groups { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.dossier-costs h3 { margin: 0; }
+.xc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.xc-sum { font: 600 18px/1.2 var(--serif); }
+.xc-group { margin-top: 12px; }
+.xc-title { display: flex; justify-content: space-between; gap: 12px; font: 600 10.5px/1 var(--sans); letter-spacing: .8px; text-transform: uppercase; color: var(--muted); padding: 8px 0 6px; border-bottom: 1px solid var(--line); }
+.xc-title span { font: 500 13px/1 var(--sans); letter-spacing: 0; text-transform: none; }
+.xc-line { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.xc-line.shared { color: var(--muted); }
+.xc-line.shared .xc-amt { text-decoration: line-through; text-decoration-color: var(--line); font-weight: 400; }
+.xc-main { min-width: 0; }
+.xc-main > span:not(.tl-src) { overflow-wrap: anywhere; }
+.xc-main .count { display: block; margin: 2px 0 0; }
+.xc-note { font-size: 13px; color: var(--muted); margin-top: 2px; white-space: pre-wrap; }
+.xc-amt { text-align: right; font-weight: 600; white-space: nowrap; }
+.xc-acts { display: flex; gap: 10px; justify-content: flex-end; margin-top: 2px; }
+.xc-acts .linkish { min-height: 0; font-size: 12.5px; }
+.xc-acts .linkish.danger { color: var(--bad); }
+.xc-empty { margin: 8px 0 0; font-size: 13.5px; }
+#xc-form-host { margin-top: 10px; }
+.xc-form { margin-top: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: #faf8f4; }
+.xc-form .form-grid { gap: 8px 12px; }
+.xc-foot { margin: 10px 0 0; font-size: 12.5px; }
 .dossier .prices { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); gap: 12px 44px; }
 .price.sold b { color: var(--gold); }
 /* The prices: the one thing on the watch page set large. What we paid first, in the serif like a page title; what we ask beside it. */
@@ -333,7 +448,9 @@ table.list.clients a { text-decoration: none; }
    long list, each label close to its value. */
 .watch-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 20px; align-items: start; margin-top: 20px; }
 .gallery .main { aspect-ratio: 1/1; background: #f1ede6; border-radius: var(--radius); display: grid; place-items: center; overflow: hidden; position: relative; }
-.gallery .main img { width: 100%; height: 100%; object-fit: contain; background: #f1ede6; }
+/* Pinned to the box, not laid in the grid: a grid row grows to a portrait picture's own height, and the square box then
+   clipped its foot instead of fitting it whole (reported 5 Nov 2026: "the picture is not aligned as middle"). */
+.gallery .main img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #f1ede6; }
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; margin-top: 10px; }
 .thumb { position: relative; aspect-ratio: 1/1; border-radius: 8px; overflow: hidden; border: 2px solid transparent; background: #eee; cursor: pointer; padding: 0; }
 .thumb.on { border-color: var(--gold); }
@@ -591,6 +708,8 @@ body.sheet-full #sh-pending:not(:empty) { position: fixed; top: 48px; left: 12px
   <symbol id="i-inventory" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 10v10"/></symbol>
   <symbol id="i-clients" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></symbol>
   <symbol id="i-expenses" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></symbol>
+  <symbol id="i-accounts" viewBox="0 0 24 24"><path d="M5 3h14v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h4"/></symbol>
+  <symbol id="i-timeline" viewBox="0 0 24 24"><path d="M12 3v18"/><circle cx="12" cy="7" r="2"/><circle cx="12" cy="17" r="2"/><path d="M14 7h6M4 17h6"/></symbol>
   <symbol id="i-logistics" viewBox="0 0 24 24"><path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
   <symbol id="i-sheets" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 14h18M9 4v16M15 4v16"/></symbol>
   <symbol id="i-ask" viewBox="0 0 24 24"><path d="M4 5h16v10H9l-5 4z"/><path d="M9.5 9.2a2.5 2.5 0 014.7 1c0 1.6-2.2 1.8-2.2 3.3M12 16h.01"/></symbol>
@@ -626,9 +745,10 @@ body.sheet-full #sh-pending:not(:empty) { position: fixed; top: 48px; left: 12px
       <a href="#/clients" data-nav="clients" title="Clients"><svg class="i"><use href="#i-clients"/></svg><span class="lbl">Clients</span></a>
       <a href="#/expenses" data-nav="expenses" title="Expenses"><svg class="i"><use href="#i-expenses"/></svg><span class="lbl">Expenses</span></a>
       <a href="#/logistics" data-nav="logistics" title="Logistics"><svg class="i"><use href="#i-logistics"/></svg><span class="lbl">Logistics</span></a>
+      <a href="#/accounts" data-nav="accounts" title="Accounts"><svg class="i"><use href="#i-accounts"/></svg><span class="lbl">Accounts</span></a>
       <a href="#/sheets" data-nav="sheets" title="Sheets"><svg class="i"><use href="#i-sheets"/></svg><span class="lbl">Sheets</span></a>
       <a href="#/ask" data-nav="ask" title="Ask"><svg class="i"><use href="#i-ask"/></svg><span class="lbl">Ask</span></a>
-      <a href="#/new" data-nav="new" data-role="editor" title="New watch"><svg class="i"><use href="#i-new"/></svg><span class="lbl">New watch</span></a>
+      <a href="#/new" data-nav="new" data-role="editor" title="New item — a watch, a piece of jewellery or a bag"><svg class="i"><use href="#i-new"/></svg><span class="lbl">New item</span></a>
       <a href="#/import" data-nav="import" title="Import"><svg class="i"><use href="#i-import"/></svg><span class="lbl">Import</span></a>
       <a href="#/users" data-nav="users" data-role="admin" title="Users"><svg class="i"><use href="#i-users"/></svg><span class="lbl">Users</span></a>
     </nav>
@@ -642,15 +762,20 @@ body.sheet-full #sh-pending:not(:empty) { position: fixed; top: 48px; left: 12px
       <div class="bar-in">
         <button class="burger" id="menu" type="button" aria-label="Open the menu" aria-controls="drawer" aria-expanded="false"><span></span></button>
         <div class="crumb"><h1 id="crumb-title">Inventory</h1><span class="path" id="crumb-path">Home · Inventory</span></div>
+        <button type="button" class="btn small ask-btn hide" id="ask-open" title="Ask about anything — a watch, a client, who owes us">Ask</button>
       </div>
     </header>
     <main id="app"></main>
     <div id="lg-app-host" class="hide"></div>
+    <div id="acc-app-host" class="hide"></div>
   </div>
 </div>
 <div class="scrim hide" id="scrim"></div>
 <script src="/app.js"></script>
 <script src="/logistics.js"></script>
+<script src="/accounts.js"></script>
+<script src="/timeline.js"></script>
+<script src="/ask.js"></script>
 <script src="/sheets.js"></script>
 <script src="/fxchip.js"></script>
 </body>

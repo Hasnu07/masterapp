@@ -247,7 +247,7 @@ function lgDocOpen(url, name) {
     document.body.appendChild(d);
   }
   // &view=1 says nothing to the server; it keeps the viewer off a copy the browser cached before frames were allowed.
-  const at = lgFile(url) ? `/api/lg-app/file/${lgFile(url)}?` : `/api/lg-app/photo?u=${encodeURIComponent(url)}&`;
+  const at = lgFile(url) ? `/api/lg-app/file/${lgFile(url)}?` : url.startsWith('/') ? `${url}${url.includes('?') ? '&' : '?'}` : `/api/lg-app/photo?u=${encodeURIComponent(url)}&`;
   let src = `${at}view=1`;
   let download = `${at}download=${encodeURIComponent(name)}`;
   const m = url.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
@@ -273,15 +273,13 @@ function lgDocOpen(url, name) {
   if (!d.open) d.showModal();
 }
 
-/* ── the window's content ── */
-function lgWinRender(data) {
-  const d = lgWinEl();
-  const body = d.querySelector('#lgw-body');
-  if (!body) return;
-  if (!data) {
-    body.innerHTML = '<p class="count">The logistics app has not loaded yet. Try again in a moment.</p>';
-    return;
-  }
+/*
+ * The watch's story out of the app's records — where it is now, the facts, what
+ * happened in order, what moving it cost, the pictures — for the Logistics
+ * window, and for the watch's Timeline (timeline.js), which lays it beside the
+ * accounts and the ERP's own history.
+ */
+function lgStory(data) {
   const no = data.stock;
   const who = (id, fallback = '') => data.clients?.[id]?.name || fallback || '';
   const mover = (id, fallback = '') => data.moverNames?.[id]?.name || fallback || '';
@@ -432,6 +430,19 @@ function lgWinRender(data) {
   (data.shipments || []).forEach((r) => take(r.deliveryPhotos, 'Delivery'));
   (data.movers || []).forEach((r) => take(lgPicsOf(r), 'Courier'));
 
+  return { now, facts, ev, totals, pics, who };
+}
+
+/* ── the window's content ── */
+function lgWinRender(data) {
+  const d = lgWinEl();
+  const body = d.querySelector('#lgw-body');
+  if (!body) return;
+  if (!data) {
+    body.innerHTML = '<p class="count">The logistics app has not loaded yet. Try again in a moment.</p>';
+    return;
+  }
+  const { now, facts, ev, totals, pics, who } = lgStory(data);
   const title = lgWin.title || [data.meta?.brand, data.meta?.model].filter(Boolean).join(' ');
   if (title && !lgWin.title) d.querySelector('.lgw-head h2').textContent = title;
   body.innerHTML = `

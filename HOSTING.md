@@ -35,6 +35,24 @@ copies go straight to R2. Move finished 23 Oct 2026, ~16:30 PKT.
 **Logins for the services** (Cloudflare, DigitalOcean, GitHub) are Hasnain's
 own accounts — with two-factor sign-in.
 
+**Accounts (from 4 Nov 2026).** The Accounts menu is the accounts app itself
+(Purosangue Watches — Accounts, on Railway), read from `ACCOUNTS_APP_URL`
+(default `https://accountancy-app-production.up.railway.app` — nothing to set)
+and served at `/acc-app/` behind the sign-in, editors only; each person signs
+in to it once, inside the frame, with their own accounts account. Its data
+stays in its own MySQL on Railway. **The copy of its records into the ERP is
+ON by default but needs an account:** in the accounts app make one for the ERP
+(sign up, approve it under Admin → Team, set its password), then set
+`ACCOUNTS_USERNAME` and `ACCOUNTS_PASSWORD` on coral-app (encrypted, like the
+others). Until they are set the Import page says "Not configured" and nothing
+is copied. `ACCOUNTS_SYNC=off` is the switch-over for accounts.
+
+**Claude (from 4 Nov 2026).** The brief at the top of a watch's Timeline and
+the Ask button need `ANTHROPIC_API_KEY` on coral-app (an API key from
+console.anthropic.com, encrypted like the others). Without it they are simply
+not shown. `AI_MODEL` (default `claude-opus-5-5`) and `AI_EFFORT` (default
+`medium`) tune cost; the key is only ever used server-side.
+
 **Logistics (from 30 Oct 2026).** The Logistics menu is the logistics app
 itself, read from its Vercel address (`LOGISTICS_APP_URL`, default
 `https://purosangue-watches.vercel.app` — nothing to set) and served at
@@ -157,7 +175,7 @@ GitHub, copies the photos and the database across, and checks every photo.
    | `CHRONOKEY_PASSWORD` | the same as in this PC's `.env` — encrypt |
    | `VAULT_TOKEN` | the same as in this PC's `.env` — encrypt |
    | `SYNC` | **`off`** — until the move is checked; Claude says when |
-   | `ANTHROPIC_API_KEY` | for the **Ask** page (7 Nov 2026): a key from console.anthropic.com — encrypt. Without it Ask says it is not set up; Sheets work regardless |
+   | `ANTHROPIC_API_KEY` | Claude in the ERP (see above): the watch's brief, the Ask button, and the **Ask** tab (7 Nov 2026 — read-only SQL, CSVs, PDFs, sheets) — encrypt. Without it the buttons are hidden and the Ask tab says it is not set up; Sheets work regardless |
 
    The spreadsheet on the Sheets page (GridCraft, 7 Nov 2026) needs no
    setting: its web build is committed in `vendor/gridcraft` and served at

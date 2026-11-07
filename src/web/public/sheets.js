@@ -1189,7 +1189,7 @@ window.addEventListener('hashchange', () => {
 const askView = { thread: null, threads: [], busy: false, steps: [] };
 
 async function showAsk(threadId) {
-  const enabled = state.meta?.ask?.enabled;
+  const enabled = state.meta?.ai?.enabled;
   $('#app').innerHTML = `
     <div class="ask">
       <aside class="ask-side panel">

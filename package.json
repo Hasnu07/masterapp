@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Purosangue ERP — watch inventory (phase 1), imported from Chrono Key and the Watch vault",
+  "description": "Purosangue ERP \u2014 watch inventory (phase 1), imported from Chrono Key and the Watch vault",
   "scripts": {
     "start": "node src/index.js",
     "local": "node src/local.js",
@@ -11,7 +11,8 @@
     "import": "node src/import/cli.js",
     "user": "node src/auth/cli.js",
     "test": "node --test --test-concurrency=1 test/*.test.js",
-    "gridcraft": "node scripts/fetch-gridcraft.mjs"
+    "gridcraft": "node scripts/fetch-gridcraft.mjs",
+    "test:local": "node test/run-local.mjs"
   },
   "engines": {
     "node": ">=20"

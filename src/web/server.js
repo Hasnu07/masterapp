@@ -15,11 +15,18 @@ import * as lgShared from '../logistics/shared.js';
 import { workerFile, fileById } from '../import/logistics/sync.js';
 import { passport } from '../logistics/passport.js';
 import { mountLogisticsApp, workerOrigin } from './lgapp.js';
+import { mountAccountsApp } from './accapp.js';
+import * as accounts from '../accounts/index.js';
+import { fileById as accFileById } from '../import/accounts/sync.js';
+import * as ai from '../ai/index.js';
+import * as documents from '../watches/documents.js';
+import * as costs from '../watches/costs.js';
+import * as accClients from '../accounts/clients.js';
 import * as sheets from '../sheets/index.js';
 import { sheetToWorkbook, workbookToDoc } from '../sheets/xlsx.js';
 import * as ask from '../ask/index.js';
 import { mountGridcraft, gridcraftInstalled, gridcraftVersion } from './gridcraft.js';
-import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
+import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS, CATEGORIES } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
 import { startJob, running, runJob } from '../import/jobs.js';
@@ -65,7 +72,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'sheets.js', 'fxchip.js'];
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'accounts.js', 'timeline.js', 'ask.js', 'sheets.js', 'fxchip.js'];
 // Each page's own stylesheet, versioned with the scripts.
 const CONSOLE_STYLES = [];
 function consolePage() {
@@ -176,9 +183,9 @@ export function createServer() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  // The logistics app's own calls (/lg-app/api/…) are passed on whole, as they came — not read here.
+  // The logistics and accounts apps' own calls (/lg-app/api/…, /acc-app/api/…) are passed on whole, as they came — not read here.
   const json = express.json({ limit: '1mb' });
-  app.use((req, res, next) => (req.path.startsWith('/lg-app/') ? next() : json(req, res, next)));
+  app.use((req, res, next) => (req.path.startsWith('/lg-app/') || req.path.startsWith('/acc-app/') ? next() : json(req, res, next)));
 
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
@@ -218,8 +225,9 @@ export function createServer() {
     next();
   };
 
-  /* The logistics app itself, at /lg-app/ (lgapp.js); GridCraft, the sheets' spreadsheet, at /gridcraft/ (gridcraft.js). */
+  /* The logistics app itself, at /lg-app/ (lgapp.js); the accounts app at /acc-app/ (accapp.js); GridCraft, the sheets' spreadsheet, at /gridcraft/ (gridcraft.js). */
   mountLogisticsApp(app, need);
+  mountAccountsApp(app, need);
   mountGridcraft(app, need, { production: config.production });
 
   /* ── sign-in ─────────────────────────────────────────────────── */
@@ -267,6 +275,7 @@ export function createServer() {
     res.json({
       fields: FIELDS,
       statuses: STATUSES,
+      categories: CATEGORIES,
       locations: LOCATIONS,
       currencies: CURRENCIES,
       paymentKinds: PAYMENT_KINDS,
@@ -274,9 +283,10 @@ export function createServer() {
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
       logistics: logistics.catalog(),
+      accounts: accounts.catalog(),
+      ai: { enabled: config.ai.enabled, model: config.ai.model },
       sheetKinds: sheets.KINDS,
       gridcraft: { installed: gridcraftInstalled(), version: gridcraftVersion() },
-      ask: { enabled: ask.enabled(), model: config.ask.model },
       chronokeyUrl: config.chronokey.url, // the Inventory card links a watch to its Chrono Key page
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
@@ -284,6 +294,7 @@ export function createServer() {
         chronokey: config.chronokey.configured,
         vault: config.vault.configured && Boolean(config.vault.token),
         logistics: config.logistics.enabled && config.vault.configured && Boolean(config.vault.token),
+        accounts: config.accounts.enabled && config.accounts.configured,
       },
     });
   });
@@ -300,6 +311,7 @@ export function createServer() {
           status: req.query.status,
           location: req.query.location,
           brand: req.query.brand,
+          category: req.query.category,
           sort: req.query.sort,
           limit: req.query.limit,
           offset: req.query.offset,
@@ -325,6 +337,13 @@ export function createServer() {
         throw err;
       }
     })
+  );
+
+  /* The next stock number in the sequence, for the New item form (watches, jewellery and bags share it). */
+  app.get(
+    '/api/watches/next-stock-no',
+    need('editor'),
+    wrap(async (req, res) => res.json({ stock_no: await watches.nextStockNo() }))
   );
 
   app.get(
@@ -466,6 +485,78 @@ export function createServer() {
       } catch (err) {
         res.status(502).json({ error: err.message });
       }
+    })
+  );
+
+  /* A watch's documents: the invoice, the papers, a customs form — PDFs or pictures, kept with the watch. */
+  app.get('/api/watches/:id/documents', need('viewer'), wrap(async (req, res) => res.json({ documents: await documents.listDocuments(req.params.id), kinds: documents.KINDS })));
+  app.post(
+    '/api/watches/:id/documents',
+    need('editor'),
+    photoUpload.array('files', documents.MAX_DOCS),
+    wrap(async (req, res) => {
+      const files = (req.files || []).map((f) => ({ buffer: f.buffer, name: f.originalname }));
+      if (!files.length) return res.status(400).json({ error: 'No file was sent' });
+      res.status(201).json({ ids: await documents.addDocuments(req.params.id, files, req.user, req.body?.kind) });
+    })
+  );
+  app.delete(
+    '/api/watches/:id/documents/:did',
+    need('editor'),
+    wrap(async (req, res) => {
+      await documents.removeDocument(req.params.id, req.params.did, req.user);
+      res.json({ ok: true });
+    })
+  );
+  /* Behind the sign-in, like the photos: serials, prices and passports are in them. Framed by our own PDF viewer. */
+  app.get(
+    '/api/watch-documents/:did',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await documents.documentFile(req.params.did, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such document' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Frame-Options', 'SAMEORIGIN');
+      if (req.query.download) res.attachment(String(f.name || 'document').replace(/[^\w .()\-]+/g, '_').slice(0, 120) || 'document');
+      res.send(f.buffer);
+    })
+  );
+
+  /*
+   * A watch's additional expenditures (asked 4 Nov 2026): what the logistics
+   * and accounts apps already hold on the stock number (read-only, from our
+   * copies — accounts live with the person's own sign-in when the copy is not
+   * there), and the lines typed here, with the totals per currency.
+   */
+  app.get(
+    '/api/watches/:id/costs',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const w = await watches.getWatch(req.params.id);
+      if (!w) return res.status(404).json({ error: 'No such watch' });
+      res.json(await costs.costsOf(w, { cookie: req.get('cookie'), accountsOn: Boolean(config.accounts.appUrl) }));
+    })
+  );
+  app.post(
+    '/api/watches/:id/costs',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await costs.addCost(req.params.id, req.body, req.user) }))
+  );
+  app.patch(
+    '/api/watches/:id/costs/:cid',
+    need('editor'),
+    wrap(async (req, res) => {
+      await costs.editCost(req.params.id, req.params.cid, req.body, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.delete(
+    '/api/watches/:id/costs/:cid',
+    need('editor'),
+    wrap(async (req, res) => {
+      await costs.removeCost(req.params.id, req.params.cid, req.user);
+      res.json({ ok: true });
     })
   );
 
@@ -663,6 +754,100 @@ export function createServer() {
     })
   );
 
+  /* ── accounts: the app itself is served at /acc-app/ (accapp.js); here what its bridge and our pages ask ── */
+
+  /*
+   * The ERP's bridge inside the accounts app (accapp-bridge.js) asks which of
+   * the stock numbers and client names the app shows are ours: a stock number
+   * is our watch of that number; a name is our client when exactly one of ours
+   * carries it, else as the copied ledger ties it to one (accounts/clients.js).
+   */
+  app.post(
+    '/api/acc-app/links',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const list = (v, max) => (Array.isArray(v) ? v : []).slice(0, max).map((x) => String(x ?? '').trim()).filter(Boolean);
+      const names = list(req.body?.clients, 2000);
+      const [ours, exact, voted] = await Promise.all([lgShared.oursByNumber(list(req.body?.stock, 5000)), accClients.oursByExactName(names), accClients.linksByName(names)]);
+      const people = new Map([...voted].filter(([, l]) => l.client_id));
+      for (const [name, l] of exact) people.set(name, l);
+      res.json({
+        watches: Object.fromEntries([...ours].map(([no, w]) => [no, { id: w.id, title: w.title, status: w.status }])),
+        clients: Object.fromEntries([...people].map(([name, l]) => [name, { id: l.client_id, name: l.client_name }])),
+      });
+    })
+  );
+  /* One watch of ours by its stock number, for the app's forms. */
+  app.get(
+    '/api/acc-app/watch',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const no = String(req.query.no || '').trim();
+      const w = no ? (await lgShared.oursByNumber([no])).get(no) : null;
+      if (!w) return res.status(404).json({ error: 'No watch of ours has that stock number' });
+      res.json({ watch: { id: w.id, stock_no: w.stock_no, title: w.title, brand: w.brand, model: w.model, reference: w.reference, serial: w.serial, watch_date: w.watch_date, status: w.status, bought_from: w.bought_from, sold_to: w.sold_to } });
+    })
+  );
+  /* Every client of ours by name. */
+  app.get('/api/acc-app/clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await accClients.ourClientNames() })));
+  /* The accounts app's own client for a name, when exactly one carries it — so a link of ours opens its profile there. */
+  app.get(
+    '/api/acc-app/client',
+    need('viewer'),
+    wrap(async (req, res) => res.json({ acc_client_id: await accClients.accountsClientIdFor(String(req.query.name || '')) }))
+  );
+  /* A picture or paper the pass copied out of an accounts record ("acfile:<id>"): an invoice, a proof. */
+  app.get(
+    '/api/acc-app/file/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await accFileById(req.params.id, { thumb: req.query.thumb === '1' });
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      sendLgFile(req, res, f);
+    })
+  );
+  /* The accounts clients for the client page's picker, and a person's decision on who of ours one is. */
+  app.get('/api/acc-app/app-clients', need('viewer'), wrap(async (req, res) => res.json({ clients: await accClients.appClients(String(req.query.q || ''), Number(req.query.limit) || 12) })));
+  app.put(
+    '/api/acc-app/client-link',
+    need('editor'),
+    wrap(async (req, res) => {
+      const ours = req.body?.client_id === null || req.body?.client_id === undefined || req.body?.client_id === '' ? null : Number(req.body.client_id);
+      await accClients.setClientLink(String(req.body?.acc_client_id || ''), ours, req.user);
+      res.json({ ok: true });
+    })
+  );
+  app.delete(
+    '/api/acc-app/client-link/:accId',
+    need('editor'),
+    wrap(async (req, res) => {
+      await accClients.forgetClientLink(req.params.accId);
+      res.json({ ok: true });
+    })
+  );
+  /* What our copy of the accounts app holds on one stock number: the watch page's Accounts window. */
+  app.get('/api/acc-app/stock/:no', need('viewer'), wrap(async (req, res) => res.json(await accounts.forStock(String(req.params.no || '').trim().slice(0, 20), { cookie: req.get('cookie') }))));
+  /* What it says about one of OUR clients: the client page's panel. */
+  app.get('/api/acc-app/our-client/:id', need('viewer'), wrap(async (req, res) => res.json(await accounts.forOurClient(Number(req.params.id) || 0))));
+
+  /* ── Claude: the watch's brief, and a question across everything (ai/index.js) ── */
+
+  const aiOn = (req, res, next) => (config.ai.enabled ? next() : res.status(404).json({ error: 'The assistant is not set up here (ANTHROPIC_API_KEY)' }));
+  app.get(
+    '/api/ai/watch/:id/brief',
+    need('viewer'),
+    aiOn,
+    wrap(async (req, res) => res.json(await ai.briefWatch(Number(req.params.id) || 0, { cookie: req.get('cookie') })))
+  );
+  app.post(
+    '/api/ai/ask',
+    need('viewer'),
+    aiOn,
+    wrap(async (req, res) =>
+      res.json(await ai.ask({ question: req.body?.question, history: req.body?.history, watchId: Number(req.body?.watch_id) || null, cookie: req.get('cookie') }))
+    )
+  );
+
   /* ── sheets (asked 7 Nov 2026): a spreadsheet of the system, kept and edited here ── */
 
   app.get('/api/sheets', need('viewer'), wrap(async (req, res) => res.json(await sheets.listSheets(req.query))));
@@ -820,6 +1005,8 @@ export function createServer() {
                  (SELECT count(*)::int FROM ck_records WHERE error IS NOT NULL) AS ck_errors,
                  (SELECT count(*)::int FROM vault_records) AS vault_records,
                  (SELECT count(*)::int FROM logistics_items WHERE deleted_at IS NULL) AS logistics_items,
+                 (SELECT count(*)::int FROM accounts_items WHERE deleted_at IS NULL) AS accounts_items,
+                 (SELECT count(*)::int FROM accounts_items WHERE deleted_at IS NULL AND kind = 'entries') AS accounts_entries,
                  (SELECT count(*)::int FROM watch_photos WHERE deleted_at IS NULL) AS photos,
                  (SELECT count(*)::int FROM watches WHERE deleted_at IS NULL AND purchase_price > 0
                      AND purchase_currency = '') AS currency_not_stated`),
@@ -833,6 +1020,8 @@ export function createServer() {
           vault: config.vault.configured && Boolean(config.vault.token),
           sync: config.sync.enabled,
           logistics: config.logistics.enabled,
+          accounts: config.accounts.enabled,
+          accounts_app: config.accounts.configured,
         },
       });
     })
@@ -844,7 +1033,10 @@ export function createServer() {
    * `npm run import`, still can — deliberately.)
    */
   const syncOn = (req, res, next) => {
-    // The logistics app has its own switch (LOGISTICS_SYNC): its switch-over need not be Chrono Key's.
+    // The logistics and accounts apps have their own switches (LOGISTICS_SYNC, ACCOUNTS_SYNC): their switch-over need not be Chrono Key's.
+    if (req.body?.job === 'accounts') {
+      return config.accounts.enabled ? next() : res.status(409).json({ error: 'Accounts sync is off (ACCOUNTS_SYNC=off): masterapp is the master for accounts' });
+    }
     if (req.body?.job === 'logistics') {
       return config.logistics.enabled
         ? next()
@@ -880,6 +1072,9 @@ export function createServer() {
       }
       if ((job === 'vault' || job === 'logistics') && !(config.vault.configured && config.vault.token)) {
         return res.status(400).json({ error: 'The Watch vault needs its key — set VAULT_TOKEN' });
+      }
+      if (job === 'accounts' && !config.accounts.configured) {
+        return res.status(400).json({ error: 'The accounts app needs an account for the ERP — set ACCOUNTS_USERNAME and ACCOUNTS_PASSWORD' });
       }
       startJob(job, req.user);
       res.status(202).json({ started: job });

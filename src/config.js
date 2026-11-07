@@ -91,16 +91,6 @@ export const config = {
   },
 
   /*
-   * Ask — the assistant over the whole system (asked 7 Nov 2026), on the
-   * Anthropic API. Without a key the Ask page says so and does nothing.
-   */
-  ask: {
-    apiKey: (process.env.ANTHROPIC_API_KEY || '').trim(),
-    model: process.env.ASK_MODEL || 'claude-opus-5-5',
-    sqlTimeoutMs: Number(process.env.ASK_SQL_TIMEOUT_MS || 15_000),
-  },
-
-  /*
    * The logistics app's records (shipments, incomings, places, trips, costs …),
    * read from the same worker document as the vault. Its own switch, because
    * its switch-over need not be Chrono Key's: LOGISTICS_SYNC=off stops it, and
@@ -120,5 +110,49 @@ export const config = {
     // Where the logistics app itself is (its Vercel address). The ERP serves it from there at /lg-app/, inside the
     // Logistics menu (asked 30 Oct 2026), and its vault page is the tabs' "Watch Vault ↗" link. `off`: neither.
     appUrl: (process.env.LOGISTICS_APP_URL ?? 'https://purosangue-watches.vercel.app').trim().replace(/^off$/i, '').replace(/\/+$/, ''),
+  },
+
+  /*
+   * The accounts app (Purosangue Watches — Accounts, repo
+   * purosanguewatches94/Accountany-App, live on Railway). Served inside the ERP
+   * at /acc-app/ from ACCOUNTS_APP_URL (`off`: no Accounts menu), and its whole
+   * state — every collection of its MySQL document store — copied here through
+   * its own API, signed in as ACCOUNTS_USERNAME / ACCOUNTS_PASSWORD (an account
+   * made for the ERP in the app itself, approved there). ACCOUNTS_SYNC=off is
+   * its switch-over; it is on by default ("keep the sync on for the accountancy
+   * app until things get straight", 4 Nov 2026). Its per-collection version
+   * numbers (a few bytes) are checked every ACCOUNTS_POLL_SEC and only the
+   * collections that moved are read again; 0 leaves only the 15-minute pass.
+   */
+  /*
+   * Claude in the ERP (asked 4 Nov 2026): the watch's brief and the Ask window
+   * read across everything through the Claude API. ANTHROPIC_API_KEY turns it
+   * on; AI_MODEL and AI_EFFORT tune it. Read-only: nothing the model says is
+   * written anywhere.
+   */
+  ai: {
+    apiKey: (process.env.ANTHROPIC_API_KEY || '').trim(),
+    model: (process.env.AI_MODEL || 'claude-opus-5-5').trim(),
+    effort: (process.env.AI_EFFORT || 'medium').trim(),
+    // The brief is extraction over data the model is handed, not hard reasoning: low effort, and its own model if wanted (AI_BRIEF_MODEL).
+    briefEffort: (process.env.AI_BRIEF_EFFORT || 'low').trim(),
+    briefModel: (process.env.AI_BRIEF_MODEL || process.env.AI_MODEL || 'claude-opus-5-5').trim(),
+    get enabled() {
+      return Boolean(this.apiKey);
+    },
+  },
+
+  accounts: {
+    appUrl: (process.env.ACCOUNTS_APP_URL ?? 'https://accountancy-app-production.up.railway.app').trim().replace(/^off$/i, '').replace(/\/+$/, ''),
+    username: (process.env.ACCOUNTS_USERNAME || '').trim(),
+    password: process.env.ACCOUNTS_PASSWORD || '',
+    enabled: bool(process.env.ACCOUNTS_SYNC, true),
+    pollSec: Number(process.env.ACCOUNTS_POLL_SEC ?? 60),
+    timeoutMs: Number(process.env.ACCOUNTS_TIMEOUT_MS || 60_000),
+    // The app's own uploads (proofs, invoices) copied here this many a pass, for the switch-over.
+    filesPerPass: Number(process.env.ACCOUNTS_FILES_PER_PASS || 200),
+    get configured() {
+      return Boolean(this.appUrl && this.username && this.password);
+    },
   },
 };

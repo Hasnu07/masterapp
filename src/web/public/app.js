@@ -15,7 +15,7 @@ const esc = (v) =>
 const state = {
   user: null,
   meta: null,
-  list: { q: '', status: '', location: '', brand: '', sort: 'newest', deleted: false },
+  list: { q: '', status: '', location: '', brand: '', category: '', sort: 'newest', deleted: false },
   clients: { q: '', type: '' },
   expenses: { q: '', type: '', from: '', to: '' },
 };
@@ -89,6 +89,19 @@ function money(n, cur, { plain = false } = {}) {
   return esc(sym ? `${sym}${s}` : `${s} ${cur}`);
 }
 const statusLabel = (k) => state.meta?.statuses.find((s) => s.key === k)?.label || k;
+/* What a record is — a watch, a piece of jewellery or a bag (5 Nov 2026) — and the fields that category has. */
+const catOf = (k) => state.meta?.categories.find((c) => c.key === (k || 'watch')) || { key: 'watch', label: 'Watch', plural: 'Watches', a: 'a watch' };
+const fieldsFor = (category) => state.meta.fields.filter((f) => !f.only || f.only === (category || 'watch'));
+const enumLabel = (f, o) => f.labels?.[o] ?? statusLabel(o);
+/* The headings over the groups: the first group is "Watch" on a watch and "Item" on anything else. */
+const groupName = (g, category) => (g === 'Watch' && (category || 'watch') !== 'watch' ? 'Item' : g);
+/* "140 watches", "3 bags", "2 pieces of jewellery", "1709 items". */
+const countOf = (n, category) => {
+  if (!category) return `${n} item${n === 1 ? '' : 's'}`;
+  if (category === 'jewellery') return `${n} piece${n === 1 ? '' : 's'} of jewellery`;
+  if (category === 'bag') return `${n} bag${n === 1 ? '' : 's'}`;
+  return `${n} watch${n === 1 ? '' : 'es'}`;
+};
 const chip = (k) => `<span class="chip ${esc(k)}">${esc(statusLabel(k))}</span>`;
 const fmtDate = (iso) => {
   if (!iso) return '';
@@ -126,7 +139,7 @@ function display(f, w) {
     case 'bool':
       return esc(yesNo(v));
     case 'enum':
-      return f.key === 'status' ? chip(v) : esc(v);
+      return f.key === 'status' ? chip(v) : esc(enumLabel(f, v));
     case 'payments': {
       const parts = Object.entries(v || {}).map(
         ([k, n]) => `${esc(state.meta.paymentKinds.find((p) => p.key === k)?.label || k)} ${esc(Number(n).toLocaleString('en-GB'))}`
@@ -150,8 +163,9 @@ function route() {
   const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses', sheet: 'sheets' }[page] || page || 'inventory';
   $$('#nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   crumb(section, page, id);
-  // The logistics app's frame stays loaded while another page shows (lgAppHide: hidden, not gone).
+  // The logistics and accounts apps' frames stay loaded while another page shows (hidden, not gone).
   if (typeof lgAppHide === 'function') lgAppHide();
+  if (typeof accAppHide === 'function') accAppHide();
   menu(false);
   window.scrollTo(0, 0);
   // The Inventory opens on what is in stock (asked 3 Nov 2026); its parts are #/stock/<status>, #/stock/all for everything.
@@ -168,11 +182,12 @@ function route() {
   if (page === 'expenses') return id === 'new' ? showNewExpense() : showExpenses();
   if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'logistics') return showLogistics(id, more);
-  // Sheets and Ask live in sheets.js.
+  if (page === 'accounts') return showAccounts(id, more);
+  // Sheets and the Ask tab live in sheets.js.
   if (page === 'sheets') return showSheets(id);
   if (page === 'sheet' && id) return showSheet(Number(id));
   if (page === 'ask') return showAsk(id ? Number(id) : null);
-  if (page === 'new') return showNew();
+  if (page === 'new') return showNew(id);
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
   location.hash = '#/';
@@ -180,14 +195,14 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
-const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', sheets: 'Sheets', ask: 'Ask', new: 'New watch', import: 'Import', users: 'Users' };
+const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', sheets: 'Sheets', ask: 'Ask', new: 'New item', import: 'Import', users: 'Users' };
 const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
 function crumb(section, page, id) {
   const name = SECTION_NAMES[section] || 'Purosangue';
   const leaf =
     { watch: 'Watch', client: 'Client', expense: 'Expense', sheet: 'Sheet' }[page] ||
     (page === 'stock' || !page ? STOCK_NAMES[id || 'in_stock'] || id : '') ||
-    (section === 'logistics' && id ? id : '');
+    ((section === 'logistics' || section === 'accounts') && id ? id : '');
   $('#crumb-title').textContent = name;
   $('#crumb-path').textContent = `Home · ${name}${leaf ? ` · ${leaf}` : ''}`;
 }
@@ -255,6 +270,7 @@ function showLogin() {
   document.body.classList.add('out');
   // The logistics app's frame goes with the session: its page holds the key to its records.
   if (typeof lgAppDrop === 'function') lgAppDrop();
+  if (typeof accAppDrop === 'function') accAppDrop();
   $('#app').innerHTML = `
     <div class="login panel">
       <h1>Purosangue ERP</h1>
@@ -285,6 +301,8 @@ async function signedIn(user) {
   $('#who').innerHTML = `<b>${esc(user.name || user.email)}</b>${esc(user.role)}`;
   $('#who').title = `${user.name || user.email} · ${user.role}`;
   $$('#nav [data-role]').forEach((a) => a.classList.toggle('hide', !can(a.dataset.role)));
+  // The Ask button, when the server has the Claude API (ask.js).
+  $('#ask-open')?.classList.toggle('hide', !state.meta?.ai?.enabled);
   route();
   // The logistics app, loading hidden behind the first page, so a watch's Logistics window answers at once (lgAppWarm).
   setTimeout(() => typeof lgAppWarm === 'function' && lgAppWarm(), 2000);
@@ -305,6 +323,30 @@ function showStock(key) {
   $$('#subnav a').forEach((a) => a.classList.toggle('on', a.dataset.stock === state.list.status));
   return showInventory();
 }
+/*
+ * Card size (asked 5 Nov 2026: "a slider to zoom in and zoom out cards by
+ * preference"): how many cards fit across, 2 to 8, kept in this browser;
+ * four unless set. The slider runs from small to large, so its value is the
+ * other way round from the count. A narrow screen still caps the count as
+ * the stylesheet does, and the gutters grow with the cards.
+ */
+const CARDS_KEY = 'masterapp.cardsAcross';
+function cardsAcross() {
+  const n = Number(localStorage.getItem(CARDS_KEY));
+  return n >= 2 && n <= 8 ? n : 4;
+}
+function applyCardSize() {
+  const g = $('#grid');
+  if (!g) return;
+  const w = window.innerWidth;
+  const cap = w <= 420 ? 1 : w <= 900 ? 2 : w <= 1200 ? 3 : w <= 1500 ? 4 : 8;
+  const n = Math.min(cardsAcross(), cap);
+  g.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+  const gx = Math.max(12, Math.round(160 / n));
+  g.style.gap = `${gx + 4}px ${gx}px`;
+}
+window.addEventListener('resize', applyCardSize);
+
 async function showInventory() {
   const L = state.list;
   const about = {
@@ -313,12 +355,12 @@ async function showInventory() {
     sold: 'Sold, newest sale first by stock number.',
     returned: 'Returned to their clients, as Chrono Key’s Returned consignments list them.',
     other: 'On none of Chrono Key’s lists, or held only by the Watch vault.',
-    '': 'Every watch, from Chrono Key, the Watch vault and added here.',
+    '': 'Everything — watches, jewellery and bags — from Chrono Key, the Watch vault and added here.',
   };
   $('#app').innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:12px">
       <div><h1>${esc(STOCK_NAMES[L.status] || (L.status ? statusLabel(L.status) : 'All stock'))}</h1><p class="sub" style="margin:0">${esc(about[L.status] || '')}</p></div>
-      ${can('editor') ? '<a class="btn gold" href="#/new">+ New watch</a>' : ''}
+      ${can('editor') ? '<a class="btn gold" href="#/new">+ New item</a>' : ''}
     </div>
     <div class="filters">
       <input class="q" type="search" id="q" placeholder="Stock number, reference, serial, brand, model, supplier, client…" value="${esc(L.q)}">
@@ -332,9 +374,13 @@ async function showInventory() {
         <option value="brand">Brand A–Z</option>
       </select>
     </div>
-    <div class="stack" style="margin-bottom:10px">
-      <div class="pills" id="p-status"></div>
-      <div class="pills" id="p-location"></div>
+    <div class="row" style="justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+      <div class="stack">
+        <div class="pills" id="p-status"></div>
+        <div class="pills" id="p-category"></div>
+        <div class="pills" id="p-location"></div>
+      </div>
+      <label class="card-zoom count" title="Card size — fewer cards across means bigger cards. Remembered in this browser."><span>Card size</span><small>−</small><input type="range" id="card-size" min="2" max="8" step="1" value="${10 - cardsAcross()}" aria-label="Card size"><small>+</small></label>
     </div>
     <div class="row" style="justify-content:space-between">
       <div class="count" id="count"></div>
@@ -351,6 +397,11 @@ async function showInventory() {
     <div class="row" style="justify-content:center;margin-top:18px"><button class="btn hide" id="more">Load more</button></div>`;
 
   $('#sort').value = L.sort;
+  applyCardSize();
+  $('#card-size').addEventListener('input', (e) => {
+    localStorage.setItem(CARDS_KEY, String(10 - Number(e.target.value)));
+    applyCardSize();
+  });
   let timer;
   $('#q').addEventListener('input', (e) => {
     clearTimeout(timer);
@@ -395,6 +446,7 @@ async function loadList(more = false) {
     status: L.status === 'in_stock' && L.alsoIncoming ? 'in_stock,incoming' : L.status,
     location: L.location,
     brand: L.brand,
+    category: L.category,
     sort: L.sort,
     limit: 60,
     offset: more ? shown.length : 0,
@@ -410,21 +462,21 @@ async function loadList(more = false) {
   shown = more ? [...shown, ...r.watches] : r.watches;
 
   // The pills in a fixed order (asked 3 Nov 2026): In stock, Incoming, Sold …, and Dubai, UK, Europe, HK …; "All" last.
-  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'] };
+  const ORDER = { status: ['in_stock', 'incoming', 'sold', 'returned', 'reserved', 'other'], location: ['Dubai', 'UK', 'Europe', 'HK'], category: ['watch', 'jewellery', 'bag'] };
   const rank = (key, k) => {
     const i = (ORDER[key] || []).indexOf(k);
     return i === -1 ? 99 : i;
   };
   const pills = (el, key, facet, label) => {
     const total = facet.reduce((a, f) => a + f.n, 0);
+    // Every category has its pill, even with nothing in it yet (5 Nov 2026): the three are the shape of the stock.
+    if (key === 'category') facet = state.meta.categories.map((c) => ({ k: c.key, n: facet.find((f) => f.k === c.key)?.n || 0 }));
+    const name = (k) => (key === 'status' ? statusLabel(k) : key === 'category' ? catOf(k).plural : k);
     el.innerHTML =
       facet
         .filter((f) => f.k)
         .sort((a, b) => rank(key, a.k) - rank(key, b.k) || b.n - a.n)
-        .map(
-          (f) =>
-            `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(key === 'status' ? statusLabel(f.k) : f.k)}<b>${f.n}</b></button>`
-        )
+        .map((f) => `<button class="pill ${L[key] === f.k ? 'on' : ''}" data-v="${esc(f.k)}">${esc(name(f.k))}<b>${f.n}</b></button>`)
         .join('') + `<button class="pill ${L[key] ? '' : 'on'}" data-v="">All ${label}<b>${total}</b></button>`;
     // A filter in force that now has no watches keeps its pill, so it can be lifted.
     if (L[key] && !facet.some((f) => f.k === L[key])) {
@@ -440,6 +492,7 @@ async function loadList(more = false) {
     );
   };
   pills($('#p-status'), 'status', r.facets.status, 'statuses');
+  pills($('#p-category'), 'category', r.facets.category || [], 'categories');
   pills($('#p-location'), 'location', r.facets.location, 'places');
 
   const sel = $('#brand');
@@ -452,7 +505,7 @@ async function loadList(more = false) {
     (L.brand && !r.facets.brand.some((b) => b.k === L.brand) ? `<option value="${esc(L.brand)}">${esc(L.brand)} (0)</option>` : '');
   sel.value = L.brand;
 
-  $('#count').textContent = `${shown.length} of ${r.total} watch${r.total === 1 ? '' : 'es'}${L.deleted ? ' (deleted)' : ''}`;
+  $('#count').textContent = `${shown.length} of ${countOf(r.total, L.category)}${L.deleted ? ' (deleted)' : ''}`;
   $('#grid').innerHTML = shown.length ? shown.map(tile).join('') : '<p class="sub">Nothing matches.</p>';
   $$('#grid .tile').forEach((t) =>
     t.addEventListener('click', (e) => {
@@ -478,6 +531,19 @@ async function loadList(more = false) {
     b.addEventListener('click', () => {
       const w = shown.find((x) => x.id === Number(b.dataset.lg));
       if (w && typeof showLogisticsWindow === 'function') showLogisticsWindow(w.stock_no, w.title);
+    })
+  );
+  // Its Accounts window, and its Timeline, from the list too.
+  $$('#grid [data-acc]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.acc));
+      if (w && typeof showAccountsWindow === 'function') showAccountsWindow(w.stock_no, w.title);
+    })
+  );
+  $$('#grid [data-tl]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const w = shown.find((x) => x.id === Number(b.dataset.tl));
+      if (w && typeof showTimelineWindow === 'function') showTimelineWindow(w);
     })
   );
   $('#more').classList.toggle('hide', shown.length >= r.total);
@@ -513,6 +579,8 @@ function tile(w) {
   const ckUrl = w.ck_id && state.meta?.chronokeyUrl ? `${state.meta.chronokeyUrl}/Stock/InstockDetailPage/${encodeURIComponent(w.ck_id)}` : '';
   const editor = can('editor') && !w.deleted_at;
   const lg = editor && w.stock_no && typeof lgAppOn === 'function' && lgAppOn();
+  const acc = w.stock_no && typeof accAppOn === 'function' && accAppOn();
+  const tl = w.stock_no && typeof tlOn === 'function' && tlOn();
   const status = w.deleted_at ? 'deleted' : w.status || 'other';
   return `<article class="tile st-${esc(status)}" data-id="${w.id}" title="${esc(w.title)}">
     <div class="pic">${
@@ -523,12 +591,10 @@ function tile(w) {
     <span class="badge chip ${esc(status)}">${esc(status === 'in_stock' ? 'Available' : statusLabel(status))}</span>
     <div class="body">
       <div class="t">${esc(w.title)}</div>
-      ${f('Reference', esc(w.reference))}
-      ${f('Serial number', esc(w.serial))}
+      ${tileFacts(w, f)}
       ${f('Stock number', esc(w.stock_no))}
-      ${f('Watch date', esc(w.watch_date))}
       ${f('Owner', esc(w.order_type))}
-      ${f('Category', esc(w.location))}
+      ${f('Place', esc(w.location))}
       ${f('From', esc(w.bought_from))}
       ${f('Retail price', plain(w.retail_price, w.retail_currency))}
       ${f('Website price', plain(w.website_price, w.website_currency))}
@@ -540,10 +606,47 @@ function tile(w) {
       ${moveButtons(w, 'move')}
       ${editor ? `<a href="#/watch/${w.id}/edit" title="Edit this watch">${icon('edit')}Edit</a>` : ''}
       ${lg ? `<button type="button" data-lg="${w.id}" title="Where it is and what happened to it, from the logistics app">${icon('logistics')}Logistics</button>` : ''}
+      ${acc ? `<button type="button" data-acc="${w.id}" title="What was paid and received on it, through which wallets, from the accounts app">${icon('accounts')}Accounts</button>` : ''}
+      ${tl ? `<button type="button" data-tl="${w.id}" title="Its whole story in order — the ERP, the logistics and the accounts — with the papers">${icon('timeline')}Timeline</button>` : ''}
       ${ckUrl ? `<a href="${esc(ckUrl)}" target="_blank" rel="noopener" title="This watch on Chrono Key">${icon('link')}Chrono Key</a>` : ''}
       <button type="button" data-copy="${w.id}" title="Copy the details as text, to paste into WhatsApp">${icon('copy')}Share</button>
     </div>
   </article>`;
+}
+
+/*
+ * The item's own facts on its card, by category (5 Nov 2026): a watch's
+ * reference, serial and date; a piece of jewellery's type, metal, stones and
+ * carats; a bag's type, leather, colour and size.
+ */
+function tileFacts(w, f) {
+  if (w.category === 'jewellery') {
+    return [
+      f('Category', 'Jewellery'),
+      f('Type', esc(w.jewel_type)),
+      f('Material', esc(w.material)),
+      f('Gemstones', esc(w.gemstones)),
+      f('Carats', esc(w.carats)),
+      f('Colour', esc(w.gem_colour)),
+      f('Chain length', esc(w.chain_length)),
+      f('Reference', esc(w.reference)),
+      f('Serial number', esc(w.serial)),
+    ].join('');
+  }
+  if (w.category === 'bag') {
+    return [
+      f('Category', 'Bag'),
+      f('Type', esc(w.bag_type)),
+      f('Material', esc(w.bag_material)),
+      f('Colour', esc(w.bag_colour)),
+      f('Size', esc(w.bag_size)),
+      f('Hardware', esc(w.hardware)),
+      f('Date code', esc(w.date_code)),
+      f('Reference', esc(w.reference)),
+      f('Serial number', esc(w.serial)),
+    ].join('');
+  }
+  return [f('Reference', esc(w.reference)), f('Serial number', esc(w.serial)), f('Watch date', esc(w.watch_date))].join('');
 }
 
 /*
@@ -650,12 +753,18 @@ async function openMove(id, key, after) {
 /* What the copy button puts on the clipboard: the card as text, for a WhatsApp message. */
 function cardText(w) {
   const plain = (n, cur) => (n === null || n === undefined ? '' : money(n, cur, { plain: true }));
+  const own =
+    w.category === 'jewellery'
+      ? [['Type', w.jewel_type], ['Material', w.material], ['Gemstones', w.gemstones], ['Carats', w.carats], ['Colour', w.gem_colour], ['Chain length', w.chain_length]]
+      : w.category === 'bag'
+        ? [['Type', w.bag_type], ['Material', w.bag_material], ['Colour', w.bag_colour], ['Size', w.bag_size], ['Hardware', w.hardware], ['Date code', w.date_code]]
+        : [['Watch date', w.watch_date]];
   const lines = [
     w.title,
     ['Reference', w.reference],
     ['Serial', w.serial],
     ['Stock number', w.stock_no],
-    ['Watch date', w.watch_date],
+    ...own,
     ['Location', w.location],
     ['Retail price', plain(w.retail_price, w.retail_currency)],
     ['Website price', plain(w.website_price, w.website_currency)],
@@ -701,9 +810,11 @@ function priceStrip(w) {
  * already; box, papers and service papers as one sentence.
  */
 const HERO_SKIP = new Set(['stock_no', 'brand', 'model', 'reference', 'title', 'status', 'location', 'box', 'papers', 'service_papers']);
+/* The groups whose facts sit in the dossier's head: the item's own, and its category's. */
+const HEAD_GROUPS = new Set(['Watch', 'Specification', 'Jewellery', 'Bag']);
 function heroSpec(w) {
-  const facts = state.meta.fields
-    .filter((f) => (f.group === 'Watch' || f.group === 'Specification') && !HERO_SKIP.has(f.key) && !f.key.endsWith('_currency'))
+  const facts = fieldsFor(w.category)
+    .filter((f) => HEAD_GROUPS.has(f.group) && !HERO_SKIP.has(f.key) && f.key !== 'category' && !f.key.endsWith('_currency'))
     .map((f) => [f.label, display(f, w), lockMarkOf(w, f.key)])
     .filter(([, v]) => v);
   const yes = [w.box === true && 'box', w.papers === true && 'papers', w.service_papers === true && 'service papers'].filter(Boolean);
@@ -774,7 +885,6 @@ async function showWatch(id, { keepEdit = false, edit = false } = {}) {
 function renderWatch() {
   const { w } = current;
   const editor = can('editor') && !w.deleted_at;
-  const groups = [...new Set(state.meta.fields.map((f) => f.group))];
   // The dossier (30 Oct 2026): the brand small over the model and reference, as on a certificate; the watch's own
   // facts beside its picture; the money as one ledger line at the foot. The rest of the record is below.
   const brand = w.brand && w.display_title.toLowerCase().startsWith(w.brand.toLowerCase()) ? w.brand : '';
@@ -796,6 +906,7 @@ function renderWatch() {
             ${brand ? `<div class="brand-line">${esc(brand)}</div>` : ''}
             <h1>${esc(title)}</h1>
             <div class="row">${w.stock_no ? `<b>Stock ${esc(w.stock_no)}</b>` : ''} ${w.deleted_at ? chip('deleted') : chip(w.status)}
+              ${w.category && w.category !== 'watch' ? `<span>${esc(catOf(w.category).label)}</span>` : ''}
               ${w.location ? `<span>${esc(w.location)}</span>` : ''}
               <span class="count" style="margin:0">From ${esc({ chronokey: 'Chrono Key', vault: 'the Watch vault', manual: 'masterapp' }[w.origin])}</span></div>
             ${statusLine(w)}
@@ -803,6 +914,8 @@ function renderWatch() {
           <div class="row actions">
             ${current.editing ? '' : moveButtons(w, 'btn gold')}
             ${w.stock_no && typeof lgAppOn === 'function' && lgAppOn() && can('editor') ? '<button class="btn" id="lg-open">Logistics</button>' : ''}
+            ${w.stock_no && typeof accAppOn === 'function' && accAppOn() ? '<button class="btn" id="acc-open">Accounts</button>' : ''}
+            ${w.stock_no && typeof tlOn === 'function' && tlOn() ? '<button class="btn" id="tl-open">Timeline</button>' : ''}
             ${editor && !current.editing ? '<button class="btn primary" id="edit">Edit</button>' : ''}
             ${can('editor') ? (w.deleted_at ? '<button class="btn" id="restore">Restore</button>' : '<button class="btn danger" id="del">Delete</button>') : ''}
           </div>
@@ -810,12 +923,14 @@ function renderWatch() {
         ${heroSpec(w)}
         ${w.description ? `<p class="desc">${esc(w.description)}</p>` : ''}
         ${priceStrip(w)}
+        <aside class="dossier-costs" id="costs"><h3>Additional expenditures</h3><p class="count" style="margin:0">Reading the costs…</p></aside>
       </div>
     </section>
     <div class="watch-layout">
       <form class="panel" id="details"></form>
       <div class="stack">
         <div class="panel" id="wclients"></div>
+        <div class="panel" id="papers"></div>
         <div class="panel" id="sold-for" hidden></div>
         <div class="panel" id="related" hidden></div>
       </div>
@@ -823,9 +938,15 @@ function renderWatch() {
 
   renderGallery();
   renderWatchClients();
-  renderDetails(groups);
+  renderPapers();
+  renderCosts();
+  renderDetails();
   // Whatever the logistics app has on this stock number, as a window over the page.
   $('#lg-open')?.addEventListener('click', () => showLogisticsWindow(w.stock_no, w.display_title));
+  // And whatever our copy of the accounts app has on it — the ledger, its payments — the same way.
+  $('#acc-open')?.addEventListener('click', () => showAccountsWindow(w.stock_no, w.display_title));
+  // Everything together, in order — the ERP's own history, the logistics, the accounts — with the papers (timeline.js).
+  $('#tl-open')?.addEventListener('click', () => showTimelineWindow(w));
   $$('.actions [data-move]').forEach((b) => b.addEventListener('click', () => openMove(w.id, b.dataset.move, () => showWatch(w.id))));
   // Kept on `current`: Edit redraws the page without reading its side panels again.
   $('#edit')?.addEventListener('click', () => {
@@ -1109,7 +1230,7 @@ function inputFor(f, w) {
   const name = `name="${f.key}"`;
   switch (f.type) {
     case 'enum':
-      return `<select ${name}>${f.options.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>${esc(statusLabel(o))}</option>`).join('')}</select>`;
+      return `<select ${name}>${f.options.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>${esc(enumLabel(f, o))}</option>`).join('')}</select>`;
     case 'bool':
       return `<select ${name}><option value="">Not stated</option><option value="true" ${v === true ? 'selected' : ''}>Yes</option><option value="false" ${v === false ? 'selected' : ''}>No</option></select>`;
     case 'date':
@@ -1134,11 +1255,16 @@ function inputFor(f, w) {
   }
 }
 
-function renderDetails(groups) {
+function renderDetails() {
   const { w } = current;
   const form = $('#details');
   const locked = new Set(w.locked_fields || []);
   const lockMark = (k) => lockMarkOf(w, k);
+  // The fields of ITS category (5 Nov 2026). While editing, the category picked in the form rules — a watch
+  // re-filed as jewellery shows the jewellery fields at once, what was typed so far kept (current.draft).
+  const shown = current.editing && current.draft ? current.draft : w;
+  const fields = fieldsFor(shown.category);
+  const groups = [...new Set(fields.map((f) => f.group))];
 
   // Reading: the rest of the record — Purchase, Prices, Sale, Notes — two across where the screen allows (.fgroups),
   // one list down a phone. The Watch and Specification facts are in the dossier's head (heroSpec); the description
@@ -1148,8 +1274,8 @@ function renderDetails(groups) {
     let empty = 0;
     const sections = groups
       .map((g) => {
-        const inHead = g === 'Watch' || g === 'Specification';
-        const fs = state.meta.fields.filter((f) => f.group === g && !f.key.endsWith('_currency') && f.key !== 'description');
+        const inHead = HEAD_GROUPS.has(g);
+        const fs = fields.filter((f) => f.group === g && !f.key.endsWith('_currency') && f.key !== 'description');
         const rows = fs
           .map((f) => {
             const shown = display(f, w);
@@ -1160,7 +1286,7 @@ function renderDetails(groups) {
             return show ? `<dt>${esc(f.label)}</dt><dd>${shown || '<span class="blank">—</span>'}${lockMark(f.key)}</dd>` : '';
           })
           .join('');
-        return rows ? `<section class="fgroup"><h3>${esc(g)}</h3><dl class="fields">${rows}</dl></section>` : '';
+        return rows ? `<section class="fgroup"><h3>${esc(groupName(g, w.category))}</h3><dl class="fields">${rows}</dl></section>` : '';
       })
       .join('');
     form.innerHTML =
@@ -1172,7 +1298,7 @@ function renderDetails(groups) {
         : '');
     $('#show-empty')?.addEventListener('click', () => {
       current.showEmpty = !current.showEmpty;
-      renderDetails(groups);
+      renderDetails();
     });
     $$('#app [data-unlock]').forEach((a) =>
       a.addEventListener('click', async (e) => {
@@ -1189,25 +1315,19 @@ function renderDetails(groups) {
 
   form.innerHTML = `
     ${w.origin !== 'manual' ? `<p class="note info" style="margin-top:0">Until the switch-over Chrono Key is the master. A field you change here is kept as you set it: the next copy from Chrono Key leaves it alone.</p>` : ''}
-    ${groups
-      .map(
-        (g) => `<h3 style="margin-top:14px">${esc(g)}</h3><div class="form-grid">${state.meta.fields
-          .filter((f) => f.group === g)
-          .map(
-            (f) =>
-              `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(f.label)}${inputFor(f, w)}${
-                f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''
-              }</label>`
-          )
-          .join('')}</div>`
-      )
-      .join('')}
+    ${formGroups(fields, shown)}
     <datalist id="currencies">${state.meta.currencies.map((c) => `<option value="${c}">`).join('')}</datalist>
     <div class="err" id="form-err"></div>
     <div class="sticky-save"><button class="btn primary">Save changes</button><button type="button" class="btn" id="cancel">Cancel</button></div>`;
 
+  // Another category: the form is drawn again with that category's fields, what was typed kept.
+  form.elements.category?.addEventListener('change', (e) => {
+    current.draft = { ...(current.draft || w), ...formValues(form), category: e.target.value };
+    renderDetails();
+  });
   $('#cancel').addEventListener('click', () => {
     current.editing = false;
+    current.draft = null;
     renderWatch();
     loadSide(w.id);
   });
@@ -1227,6 +1347,40 @@ function renderDetails(groups) {
       $('#form-err').textContent = err.message;
     }
   };
+}
+
+/* The form's groups, each heading over its fields — the item's category deciding which (fieldsFor). */
+function formGroups(fields, values) {
+  const groups = [...new Set(fields.map((f) => f.group))];
+  return groups
+    .map(
+      (g) => `<h3 style="margin-top:14px">${esc(groupName(g, values.category))}</h3><div class="form-grid">${fields
+        .filter((f) => f.group === g)
+        .map(
+          (f) =>
+            `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(f.label)}${inputFor(f, values)}${
+              f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''
+            }</label>`
+        )
+        .join('')}</div>`
+    )
+    .join('');
+}
+
+/* Everything the form holds, as typed — to carry across a redraw. */
+function formValues(form) {
+  const out = {};
+  for (const f of state.meta.fields) {
+    if (f.type === 'payments') {
+      const pay = {};
+      for (const inp of $$(`[data-pay="${f.key}"] input`, form)) if (inp.value.trim()) pay[inp.dataset.kind] = inp.value.trim();
+      if ($(`[data-pay="${f.key}"]`, form)) out[f.key] = pay;
+      continue;
+    }
+    const el = form.elements[f.key];
+    if (el) out[f.key] = f.type === 'bool' ? (el.value === 'true' ? true : el.value === 'false' ? false : null) : el.value;
+  }
+  return out;
 }
 
 /** Only the fields that differ from what is held, so an edit never resends — and re-locks — the rest. */
@@ -1399,6 +1553,7 @@ function renderClient(c, editing) {
             ? `<div class="panel"><h3>Logistics</h3><p class="count" style="margin:0"><a href="${lgAppLink('contacts', c.name)}">See ${esc(c.name)} in Logistics →</a></p></div>`
             : ''
         }
+        ${typeof accAppOn === 'function' && accAppOn() ? '<div class="panel" id="cacc"><h3>Accounts</h3><p class="count" style="margin:0">Reading the accounts…</p></div>' : ''}
         ${
           editing
             ? `<form class="panel" id="cform"><h3>Client</h3><div class="form-grid">${F.map((f) =>
@@ -1424,6 +1579,7 @@ function renderClient(c, editing) {
     const words = e.target.value.toLowerCase().split(/\s+/).filter(Boolean);
     $$('.cw-row').forEach((a) => (a.hidden = !words.every((w) => a.dataset.text.includes(w))));
   });
+  if ($('#cacc')) renderClientAccounts(c);
   $('#cedit')?.addEventListener('click', () => renderClient(c, true));
   $('#ccancel')?.addEventListener('click', () => renderClient(c, false));
   $('#cform')?.addEventListener('submit', async (e) => {
@@ -1440,6 +1596,86 @@ function renderClient(c, editing) {
     } catch (err) {
       flash(err.message, true);
     }
+  });
+}
+
+/*
+ * What the accounts app says about this client (from our copy): which of its
+ * clients this is, what stands open with them per currency — owed to us, owed
+ * by us — and the way into the app itself, on their profile.
+ */
+async function renderClientAccounts(c) {
+  const box = $('#cacc');
+  if (!box) return;
+  let a;
+  try {
+    a = await api(`/api/acc-app/our-client/${c.id}`);
+  } catch (err) {
+    box.innerHTML = `<h3>Accounts</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (!$('#cacc')) return;
+  const amount = (n, cur) => `${esc(cur)} ${Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const lines = Object.entries(a.balances || {}).map(
+    ([cur, b]) => `<div><span>${b.owed_to_us ? `Owed to us <b>${amount(b.owed_to_us, cur)}</b>` : ''}${b.owed_to_us && b.we_owe ? ' · ' : ''}${b.we_owe ? `We owe <b>${amount(b.we_owe, cur)}</b>` : ''}</span></div>`
+  );
+  const editor = can('editor');
+  // Each accounts client this is: how it was decided, and — for an editor — a way to confirm it, deny it, or undo a decision.
+  const named = a.links.map(
+    (l) => `<span class="acl" data-acc="${esc(l.acc_client_id)}">${esc(l.name)} <span class="count" style="margin:0">(${esc(l.acc_client_id)}${l.how === 'person' ? ', set here' : l.how === 'name' ? ', by name' : ', by the watches'})</span>${
+      editor ? (l.how === 'person' ? ' <button type="button" class="btn small" data-acl-undo>Undo</button>' : ' <button type="button" class="btn small" data-acl-yes>Confirm</button> <button type="button" class="btn small" data-acl-no>Not them</button>') : ''
+    }</span>`
+  );
+  box.innerHTML = `<h3>Accounts</h3>
+    ${named.length ? `<p style="margin:0 0 6px">In the accounts app as ${named.join(', ')} · ${a.entries} ledger entr${a.entries === 1 ? 'y' : 'ies'}${a.last_at ? `, last ${esc(fmtDate(String(a.last_at).slice(0, 10)))}` : ''}</p>` : '<p class="count" style="margin:0 0 6px">Not matched to a client of the accounts app yet.</p>'}
+    ${lines.length ? `<div class="lgw-costs" style="margin:0 0 8px">${lines.join('')}</div>` : named.length ? '<p class="count" style="margin:0 0 6px">Nothing outstanding.</p>' : ''}
+    ${editor ? `<p style="margin:0 0 6px"><button type="button" class="btn small" id="acl-pick">${named.length ? 'Link another accounts client' : 'Link an accounts client'}</button></p>
+      <div class="wc-pick hide" id="acl-picker"><input type="search" placeholder="Search the accounts app’s clients — name, company, CL-…"><div class="wc-hits"></div></div>` : ''}
+    <p class="count" style="margin:0"><a href="${accAppLink('clients', a.links[0]?.name || c.name)}">See ${esc(a.links[0]?.name || c.name)} in Accounts →</a></p>`;
+  if (!editor) return;
+  const decide = async (method, url, body) => {
+    try {
+      await api(url, { method, body });
+      renderClientAccounts(c);
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $$('.acl', box).forEach((el) => {
+    const acc = el.dataset.acc;
+    $('[data-acl-yes]', el)?.addEventListener('click', () => decide('PUT', '/api/acc-app/client-link', { acc_client_id: acc, client_id: c.id }));
+    $('[data-acl-no]', el)?.addEventListener('click', () => decide('PUT', '/api/acc-app/client-link', { acc_client_id: acc, client_id: null }));
+    $('[data-acl-undo]', el)?.addEventListener('click', () => decide('DELETE', `/api/acc-app/client-link/${encodeURIComponent(acc)}`));
+  });
+  const pick = $('#acl-picker');
+  const input = $('input', pick);
+  let timer;
+  const search = async () => {
+    const r = await api(`/api/acc-app/app-clients?${new URLSearchParams({ q: input.value, limit: 10 })}`).catch(() => ({ clients: [] }));
+    $('.wc-hits', pick).innerHTML =
+      r.clients
+        .map(
+          (x) => `<button type="button" class="wc-hit" data-acc="${esc(x.acc_client_id)}"><b>${esc(x.name)}</b> <span class="count" style="margin:0">${esc(
+            [x.acc_client_id, x.company, x.client_id ? `now ${x.client_id === c.id ? 'this client' : x.client_name}` : 'not linked'].filter(Boolean).join(' · ')
+          )}</span></button>`
+        )
+        .join('') || '<p class="count" style="margin:6px 0 0">No accounts client matches.</p>';
+  };
+  $('#acl-pick').addEventListener('click', () => {
+    pick.classList.toggle('hide');
+    if (!pick.classList.contains('hide')) {
+      input.value = c.name;
+      input.focus();
+      search();
+    }
+  });
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(search, 200);
+  });
+  pick.addEventListener('click', (e) => {
+    const b = e.target.closest('.wc-hit');
+    if (b) decide('PUT', '/api/acc-app/client-link', { acc_client_id: b.dataset.acc, client_id: c.id });
   });
 }
 
@@ -1468,6 +1704,190 @@ function showNewClient() {
       flash(err.message, true);
     }
   });
+}
+
+/*
+ * A watch's documents (4 Nov 2026): the invoice, the papers, a customs form,
+ * a receipt — PDFs or pictures, dropped on the panel or chosen, each with
+ * what it is; a PDF opens in the viewer. Removing one is soft and in the
+ * history.
+ */
+const PAPER_KINDS = { invoice: 'Invoice', papers: 'Papers', customs: 'Customs', receipt: 'Receipt', other: 'Other' };
+async function renderPapers() {
+  const { w } = current;
+  const box = $('#papers');
+  if (!box) return;
+  let r;
+  try {
+    r = await api(`/api/watches/${w.id}/documents`);
+  } catch (err) {
+    box.innerHTML = `<h3>Papers</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (current?.w.id !== w.id || !$('#papers')) return;
+  const editor = can('editor') && !w.deleted_at;
+  const tile = (d) => `<div class="xfile">
+      <a href="/api/watch-documents/${d.id}" target="_blank" rel="noopener" ${d.content_type === 'application/pdf' ? `data-pdf="/api/watch-documents/${d.id}" data-name="${esc(d.name || 'document.pdf')}"` : ''}>${
+        d.has_thumb ? `<img src="/api/watch-documents/${d.id}?thumb=1" alt="">` : '<span class="xpdf">PDF</span>'
+      }<span class="xname">${d.kind ? `<b>${esc(PAPER_KINDS[d.kind] || d.kind)}</b> · ` : ''}${esc(d.name || 'Document')}</span>
+      <span class="count" style="margin:0">${esc(fmtDate(String(d.created_at).slice(0, 10)))}${d.user_name ? ` · ${esc(d.user_name)}` : ''}</span></a>
+      ${editor ? `<button type="button" class="btn small danger" data-rmdoc="${d.id}">Remove</button>` : ''}
+    </div>`;
+  box.innerHTML = `<h3>Papers${r.documents.length ? ` · ${r.documents.length}` : ''}</h3>
+    ${r.documents.length ? `<div class="xfiles">${r.documents.map(tile).join('')}</div>` : `<p class="count" style="margin:0">${editor ? 'No documents yet.' : 'No documents.'}</p>`}
+    ${
+      editor
+        ? `<div class="row" style="margin-top:10px;align-items:center"><label class="count" style="margin:0">This is <select id="pkind">${Object.entries(PAPER_KINDS)
+            .map(([k, l]) => `<option value="${k}">${l}</option>`)
+            .join('')}</select></label></div>
+           <label class="drop" id="pdrop">The invoice, the papers, a customs form, a receipt — PDFs or pictures: <u>choose files</u>
+             <input type="file" id="pfile" accept="application/pdf,image/*" multiple hidden></label>`
+        : ''
+    }`;
+  const upload = async (files) => {
+    if (!files.length) return;
+    const fd = new FormData();
+    fd.append('kind', $('#pkind')?.value || '');
+    for (const f of files) fd.append('files', f, f.name);
+    try {
+      await api(`/api/watches/${w.id}/documents`, { method: 'POST', body: fd });
+      flash(files.length === 1 ? 'Document added' : `${files.length} documents added`);
+      renderPapers();
+    } catch (err) {
+      flash(err.message, true);
+    }
+  };
+  $('#pfile')?.addEventListener('change', (ev) => upload([...ev.target.files]));
+  const drop = $('#pdrop');
+  if (drop) {
+    drop.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      drop.classList.add('over');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      drop.classList.remove('over');
+      upload([...ev.dataTransfer.files]);
+    });
+  }
+  $$('[data-rmdoc]', box).forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this document? It stays in the history.')) return;
+      await api(`/api/watches/${w.id}/documents/${b.dataset.rmdoc}`, { method: 'DELETE' }).then(renderPapers, (err) => flash(err.message, true));
+    })
+  );
+  $$('a[data-pdf]', box).forEach((a) =>
+    a.addEventListener('click', (e) => {
+      if (typeof lgDocOpen !== 'function') return;
+      e.preventDefault();
+      lgDocOpen(a.dataset.pdf, a.dataset.name);
+    })
+  );
+}
+
+/*
+ * A watch's additional expenditures (asked 4 Nov 2026), in the empty space
+ * under the dossier's prices: what it cost beyond its price, as one overview.
+ * On top, what the logistics and accounts apps already hold on the stock
+ * number — read-only, each line tagged with its app; a line the app ties to
+ * several watches at once (a courier that carried three, a trip) is said to
+ * be shared and left out of the total, because how it splits is nobody's
+ * guess. Under that, the lines typed here, per watch — the ERP's own, for
+ * the overview; not corrections of the apps' lines and never written to the
+ * apps — which an editor adds, changes and removes; every change is in the
+ * watch's history. Totals per currency, never converted.
+ */
+const COST_KINDS = { shipping: 'Shipping', customs: 'Customs / duty', service: 'Service / polish', commission: 'Commission', insurance: 'Insurance', travel: 'Travel', other: 'Other' };
+const costSum = (t) => Object.entries(t || {}).map(([cur, n]) => money(n, cur === '—' ? '' : cur, { plain: true })).join(' + ');
+async function renderCosts() {
+  const { w } = current;
+  const box = $('#costs');
+  if (!box) return;
+  let r;
+  try {
+    r = await api(`/api/watches/${w.id}/costs`);
+  } catch (err) {
+    box.innerHTML = `<h3>Additional expenditures</h3><p class="err" style="margin:0">${esc(err.message)}</p>`;
+    return;
+  }
+  if (current?.w.id !== w.id || !$('#costs')) return;
+  current.costs = r;
+  const editor = can('editor') && !w.deleted_at;
+  const SRC = { logistics: 'Logistics', accounts: 'Accounts' };
+  const known = (l) => `<div class="xc-line${l.shared_with.length ? ' shared' : ''}">
+      <div class="xc-main"><span class="tl-src tl-${esc(l.source)}">${SRC[l.source] || l.source}</span><b>${esc(l.what)}</b>${l.title && l.title !== l.what ? ` <span>${esc(l.title)}</span>` : ''}
+        <span class="count">${l.date ? esc(fmtDate(l.date)) : ''}${l.shared_with.length ? `${l.date ? ' · ' : ''}shared with ${esc(l.shared_with.slice(0, 4).join(', '))}${l.shared_with.length > 4 ? '…' : ''} · not in the total` : ''}</span></div>
+      <div class="xc-amt">${money(l.amount, l.currency, { plain: true })}</div>
+    </div>`;
+  const added = (c) => `<div class="xc-line" data-cost="${c.id}">
+      <div class="xc-main"><b>${esc(COST_KINDS[c.kind] || c.kind)}</b>${c.title ? ` <span>${esc(c.title)}</span>` : ''}
+        <span class="count">${[c.paid_on ? fmtDate(c.paid_on) : '', c.paid_by ? state.meta.paymentKinds.find((p) => p.key === c.paid_by)?.label || c.paid_by : '', c.user_name ? `by ${c.user_name}` : ''].filter(Boolean).map(esc).join(' · ')}</span>
+        ${c.note ? `<div class="xc-note">${esc(c.note)}</div>` : ''}</div>
+      <div class="xc-amt">${money(c.amount, c.currency, { plain: true })}${editor ? `<div class="xc-acts"><button type="button" class="linkish small" data-editcost="${c.id}">Change</button><button type="button" class="linkish small danger" data-rmcost="${c.id}">Remove</button></div>` : ''}</div>
+    </div>`;
+  const foot = [];
+  if (r.accounts.source === 'none' && r.accounts.error) foot.push(`accounts not read (${r.accounts.error})`);
+  else if (r.accounts.source === 'live') foot.push('accounts read live from the app');
+  if (r.logistics.error) foot.push(`logistics not read (${r.logistics.error})`);
+  box.innerHTML = `<div class="xc-head"><h3>Additional expenditures</h3>${Object.keys(r.totals.all).length ? `<b class="xc-sum">${costSum(r.totals.all)}</b>` : ''}</div>
+    <div class="xc-groups">
+    <div class="xc-group">
+      <div class="xc-title">From Logistics and Accounts${Object.keys(r.totals.known).length ? `<span>${costSum(r.totals.known)}</span>` : ''}</div>
+      ${r.known.length ? r.known.map(known).join('') : '<p class="count xc-empty">Nothing on this stock number in the two apps yet.</p>'}
+    </div>
+    <div class="xc-group">
+      <div class="xc-title">Added here${Object.keys(r.totals.added).length ? `<span>${costSum(r.totals.added)}</span>` : ''}</div>
+      ${r.added.length ? r.added.map(added).join('') : `<p class="count xc-empty">${editor ? 'Nothing added yet.' : 'Nothing added here.'}</p>`}
+      ${editor ? '<div id="xc-form-host"><button type="button" class="btn small" id="xc-add">Add a cost</button></div>' : ''}
+    </div>
+    </div>
+    ${foot.length ? `<p class="count xc-foot">${esc(foot.join(' · '))}</p>` : ''}`;
+
+  const form = (c = {}) => `<form class="xc-form" id="xc-form">
+      <div class="form-grid">
+        <label>What <select name="kind">${Object.entries(COST_KINDS).map(([k, l]) => `<option value="${k}"${(c.kind || 'shipping') === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label>Title <input name="title" value="${esc(c.title || '')}" placeholder="Courier to Dubai, duty, polish…" maxlength="200"></label>
+        <label>Amount <input name="amount" inputmode="decimal" required value="${c.amount ?? ''}" placeholder="0.00"></label>
+        <label>Currency <select name="currency">${state.meta.currencies.map((x) => `<option${(c.currency || current.costs?.added?.at(-1)?.currency || w.purchase_currency || 'EUR') === x ? ' selected' : ''}>${x}</option>`).join('')}</select></label>
+        <label>Paid on <input type="date" name="paid_on" value="${esc(c.paid_on || '')}"></label>
+        <label>Paid by <select name="paid_by"><option value="">—</option>${state.meta.paymentKinds.map((p) => `<option value="${p.key}"${c.paid_by === p.key ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>
+        <label class="wide">Note <input name="note" value="${esc(c.note || '')}" maxlength="2000"></label>
+      </div>
+      <div class="row" style="margin-top:8px"><button class="btn primary small">${c.id ? 'Save' : 'Add'}</button><button type="button" class="btn small" id="xc-cancel">Cancel</button></div>
+    </form>`;
+  const openForm = (host, c) => {
+    host.innerHTML = form(c);
+    const f = $('#xc-form');
+    f.querySelector('[name=amount]').focus();
+    $('#xc-cancel').addEventListener('click', renderCosts);
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(f).entries());
+      try {
+        if (c?.id) await api(`/api/watches/${w.id}/costs/${c.id}`, { method: 'PATCH', body });
+        else await api(`/api/watches/${w.id}/costs`, { method: 'POST', body });
+        flash(c?.id ? 'Cost changed' : 'Cost added');
+        renderCosts();
+      } catch (err) {
+        flash(err.message, true);
+      }
+    });
+  };
+  $('#xc-add')?.addEventListener('click', () => openForm($('#xc-form-host')));
+  $$('[data-editcost]', box).forEach((b) =>
+    b.addEventListener('click', () => {
+      const c = r.added.find((x) => String(x.id) === b.dataset.editcost);
+      const line = box.querySelector(`[data-cost="${b.dataset.editcost}"]`);
+      if (c && line) openForm(line, c);
+    })
+  );
+  $$('[data-rmcost]', box).forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this cost? It stays in the history.')) return;
+      await api(`/api/watches/${w.id}/costs/${b.dataset.rmcost}`, { method: 'DELETE' }).then(renderCosts, (err) => flash(err.message, true));
+    })
+  );
 }
 
 /*
@@ -1838,35 +2258,57 @@ function showNewExpense() {
 
 /* ── new watch ────────────────────────────────────────────────────── */
 
-function showNew() {
+/*
+ * A new item (5 Nov 2026: jewellery and bags beside the watches): first what
+ * it is — a watch, a piece of jewellery or a bag — then that category's form.
+ * The stock number is the next in the one sequence, already filled in; it can
+ * be changed. `#/new/jewellery` and `#/new/bag` open on that category.
+ */
+async function showNew(cat) {
   if (!can('editor')) return (location.hash = '#/');
-  const blank = { status: 'in_stock', locked_fields: [] };
+  const blank = { status: 'in_stock', category: catOf(cat).key, locked_fields: [] };
   for (const f of state.meta.fields) if (!(f.key in blank)) blank[f.key] = f.type === 'payments' ? {} : null;
-  const groups = [...new Set(state.meta.fields.map((f) => f.group))];
-  $('#app').innerHTML = `<h1>New watch</h1><p class="sub">Photos can be added once it is saved.</p>
-    <form class="panel" id="newform">${groups
-      .map(
-        (g) => `<h3 style="margin-top:14px">${esc(g)}</h3><div class="form-grid">${state.meta.fields
-          .filter((f) => f.group === g)
-          .map((f) => `<label class="${f.type === 'longtext' || f.type === 'payments' ? 'wide' : ''}">${esc(f.label)}${inputFor(f, blank)}</label>`)
-          .join('')}</div>`
-      )
-      .join('')}
-      <datalist id="currencies">${state.meta.currencies.map((c) => `<option value="${c}">`).join('')}</datalist>
-      <div class="err" id="form-err"></div>
-      <div class="sticky-save"><button class="btn primary">Create watch</button><a class="btn" href="#/">Cancel</a></div>
-    </form>`;
-  $('#newform').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const patch = readForm(e.target, blank);
-    patch.status = e.target.elements.status.value;
-    try {
-      const r = await api('/api/watches', { method: 'POST', body: patch });
-      location.hash = `#/watch/${r.id}`;
-    } catch (err) {
-      $('#form-err').textContent = err.message;
-    }
-  });
+  let next = '';
+  try {
+    next = (await api('/api/watches/next-stock-no')).stock_no;
+  } catch {}
+  blank.stock_no = next;
+  const draw = () => {
+    const c = catOf(blank.category);
+    const fields = fieldsFor(c.key).filter((f) => f.key !== 'category');
+    $('#app').innerHTML = `<h1>New item</h1><p class="sub">What is it? Photos can be added once it is saved.</p>
+      <div class="pills" id="new-cat" style="margin-bottom:12px">${state.meta.categories
+        .map((k) => `<button type="button" class="pill ${k.key === c.key ? 'on' : ''}" data-v="${esc(k.key)}">${esc(k.label)}</button>`)
+        .join('')}</div>
+      <form class="panel" id="newform">
+        <input type="hidden" name="category" value="${esc(c.key)}">
+        ${formGroups(fields, blank)}
+        <datalist id="currencies">${state.meta.currencies.map((x) => `<option value="${x}">`).join('')}</datalist>
+        <div class="err" id="form-err"></div>
+        <div class="sticky-save"><button class="btn primary">Create ${esc(c.label.toLowerCase())}</button><a class="btn" href="#/">Cancel</a></div>
+      </form>`;
+    if (next) $('#newform').elements.stock_no.title = `Next in the sequence: ${next}`;
+    $$('#new-cat .pill').forEach((b) =>
+      b.addEventListener('click', () => {
+        Object.assign(blank, formValues($('#newform')), { category: b.dataset.v });
+        draw();
+      })
+    );
+    $('#newform').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const patch = formValues(e.target);
+      for (const k of Object.keys(patch)) if (patch[k] === null || patch[k] === '' || (typeof patch[k] === 'object' && !Object.keys(patch[k]).length)) delete patch[k];
+      patch.category = c.key;
+      patch.status = e.target.elements.status.value;
+      try {
+        const r = await api('/api/watches', { method: 'POST', body: patch });
+        location.hash = `#/watch/${r.id}`;
+      } catch (err) {
+        $('#form-err').textContent = err.message;
+      }
+    });
+  };
+  draw();
 }
 
 /* ── import ───────────────────────────────────────────────────────── */
@@ -1894,6 +2336,9 @@ async function showImport() {
       'chronokey/details-full': 'Watch pages & photos — everything',
       'chronokey/details-rolling': 'Watch pages & photos — the longest unread',
       'vault/full': 'Watch vault',
+      'logistics/full': 'Logistics app',
+      'accounts/full': 'Accounts app',
+      'accounts/changed': 'Accounts app — what changed',
     })[`${r.source}/${r.mode}`] || `${r.source} ${r.mode}`;
   const statsLine = (st) =>
     Object.entries(st || {})
@@ -1944,6 +2389,7 @@ async function showImport() {
           <div><b>${c.ck_details}</b><span>watch pages read (photos, € figures)</span></div>
           <div><b>${c.vault_records}</b><span>Watch vault records</span></div>
           <div><b>${c.photos}</b><span>photos stored</span></div>
+          ${c.accounts_items ? `<div><b>${c.accounts_entries}</b><span>accounts app ledger entries (${c.accounts_items} records)</span></div>` : ''}
           <div><b>${c.currency_not_stated}</b><span>purchases with no currency stated</span></div>
         </div>
         ${c.ck_errors ? `<p class="note" style="margin-top:12px">${c.ck_errors} Chrono Key page${c.ck_errors === 1 ? '' : 's'} could not be read — see the runs below.</p>` : ''}
@@ -1978,6 +2424,20 @@ async function showImport() {
         ${s.configured.vault ? '' : '<p class="note">Not configured — set VAULT_TOKEN (the worker’s WORKER_TOKEN) on the server.</p>'}
         <p class="sub">Brings in B2B, B2C and Chrono24 prices, the vault's photos, and watches only the vault holds.</p>
         <button class="btn gold" data-job="vault">Import the Watch vault</button>
+      </div>`
+          : ''
+      }
+      ${
+        admin
+          ? `<div class="panel">
+        <h2>4 · The accounts app</h2>
+        ${
+          !s.configured.accounts
+            ? '<p class="note info" style="margin:0">Accounts sync is off (ACCOUNTS_SYNC=off): masterapp is the master for accounts.</p>'
+            : !s.configured.accounts_app
+            ? '<p class="note">Not configured — make an account for the ERP in the accounts app (approved there) and set ACCOUNTS_USERNAME and ACCOUNTS_PASSWORD on the server.</p>'
+            : '<p class="sub">Every collection of the accounts app — the ledger with its payments, clients, invoices, quick sales, expenses, wallets, rates, partner desks — copied here, every 15 minutes and within a minute of a change. The app stays the master until the switch-over.</p><button class="btn gold" data-job="accounts">Read the accounts app now</button>'
+        }
       </div>`
           : ''
       }

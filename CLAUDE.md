@@ -24,12 +24,16 @@ src/
   storage/                  photos: Cloudflare R2, or disk under DATA_DIR; same-picture check
   watches/fields.js         THE list of a watch's fields (API, import, form)
   watches/index.js          read / create / edit / delete / photos / history
+  watches/documents.js      a watch's documents: invoice, papers, customs, receipts (PDFs or pictures)
   import/productlist.js     Chrono Key's product list (CSV export or live grid) → fields
   import/apply.js           writing a source's values into a watch, respecting edits
   import/listimport.js      the list → ck_records + watches
   import/chronokey/         client (ported), page parsers, sync
   import/vault/sync.js      the Watch vault → watches
   import/logistics/sync.js  the logistics app (same worker document) → logistics_items
+  import/accounts/          the accounts app: client.js signs in as the ERP and reads /api/state; sync.js → accounts_items
+  accounts/                 what our copy says about a stock number or a client (index.js), which client of ours an accounts client is (clients.js)
+  ai/                       Claude in the ERP: what the model reads (context.js), the watch's brief and Ask with tools (index.js)
   logistics/                the app's lists (kinds.js), moments and stages (situation.js), which client of ours a logistics client is (clients.js), our watch by stock number (shared.js)
   import/jobs.js            the timer, and the one-job-at-a-time lock
   sheets/                   the spreadsheets of the system: build.js reads them, index.js keeps, exports and puts a row into the system
@@ -37,11 +41,13 @@ src/
   pdf/                      our own PDF writer — title, text, tables; no dependency
   web/server.js             the API
   web/lgapp.js              the logistics app itself, served inside the ERP at /lg-app/
-  web/public/               the console — no build step, served raw; sheets.js is Sheets and Ask; lgapp-bridge.js runs inside the logistics app
+  web/accapp.js             the accounts app itself, served inside the ERP at /acc-app/
+  web/gridcraft.js          GridCraft, the sheets' spreadsheet, served inside the ERP at /gridcraft/ (vendor/gridcraft)
+  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline; ask.js the brief and the Ask button's thread; sheets.js is Sheets and the Ask tab
 test/                       node:test against stand-ins and a real Postgres
 ```
 
-Node 20+, Express 5, Postgres, `sharp` for thumbnails.
+Node 20+, Express 5, Postgres, `sharp` for thumbnails, `@anthropic-ai/sdk` for the assistant.
 
 **LIVE since 23 Oct 2026: https://coral-app-7qthm.ondigitalocean.app**
 (DigitalOcean app `coral-app` + database `masterapp-db`, photos in R2 bucket
@@ -436,6 +442,262 @@ the logistics app on our own"):
   deliveredAt is milliseconds or a date string; Kashan-plan watches drop out
   of Movement (ids without a prefix); vault notifications can revert a value.
 
+## Accounts (4 Nov 2026)
+
+Asked for: "add accountancy app to the ERP same way as how we did logistic …
+with linked stock and clients, with the watch page showing accountancy info …
+keep the sync on for the accountancy app until things get straight". The
+accounts app (Purosangue Watches — Accounts, repo
+`purosanguewatches94/Accountany-App`, live on Railway at
+`https://accountancy-app-production.up.railway.app`) is a **React build with
+its own Express + MySQL backend**: the payable/receivable ledger (every
+purchase and sale leg with its payments, by stock number and client), clients
+(`CL-001` …), documents/invoices, quick sales, expenses, wallets, currencies
+and rates, the exchange desk, schedules, employees and commission, partner
+desks — about 33 collections, each ONE JSON document in its `app_state` table,
+read whole at `GET /api/state` (or `?only=a,b`), with a version number per
+collection at `GET /api/state/revs`. It signs people in itself
+(express-session, cookie `connect.sid`, sign-up by email + admin approval) and
+stamps `_createdBy` / `_updatedBy` / `_history` on every record.
+
+- **Accounts in the ERP IS the accounts app.** `src/web/accapp.js` reads the
+  app from `ACCOUNTS_APP_URL` (default the Railway address; `off` = no
+  Accounts menu) and serves it at `/acc-app/` — editors only, its own CSP
+  (`appPolicy`: its inline theme script, Google fonts, the currency feeds it
+  reads, Google Maps for addresses, `frame-ancestors 'self'`), a copy held a
+  minute then re-asked with its ETag, the held copy served when Railway is
+  down. Because it is a React build, three things the logistics app never
+  needed: (1) its page names `/assets/…` and its 2.5 MB script calls `/api`
+  by absolute paths (the axios base, a few fetches) — both **rewritten to
+  `/acc-app/…`** as served (`rewritePage`, `rewriteScript`; the Google Maps
+  `…googleapis.com/maps/api/js` is left alone); (2) **its own sign-in stays**:
+  its API calls are passed on with the browser's `connect.sid` and its
+  `Set-Cookie` comes back for this origin (`Path=/`, no `Domain`, `Secure`
+  only in production) — so each person signs in to the accounts app ONCE,
+  inside the frame, with their own accounts account, and it keeps recording
+  who did what; the ERP's `ma_session` is never sent on; (3) its router keeps
+  the frame at the app's own routes (`/clients/CL-001`), so a GET of any such
+  address **asked for by a frame** (`Sec-Fetch-Dest: iframe`) is answered with
+  the app's page, never the console. Its uploads (`/uploads/<folder>/<file>`,
+  proof pictures and invoices on records) are served through `/acc-app/uploads/…`
+  and `/uploads/…` alike, with the cookie. A write must come from our own origin.
+  `test/accapp.test.js` against a stand-in Railway.
+- **`public/accapp-bridge.js`** goes first in its `<head>`: every stock number
+  the app shows that is OUR watch IS the link to our watch, every client name
+  that is OUR client IS the link to our client (`POST /api/acc-app/links` —
+  a name is ours when exactly one of ours carries it, else as the copied
+  ledger ties it to one); a stock number typed into an entry's "Stock no."
+  (placeholder `e.g. 1385`) or a part-exchange row fills the model and serial
+  from the ERP (`GET /api/acc-app/watch`), through React's own value setter;
+  `fetch`/XHR/`window.open` to `/api/…` and `/uploads/…` are re-routed as a
+  safety net; and the page the ERP asks for is opened (`#stock=` → the Stock
+  report searched for it, `#client=` → that client's own profile when the ERP
+  knows which (`GET /api/acc-app/client?name=`), `#path=&q=`), by
+  `pushState` + a `popstate` the app's router hears — after the app's own
+  sign-in, if that comes first. Console: `accounts.js` — one iframe in
+  `#acc-app-host`, kept while other pages show, dropped at sign-out;
+  `#/accounts/<page>/<what>` (`PAGES` in `src/accounts/index.js`).
+- **The copy is ON** (`ACCOUNTS_SYNC`, on by default; off = the switch-over
+  for accounts). `import/accounts/client.js` signs in as the ERP with
+  `ACCOUNTS_USERNAME` / `ACCOUNTS_PASSWORD` — **an account made for the ERP in
+  the app itself (Admin → Team, approved, password set)**; without them nothing
+  is copied and the Import page says so. `import/accounts/sync.js` copies every
+  collection into the same three layers — `accounts_records` (as read),
+  `accounts_items` (ours; `locked_fields`), `accounts_events`; inline base64
+  pictures once each in `accounts_files` (`acfile:<id>`); `stock_nos` and
+  `client_ids` GIN-indexed (migration 011). A list of records with an `id`
+  (or a `code`, the currencies) is one row per record; anything else (a map,
+  a list of plain values) is ONE row under the id `*`, whole. Stock numbers
+  come off `stock` (one, or "1385, 1390"), the lines of a settlement, the
+  part-exchange rows, and an expense's own "1385 | Client | Commission".
+  Deletions mirrored softly (a person's deletion stands; a collection losing
+  more than 3% and ten at once refused). Every 15 minutes the whole state;
+  between passes the versions every `ACCOUNTS_POLL_SEC` (60) and **only the
+  collections that moved** are read again. `npm run import -- accounts`.
+- **Which of OUR clients an accounts client is** (`src/accounts/clients.js`),
+  by the watches, as for logistics: every entry the app posts against a
+  client carries a stock number — a PAYABLE is a purchase (our watch's
+  `purchased_from`), a RECEIVABLE a sale (`sold_to`) — each a vote; the winner
+  needs twice the runner-up's; one watch alone only when the names look alike;
+  a full name that is exactly one of ours decides when no watch does; a
+  person's choice (`accounts_client_links`) always wins. **Set on the client
+  page's Accounts panel** (4 Nov 2026): each match says how it was made, and
+  an editor can *Confirm* it, say *Not them* (none of ours, over the watches),
+  *Undo* a decision (the watches decide again), or *Link an accounts client*
+  from a picker over the copied clients (`GET /api/acc-app/app-clients?q=`,
+  `PUT /api/acc-app/client-link {acc_client_id, client_id|null}`,
+  `DELETE /api/acc-app/client-link/:accId` — `setClientLink`,
+  `forgetClientLink`).
+- **The app's uploads are copied** (4 Nov 2026, for the switch-over): each
+  full pass, every `/uploads/<folder>/<file>` our records point at (proofs,
+  invoices, ID documents) is fetched with the ERP's own session —
+  `ACCOUNTS_FILES_PER_PASS` (200) a pass, four at a time, at most 50 MB,
+  pictures and PDFs only — stored once in `accounts_files` (`source_ref` =
+  the address) and swapped into our record as `acfile:<id>` (`copyUploads`;
+  the raw record keeps the address). Not a change of the record: no history
+  entry, no lock. An address that gave nothing is not asked again for a day.
+- **Inside the ERP the app opens in its light theme** (the console's look):
+  the bridge sets the app's own `app-theme` key to `light` only when the
+  person has never chosen one; the app's toggle still rules after that.
+- **The Accounts button — on the watch page and on every Inventory card**
+  (asked 4 Nov 2026: "see its payments, wallet, history, remaining / paid, and
+  its timeline") opens a window in the console's look (`showAccountsWindow`,
+  the Logistics window's shape) read from OUR COPY (`GET /api/acc-app/stock/:no`),
+  so it works for every role and needs no sign-in to the app: one serif line
+  on where the money stands ("Bought from X for AED 46,000, settled · Sold to
+  Y for USD 14,000, USD 4,000 still owed"); the facts — bought for / sold for
+  with paid and **remaining**, the **wallets** the money went through (the
+  app's `accounts` collection, resolved by `_walletAccId`, returned as
+  `wallets`), the invoice; the **ledger**, each leg with its **track**: to
+  pay / to receive, then every payment with its date, amount (and the amount
+  actually paid when in another currency), the wallet it came from or went
+  into, the method, the note, its proofs, and what was **left** after it, then
+  paid and remaining; **what happened**, in order (legs posted, payments,
+  invoice issued, quick sales, expenses, commission); quick sales, documents
+  (by the entry's invoice number), expenses, commission; every picture; when
+  the copy was read; "See it in the accounts app". `accStory(data)` builds all
+  of it and the Timeline reuses it. **When the copy is not there** — no
+  account for the ERP in the app yet, or the first pass still to come (seen
+  live 4 Nov 2026: "accountancy info not showing up") — the same answer is
+  read from the app itself, live, with the person's own accounts sign-in out
+  of the frame (their `connect.sid`), else the ERP's (`forStock` → `liveForStock`,
+  `fetchStateAs`; seven collections, held a minute per session); `source` says
+  `copy`, `live` or `none`, and the window's foot says which and what to set
+  up. Live, a client is ours by its name only (the ledger match needs the
+  copy). Files on a record (`attachments`, `proofs`,
+  `invoiceProof` …): "acfile:<id>" is served from our copy at
+  `/api/acc-app/file/:id` (`?thumb=1`), an app upload (`/uploads/…`) through
+  `/acc-app/uploads/…` — **with the ERP's own accounts session when the person
+  has none** (`erpSessionCookie`, viewers included), a PDF in the same viewer
+  as the logistics papers (`lgDocOpen` takes any same-origin address now).
+  The client page's **Accounts** panel (`GET /api/acc-app/our-client/:id`):
+  which of the app's clients this is and how it was matched, what stands open
+  per currency (owed to us / we owe), and "See <name> in Accounts →" (their
+  profile in the app).
+- **The Timeline button — watch page and Inventory card** (`timeline.js`,
+  asked 4 Nov 2026: "a separate timeline button that shows both accountancy
+  and logistics combined, with attached pdf"): one window, three lines on
+  where it stands (the ERP's status and dates, the logistics line, the
+  accounts line), the accounts facts, then ONE story in the order it happened
+  with a tag on every line saying whose it is — **ERP / Chrono Key** (bought,
+  sold, added, every status change and who made it, from the watch and
+  `/api/watches/:id/events`), **Logistics** (`lgStory`, split out of the
+  Logistics window: from our copy at once, the app's own answer replacing it
+  when the frame has it, editors), **Accounts** (`accStory`) — with the
+  pictures and papers on each line (customs papers, invoices, proofs; a PDF
+  opens in the viewer), all papers and all pictures again at the foot, and
+  **Save as PDF** (the browser's print of the window alone: `@media print`
+  hides everything else). Within a day the order is each app's own stage
+  order, the ERP's fact first.
+- **Not done / to decide:** the app's own client picker cannot be fed our
+  names (a React SearchSelect over its state). Found in the app, for its
+  owner: a break-glass `admin` login exists in its code (disabled unless a
+  strong `ADMIN_PASS` is set); `/api/deploy-log` is public.
+
+## Additional expenditures per watch (4 Nov 2026)
+
+Asked for: "an option where I can add a watch's additional expenditures …
+what we know from logistics and accounting such as movement cost, commission;
+but sometimes we sell and move in bulk and it gets confusing, so a manual
+entry per watch that we add by typing" — then: "in the empty space below"
+the prices, and "the manual is not a correction … it's for overview".
+`src/watches/costs.js`, migration 014 (`watch_costs`), the panel under the
+dossier's price line (`renderCosts` in `app.js`, `.dossier-costs`).
+
+- **Two groups, side by side when the dossier's body is 900px or wider**
+  (a container query), stacked otherwise. **From Logistics and Accounts**:
+  read-only, each line tagged with its app — the logistics copy's cost lines
+  (`logisticCosts`, by trip or shipment), shipments' and couriers' costs, the
+  movements and polish on the watch's own stock rows; the accounts app's
+  expenses, the commission settled on the stock number, the costs on a ledger
+  leg (`forStock`: the copy, else live with the person's sign-in). **A line
+  the app ties to several watches at once** (a courier that carried 1700 and
+  1718 — the bulk case) is marked "shared with … · not in the total" and left
+  out of the sums: how it splits is nobody's guess. **Added here**: typed by
+  a person — kind (shipping, customs, service, commission, insurance, travel,
+  other), title, amount and currency (required; never converted), paid on,
+  paid by, note — the ERP's own overview of what the watch cost beyond its
+  price; not a correction of the apps' lines, never written to either app.
+  Totals per currency: the apps', the typed, and all together, in the head.
+- `GET /api/watches/:id/costs` (`costsOf`: `known`, `added`, `totals`,
+  `shared`, where each app's answer came from), `POST` / `PATCH
+  /:cid` / `DELETE /:cid` (editors; at most 100 a watch; a date that does not
+  exist is refused; soft delete). Every add, change and removal is in the
+  watch's history (`cost_add` / `cost_edit` with old → new / `cost_remove`).
+  The **Timeline** shows each typed line as an ERP line on the day it was
+  paid; the model's picture carries them as `costs_added_here`.
+- Test in `test/accapp.test.js` (the accounts copy and two logistics cost
+  rows, one shared). Checked in the browser on this PC's copy with the API
+  stubbed in the page (the backup database stays unwritten).
+
+## Claude in the ERP (4 Nov 2026)
+
+Asked for: "add api to the tool so it can read through everything easily and
+be smart about what and how to show the data combined and in a good manner".
+`src/ai/`, through the official SDK (`@anthropic-ai/sdk`), **read-only**:
+nothing the model says is written anywhere, and it has no tool that writes.
+
+- **On when `ANTHROPIC_API_KEY` is set** on the server (`config.ai`; the
+  console learns it from `/api/meta`'s `ai.enabled` and hides the buttons
+  otherwise). `AI_MODEL` (default `claude-opus-5-5`, the current Opus) and
+  `AI_EFFORT` (default `medium`). Every request carries the server-side
+  refusal fallback (`fallbacks: "default"`, beta
+  `server-side-fallback-2026-07-01`), so a declined request is re-run on
+  another model rather than left blank; the house prompt is cached
+  (`cache_control`); forced `tool_choice` is never used (Opus 5.5 refuses it).
+- **What the model reads** (`ai/context.js`): `watchPicture` — the ERP's
+  record (the fields that matter, `status_why`), its two clients, the history
+  as changes (who moved what, when), what the reference has sold for, the same
+  watch's other purchases, the logistics app's story from our copy
+  (`passport`), the accounts ledger (`forStock`: our copy, or live with the
+  person's sign-in — the cookie goes with the question); `clientPicture`,
+  `searchWatches`, `searchClients`, `accountsOpen` (every entry with money
+  outstanding, each way, with totals per currency), `logisticsWhere`. All
+  through `trim`: pictures, papers, inline files, provenance histories and
+  secrets out; lists capped at 60; texts at 400 characters.
+- **The brief** (`GET /api/ai/watch/:id/brief`, `briefWatch`): the picture in
+  one request, the answer as DATA FOR A PICTURE (structured output,
+  `output_config.format` json_schema; asked the same day after the first
+  prose version: "instead of this overwhelming data show diagrams and a
+  timeline, easy to understand"): `headline` (one short sentence), `journey`
+  (eight stages — bought, paid, shipped, arrived, in_stock, sold, delivered,
+  received — each done / partial / pending / not_yet / unknown with a date
+  and a few words), `money` (bought, paid, sold, received, costs as figures
+  with their currency, one note), `moments` (5–10 turning points with their
+  source and tone), `attention` (≤ 4), `missing` (≤ 3). **Kept in
+  `ai_briefs`** (migration 013) with the picture's fingerprint (`fingerprint`:
+  the picture without its read times), served from there at once across
+  restarts until something about the watch changes ("this loads way too
+  slow", 4 Nov 2026 — the first draw of a watch is the only slow one). Drawn
+  at **low effort** (`AI_BRIEF_EFFORT`; extraction over data it is handed) by
+  `AI_BRIEF_MODEL` (default `AI_MODEL`; set `claude-sonnet-5-5` here if the
+  first draw is still too slow) from a `compact` picture: the last 15
+  history changes, 12 records per logistics list, 5 reference sales. The
+  waiting line counts the seconds and says the full story is already below. Drawn at the top of the watch's
+  **Timeline** ("In one read", `aiBrief` in `ask.js`): the journey as a
+  stepper (a dot per stage, filled when done), the money as two bars (paid of
+  bought, received of sold) with costs under them, the moments as a short
+  timeline with source tags, then the flags — and a line saying the model
+  drew it and to check a figure before acting on it.
+- **Ask** (`POST /api/ai/ask` `{question, history, watch_id?}`, `ask`): the
+  SDK's tool runner (`client.beta.messages.toolRunner`, `betaTool` with raw
+  JSON schemas, at most 8 iterations) over six tools — `search_watches`,
+  `watch_picture`, `find_clients`, `client_picture`, `accounts_open`,
+  `logistics_where`. The page keeps the conversation (last 12 turns, text
+  only) and sends it back each time; about a watch, its picture opens the
+  first turn. Answers are asked for short, a one-line answer then "- " lines,
+  stock numbers as "#1668" and clients by name — the page makes those links
+  through `/api/acc-app/links` (`aiText`, `aiLinks`). On the Timeline (about
+  that watch) and from the **Ask** button in the bar (about anything).
+- `test/ai.test.js` against a stand-in Anthropic API (`ANTHROPIC_BASE_URL`,
+  which the SDK honours): what the model was given, the brief's shape and
+  cache, the tool round-trip, the conversation carried. Not tried against the
+  real API from this PC (no key here): the first live run is the check.
+- **Cost**: a brief is one request of roughly 10–30k input tokens
+  (Opus 5.5: $4 per million in); a question two to four. The ten-minute hold
+  and the cached house prompt keep repeats cheap. Switch to
+  `AI_MODEL=claude-sonnet-5-5` if it adds up.
+
 ## Sheets and Ask (7 Nov 2026)
 
 Asked for: "a system of excel / google sheet type of thing, a new tab that
@@ -565,7 +827,7 @@ the logistics app is.
   beside the 25 MB wasm are not.
 
 **Ask** (`#/ask`, `POST /api/ask`, ndjson: a line per step, the thread last).
-Claude on the Anthropic API (`ANTHROPIC_API_KEY`; `ASK_MODEL`, default
+Claude on the Anthropic API (`ANTHROPIC_API_KEY` and `AI_MODEL` — `config.ai`, shared with the brief and the Ask button; default
 `claude-opus-5-5`; with `fallbacks: "default"`), with tools of ours: `schema`,
 `sql`, `watch`, `build_sheet`, `make_csv`, `make_pdf`. **Read-only by
 construction**: `readOnlySql` runs ONE statement (the extended protocol — a
@@ -679,6 +941,80 @@ the agreed ones hidden by hand, keeping the larger.
 - **PDFs are not held.** 249 PDFs (invoices, papers) on 136 Chrono Key pages
   were refused as "not a picture". Holding documents is still to do.
 
+## Documents per watch (4 Nov 2026)
+
+On the "not done" list since the start; done with the rest of "fix
+everything". `src/watches/documents.js`, migration 012 (`watch_documents`):
+the invoice, the papers, a customs form, a receipt — a PDF or a picture (the
+same `saveDocument` as an expense's payment copies: a PDF as it is, a picture
+with its 480px thumbnail), with a `kind` (invoice, papers, customs, receipt,
+other) and the name it was uploaded under. `GET/POST
+/api/watches/:id/documents` (editors post, up to 30 a watch, `kind` in the
+form), `DELETE /api/watches/:id/documents/:did` (soft), the file at
+`/api/watch-documents/:did` (`?thumb=1`, `?download=1`) behind the sign-in,
+framed only by our own PDF viewer. Every add and remove is in the watch's
+history (`document_add`, `document_remove`). The watch page's **Papers**
+panel lists them (a PDF opens in the viewer, `lgDocOpen`), with a drop zone
+and the kind for editors; the **Timeline** shows each as an ERP line when it
+was added and in its Papers at the foot; the model's brief lists their names.
+Chrono Key's own 249 PDFs are still not copied (the detail pass refuses them
+as "not a picture") — the next step for this table.
+
+## Jewellery and bags (5 Nov 2026)
+
+Asked for: "add category of jewellery and bags here too; stock number
+sequence stays the same, but new categories with accompanying detail
+categories for those — material, carats, gemstones, colour, chain length etc.;
+same with bags". Migration 015 (`category` on `watches`, and the two
+categories' own columns).
+
+- **One table, one sequence.** A piece of jewellery or a bag is a record in
+  `watches` like any watch: the same stock number run (the unique index as it
+  was — a number is taken across categories), the same purchase, prices,
+  sale, moves, photos, papers, costs, history, Logistics / Accounts / Timeline
+  by stock number. `category` ∈ watch · jewellery · bag, default `watch`:
+  everything copied from Chrono Key and the vault is a watch, and the syncs
+  never write the column, so a record re-filed here keeps its category
+  (locked like any edit on a copied record).
+- **Whose field is whose** (`fields.js`): a field with `only` belongs to that
+  category — the watch's dial, case, size, bezel, bracelet, movement, service
+  papers and watch date are `only: 'watch'`; group **Jewellery** (type,
+  material, gemstones, carats, colour, clarity, chain length, ring size,
+  weight, certificate / hallmark) is `only: 'jewellery'`; group **Bag** (type,
+  material, colour, size, hardware, date code / year) `only: 'bag'`. Brand,
+  model, reference, serial, title, status, location, condition, box, papers,
+  accessories, customisation and everything about the money are shared.
+  `fieldsFor(category)` is the list the form, the page's head and the model's
+  picture use; `CATEGORIES` goes out in `/api/meta`. An enum field carries
+  its `labels` now (status, category), so the console does not assume every
+  enum is a status. All of it is written as typed (text) — "2.05 ct",
+  "45 cm" — never converted.
+- **Inventory**: a third row of pills — Watches / Jewellery / Bags, every one
+  shown even at 0, "All categories" — between the statuses and the places
+  (`?category=`, its own facet, the counts over what the other filters
+  allow). The count line says "watches", "bags", "pieces of jewellery" or
+  "items". The card's facts are the category's (`tileFacts`): a watch's
+  reference, serial and date; jewellery's type, metal, stones, carats, colour,
+  chain length; a bag's type, leather, colour, size, hardware, date code — and
+  the card's "Category" row (Chrono Key's name for the place) is now
+  **"Place"**, because Category means watch / jewellery / bag. Search finds a
+  piece by its material, stones or type. The Share text carries the same.
+- **The page**: the head's facts are the category's; the group "Watch" is
+  headed "Item" on anything else; the category stands beside the stock number
+  when it is not a watch. In the edit form, changing Category redraws the
+  form with that category's fields at once, keeping what was typed
+  (`current.draft`, `formValues`). `displayTitle`: a piece with no model is
+  "Cartier ring", "Hermès tote".
+- **New item** (`#/new`, `#/new/jewellery`, `#/new/bag`; the menu's "New
+  watch" is "New item"): first what it is — three pills — then that
+  category's form, with the stock number already filled in as the **next in
+  the sequence** (`GET /api/watches/next-stock-no`: one more than the highest
+  number held, deleted records included; editors), changeable.
+- Test in `test/api.test.js` ("jewellery and bags …"). Not asked for and not
+  done: a CSV or Chrono Key import of jewellery (Chrono Key's "Jewellery"
+  category is a PLACE, HK, and stays one); a category filter on the sidebar
+  (its parts are the statuses).
+
 ## Being polite to Chrono Key
 
 Somebody else's server, and the real inventory. Read-only; two pages at a
@@ -789,15 +1125,20 @@ photos in `data/`, makes `admin@local` with a random password the first time
 npm install
 cp .env.example .env      # fill in
 npm start                 # migrates, creates the first admin, serves on :3000
-npm test                  # EMPTIES the test database first
+npm test                  # EMPTIES the test database first (TEST_DATABASE_URL)
+npm run test:local        # the same, on a fresh embedded Postgres it starts and stops itself
 npm run import -- csv ProductList.csv
-npm run import -- list | details [new|active|full] [limit] | vault | all
+npm run import -- list | details [new|active|full] [limit] | vault | logistics | accounts | all
 npm run import -- tidy-photos     # hide repeats among photos already copied
 npm run user -- add someone@example.com editor 'a-long-password' Name
 ```
 
 Tests need a Postgres at `TEST_DATABASE_URL` (default
 `postgres://postgres@localhost:5433/masterapp_test`) — it is wiped each run.
+`npm run test:local` (`test/run-local.mjs`) needs nothing: it starts a fresh
+embedded Postgres in a temporary folder, runs the suite and stops it. Start
+one each time — an embedded server kept running across whole suite runs was
+seen to start refusing connections (4 Nov 2026).
 
 ## Not done yet / next
 
@@ -816,8 +1157,8 @@ Tests need a Postgres at `TEST_DATABASE_URL` (default
   photos on the wrong watch in the source data (11 ↔ 1446, 1570, 739 ↔ 1346,
   1607 ↔ 1606); buy-backs not linked by `ck_product_id` (same serial: 126/330,
   537/1021, 683/1007, 813/1535, 1048/1433, 1149/1426, 1454/1645).
-- Documents (PDFs) per watch. Storage now takes PDFs (`saveDocument`, used
-  for expense payment copies); a watch's own documents are still to do.
+- (Done 4 Nov 2026: `watch_documents`.) Chrono Key's own PDFs — 249 on 136
+  pages — are still not copied into it.
 - Sale currency for imported sales (could come from InvoiceWEB's Buy & Sell
   ledger, which reads the sales group).
 - Writing back to Chrono Key or the vault — deliberately not done.

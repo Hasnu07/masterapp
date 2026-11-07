@@ -3,7 +3,8 @@
  * should work all system around … has access of the whole system I can ask
  * it for any pdf I want any csv any info it tells us").
  *
- * Claude (the Anthropic API, `@anthropic-ai/sdk`) with tools of ours:
+ * Claude (the Anthropic API, `@anthropic-ai/sdk`, the key and model of
+ * `config.ai` — the same as the watch's brief and the Ask button) with tools of ours:
  *   schema        every table and column it may read, with what each holds
  *   sql           ONE read-only SELECT, in a READ ONLY transaction with a
  *                 15-second limit, through the extended protocol (so a second
@@ -33,7 +34,8 @@ import { renderPdf, tableBlock } from '../pdf/index.js';
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 
-export const enabled = () => Boolean(config.ask.apiKey);
+export const enabled = () => Boolean(config.ai.enabled);
+const SQL_TIMEOUT_MS = Number(process.env.ASK_SQL_TIMEOUT_MS || 15_000);
 
 /* ── what it may read ─────────────────────────────────────────────── */
 
@@ -84,7 +86,7 @@ export async function readOnlySql(sql, { limit = 500 } = {}) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN READ ONLY');
-    await client.query(`SET LOCAL statement_timeout = ${Math.max(1000, Math.min(Number(config.ask.sqlTimeoutMs) || 15000, 60000))}`);
+    await client.query(`SET LOCAL statement_timeout = ${Math.max(1000, Math.min(SQL_TIMEOUT_MS || 15000, 60000))}`);
     // The extended protocol takes exactly one statement: a second one after a semicolon is a syntax error from Postgres.
     const r = await client.query({ text, values: [], queryMode: 'extended', rowMode: 'array' });
     await client.query('COMMIT');
@@ -346,7 +348,7 @@ export async function ask({ threadId = null, question, user, onStep = () => {} }
   messages.push({ role: 'user', content: q });
   await query('UPDATE ask_threads SET messages = $1, status = $2, error = NULL, updated_at = now() WHERE id = $3', [JSON.stringify(messages), 'running', t.id]);
 
-  const client = new Anthropic({ apiKey: config.ask.apiKey });
+  const client = new Anthropic({ apiKey: config.ai.apiKey });
   const ctx = { user, threadId: t.id };
   const usage = { input_tokens: 0, output_tokens: 0, ...(t.usage || {}) };
   const step = async (s) => {
@@ -359,7 +361,7 @@ export async function ask({ threadId = null, question, user, onStep = () => {} }
   try {
     for (let turn = 0; turn < 25; turn++) {
       const response = await client.beta.messages.create({
-        model: config.ask.model,
+        model: config.ai.model,
         max_tokens: 16000,
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',

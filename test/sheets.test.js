@@ -362,7 +362,7 @@ test('Ask: read-only SQL only — one statement, no users or sessions, people in
 
 test('Ask over HTTP without a key: says it is not set up; no thread is made', async () => {
   const meta = (await admin.call('GET', '/api/meta')).body;
-  assert.equal(meta.ask.enabled, false);
+  assert.equal(meta.ai.enabled, false);
   assert.ok(meta.sheetKinds.length === 4);
   const r = await admin.call('POST', '/api/ask', { question: 'How many watches are in stock?' });
   assert.equal(r.status, 200);
