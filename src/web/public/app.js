@@ -160,7 +160,7 @@ function route() {
   const hash = location.hash.replace(/^#/, '') || '/';
   // #/logistics/<tab>/<what>: the logistics app's tab, with a stock number (or, on Clients, a name) found there.
   const [, page, id, more] = hash.split('/');
-  const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses' }[page] || page || 'inventory';
+  const section = { watch: 'inventory', stock: 'inventory', client: 'clients', expense: 'expenses', sheet: 'sheets' }[page] || page || 'inventory';
   $$('#nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === section));
   crumb(section, page, id);
   // The logistics and accounts apps' frames stay loaded while another page shows (hidden, not gone).
@@ -183,6 +183,10 @@ function route() {
   if (page === 'expense' && id) return showExpense(Number(id));
   if (page === 'logistics') return showLogistics(id, more);
   if (page === 'accounts') return showAccounts(id, more);
+  // Sheets and the Ask tab live in sheets.js.
+  if (page === 'sheets') return showSheets(id);
+  if (page === 'sheet' && id) return showSheet(Number(id));
+  if (page === 'ask') return showAsk(id ? Number(id) : null);
   if (page === 'new') return showNew(id);
   if (page === 'import') return showImport();
   if (page === 'users') return showUsers();
@@ -191,12 +195,12 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /* The bar names the page, as Chrono Key's does: INVENTORY · HOME · INVENTORY. */
-const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', new: 'New item', import: 'Import', users: 'Users' };
+const SECTION_NAMES = { inventory: 'Inventory', clients: 'Clients', expenses: 'Expenses', logistics: 'Logistics', accounts: 'Accounts', sheets: 'Sheets', ask: 'Ask', new: 'New item', import: 'Import', users: 'Users' };
 const STOCK_NAMES = { in_stock: 'In stock', sold: 'Sold', returned: 'Returned', other: 'Other', incoming: 'Incoming', reserved: 'Reserved', all: 'All stock' };
 function crumb(section, page, id) {
   const name = SECTION_NAMES[section] || 'Purosangue';
   const leaf =
-    { watch: 'Watch', client: 'Client', expense: 'Expense' }[page] ||
+    { watch: 'Watch', client: 'Client', expense: 'Expense', sheet: 'Sheet' }[page] ||
     (page === 'stock' || !page ? STOCK_NAMES[id || 'in_stock'] || id : '') ||
     ((section === 'logistics' || section === 'accounts') && id ? id : '');
   $('#crumb-title').textContent = name;

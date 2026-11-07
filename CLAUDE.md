@@ -36,10 +36,14 @@ src/
   ai/                       Claude in the ERP: what the model reads (context.js), the watch's brief and Ask with tools (index.js)
   logistics/                the app's lists (kinds.js), moments and stages (situation.js), which client of ours a logistics client is (clients.js), our watch by stock number (shared.js)
   import/jobs.js            the timer, and the one-job-at-a-time lock
+  sheets/                   the spreadsheets of the system: build.js reads them, index.js keeps, exports and puts a row into the system
+  ask/                      the assistant over the whole system (Claude + read-only SQL, CSV, PDF, sheets)
+  pdf/                      our own PDF writer — title, text, tables; no dependency
   web/server.js             the API
   web/lgapp.js              the logistics app itself, served inside the ERP at /lg-app/
   web/accapp.js             the accounts app itself, served inside the ERP at /acc-app/
-  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline; ask.js the brief and the Ask thread
+  web/gridcraft.js          GridCraft, the sheets' spreadsheet, served inside the ERP at /gridcraft/ (vendor/gridcraft)
+  web/public/               the console — no build step, served raw; lgapp-bridge.js / accapp-bridge.js run inside the two apps; timeline.js is the watch's combined timeline; ask.js the brief and the Ask button's thread; sheets.js is Sheets and the Ask tab
 test/                       node:test against stand-ins and a real Postgres
 ```
 
@@ -693,6 +697,149 @@ nothing the model says is written anywhere, and it has no tool that writes.
   (Opus 5.5: $4 per million in); a question two to four. The ten-minute hold
   and the cached house prompt keep repeats cheap. Switch to
   `AI_MODEL=claude-sonnet-5-5` if it adds up.
+
+## Sheets and Ask (7 Nov 2026)
+
+Asked for: "a system of excel / google sheet type of thing, a new tab that
+starts asking what do you want: logistics / accounting / client situation /
+stock situation … editable, sumable, and when we enter new data it asks us do
+you want this to add in the system too — plus the api … most powerful api
+that has access of the whole system, I can ask it for any pdf, any csv, any
+info". Migration 011; `src/sheets`, `src/ask`, `src/pdf`; `public/sheets.js`.
+
+**Sheets** (`#/sheets`, `/api/sheets`). "New sheet" asks the kind, then what
+it is about (stock numbers, a client, a status), shows a preview, and keeps
+the sheet (`sheets.doc` = columns + rows, one document). Built by
+`sheets/build.js`:
+
+- **logistics** — what moving a watch cost, by area (logistic cost, shipment,
+  trip), from our copy of the logistics app, split over the watches a cost
+  carried exactly as the app's own costing does (`situation.costs`). Its
+  lines are the app's: never written back.
+- **accounting** — money in and out, for stock numbers (purchase, sale,
+  accessories, logistics lines, expenses whose title or description names
+  the stock — "Stock 1617 · …") or for a client (what we bought from them and
+  sold to them, by Chrono Key's ids).
+- **client** / **stock** — one row per watch, each cell a field of the watch
+  (`bind: {entity: 'watch', field}`), with days in stock, ≈ EUR and the
+  logistics cost; a live formula column (Margin ≈ EUR).
+
+≈ EUR is Chrono Key's own euro figure where it has one, else today's rate —
+blank, never guessed, when the rate sources are down. Money adds up only
+within one currency: the foot shows one sum per currency.
+
+- **An edit changes the sheet only** (autosaved, `version` with every save —
+  a save over somebody else's is 409, not made unseen). A cell of the
+  system's, or a new row, then asks **"Put it in the system too?"** (the bar
+  under the head, and a To-system button on the row). Only then
+  `applyRow`: a watch's row → `updateWatch` (locked, logged, exactly as its
+  form); an expense's row → `updateExpense`; a new row on a stock sheet → a
+  new watch; on a client sheet → that stock number linked to the client; on
+  accounting / logistics / blank, a line of money out → an expense naming
+  the stock. Nothing is ever written to the logistics app or Chrono Key.
+- **Read again** rebuilds the rows from the system and keeps the hand edits
+  and hand-typed rows. CSV and PDF (`/export`) — the PDF from our own writer
+  (`src/pdf`, Helvetica, no dependency; a name the fonts cannot print says so
+  in the footer).
+
+**The spreadsheet itself is GridCraft** (asked the same day: "use
+storytold/gridcraft as the sheet tool instead, with the same concept").
+GridCraft is an open-source Excel-style spreadsheet in Rust (MIT /
+Apache-2.0, alpha; 500+ functions, sort/filter, formats, charts, PDF export)
+whose web build is WebAssembly. Not a JS component: a whole app, embedded as
+the logistics app is.
+
+- `npm run gridcraft` (`scripts/fetch-gridcraft.mjs`) fetches the release
+  pinned in `package.json` (`gridcraft.version`, 0.17.0) — the
+  `gridcraft-web-<v>.zip` from its GitHub releases, ~10 MB — into
+  `vendor/gridcraft` with its licence files; `src/web/gridcraft.js` serves it
+  at `/gridcraft/` behind the sign-in, as released, with the policy a
+  WebAssembly page needs (`'wasm-unsafe-eval'`, Trunk's inline module script
+  allowed by its hash computed at start-up, `frame-ancestors 'self'`,
+  `X-Frame-Options: SAMEORIGIN`). Not installed → the page says so and the
+  Sheets tab uses the console's own grid (`renderSheetGrid` in `sheets.js`:
+  cells edited in place, its own formula language, kept as the fallback).
+- **Its host mode is the whole integration — no fork.** Framed same-origin
+  with `?host=parent&chrome=notitlebar&author=<name>`, GridCraft talks to the
+  page over `postMessage` (its `craft-web-host` contract, every message
+  `{type: 'gridcraft:<kind>', …}`, same origin both ways): `ready` → the
+  page answers `host {version: '1'}` and `open {name, bytes}` with the
+  sheet's **.xlsx** (`GET /api/sheets/:id/workbook`); every Save (Ctrl+S) and
+  PDF export in GridCraft comes to the page as `save {name, bytes, id?,
+  saveAs}` instead of a download — an .xlsx is `PUT` back
+  (`X-Sheet-Version` with it; 409 when stale), a .pdf downloads; `dirty
+  {dirty}` shows "unsaved changes — press Ctrl+S" and guards leaving the
+  page. There is no way to make GridCraft save from outside (its control
+  channel is TCP, desktop only), so the person saves.
+- **XLSX, written and read here** (`src/xlsx`, no dependency: the zip,
+  shared strings, styles, dates as Excel's day numbers with a date format,
+  formulas with cached values, hidden columns and sheets, a frozen heading,
+  an autofilter). `sheets/xlsx.js`: `sheetToWorkbook` — column A hidden with
+  the row's key, row 1 the labels, a hidden sheet `erp` (`masterapp-sheet`,
+  the sheet id, then key · label · type · binding per column; written
+  `veryHidden`, which GridCraft hands back as `hidden` — both are read), the
+  page's formulas shifted one column right; `workbookToDoc` — the saved workbook
+  back into the document: a column is the one the `erp` sheet remembers at
+  that position when the label agrees (two "Cur." columns stayed apart only
+  after the labels were made distinct: *Paid cur. / B2B cur. / Sold cur.*),
+  else the first unused column with that label, else a new unbound column;
+  a row with no key is a new row (`manual`); a cell that differs from the
+  document is `edited` — the same marks the console's grid sets, so
+  `applyRow` ("put it in the system too?") is one code path for both. A
+  workbook whose `erp` sheet names another sheet, or none, is refused. The
+  saved workbook is kept whole (`sheets.workbook`, migration 012) so the
+  next open shows the person's own formatting; **Read again** drops it.
+- Formulas in the console's own grid are computed by the page (SUM, AVERAGE,
+  MIN, MAX, COUNT, IF, AND/OR, ROUND, &, A1 and A1:B9) and saved beside the
+  cell (`row.calc`); from GridCraft the cached value comes in the file. The
+  CSV and PDF print those values, never formula text.
+- **Known from reading its source** (a six-reader pass over the clone, 7 Nov
+  2026): no JS API in the browser at all beyond the host messages — the
+  control channel (`sheet.read`, `cell.set` …) is desktop TCP only, so
+  "ask as you type" would need a small fork (`apps/gridcraft-web/src/host.rs`
+  + `gridcraft_ui_egui::control::handle`, which is pure Rust; not done).
+  `?chrome=notitlebar` is used: the File tab stays, because the title bar's
+  Save button goes with it and Backstage is the one save a person without a
+  keyboard shortcut has — on the web "Save" opens Save As, and its
+  **Download (.xlsx)** button is what hands the workbook to the page (seen
+  7 Nov 2026: the PUT, then the bar with the one changed cell, 39 ·
+  Location, and nothing else out of 173 rows); File › Open / New still work there and
+  can replace the document — the `erp`-sheet check refuses such a workbook
+  with a clear error. Ctrl+O/N/W/S fire under every chrome value. The release
+  build embeds egui's own fonts only (no craft-fonts, no `OFL-*.txt` in the
+  zip): **Arabic and Chinese names may show as boxes** in GridCraft; the
+  console and the PDFs are unaffected. The wasm aborts on a panic (no
+  `catch_unwind` on wasm32): the page shows "has not started" with Try again
+  after 40 s without `ready`. Its `.xlsx` writer is alpha ("never checked in
+  Excel across a corpus"): a workbook downloaded with **Excel** should be
+  tried in Excel before anyone relies on it. GridCraft keeps its own theme
+  and language in `localStorage` (`gridcraft.ui`, `gridcraft.prefs`, our
+  origin): the page seeds light once; a choice made in GridCraft stays.
+- **Licence**: MIT (our choice of MIT OR Apache-2.0). The zip's
+  `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE` (the embedded fonts' notices —
+  Ubuntu Font Licence, OFL, Bitstream Vera — must travel with every copy)
+  and `ATTRIBUTION.md` are kept in `vendor/gridcraft`, as released. The
+  ArtCraft name and logos are trademarks outside the licence: the bundle is
+  unmodified, and the page credits "based on GridCraft by the ArtCraft
+  team" in plain text — never "ArtCraft" in any name of ours. A fork would
+  have to strip the About dialog's ArtCraft lines. `vendor/gridcraft` is
+  committed (decided 7 Nov 2026); the `.br`/`.gz` copies the server makes
+  beside the 25 MB wasm are not.
+
+**Ask** (`#/ask`, `POST /api/ask`, ndjson: a line per step, the thread last).
+Claude on the Anthropic API (`ANTHROPIC_API_KEY` and `AI_MODEL` — `config.ai`, shared with the brief and the Ask button; default
+`claude-opus-5-5`; with `fallbacks: "default"`), with tools of ours: `schema`,
+`sql`, `watch`, `build_sheet`, `make_csv`, `make_pdf`. **Read-only by
+construction**: `readOnlySql` runs ONE statement (the extended protocol — a
+second one is a syntax error to Postgres) inside `BEGIN READ ONLY` with a
+15-second `statement_timeout`; `users`, `sessions`, `ask_files`,
+`ask_threads` and the file-reading functions are refused by name — the
+`people` view (users without password hashes) stands for users. It never
+writes to the system; a change is a person's, on a page or from a sheet.
+Every step (the SQL it ran) is kept on the thread (`ask_threads.steps`) and
+shown under the answer; the CSVs and PDFs it makes are kept in `ask_files`
+(the asker's own; an admin may open any). Conversations are per user.
+Without a key the page says so; Sheets work regardless.
 
 ## Chrono Key's product list — read it right
 
