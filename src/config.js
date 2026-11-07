@@ -91,6 +91,16 @@ export const config = {
   },
 
   /*
+   * Ask — the assistant over the whole system (asked 7 Nov 2026), on the
+   * Anthropic API. Without a key the Ask page says so and does nothing.
+   */
+  ask: {
+    apiKey: (process.env.ANTHROPIC_API_KEY || '').trim(),
+    model: process.env.ASK_MODEL || 'claude-opus-5-5',
+    sqlTimeoutMs: Number(process.env.ASK_SQL_TIMEOUT_MS || 15_000),
+  },
+
+  /*
    * The logistics app's records (shipments, incomings, places, trips, costs …),
    * read from the same worker document as the vault. Its own switch, because
    * its switch-over need not be Chrono Key's: LOGISTICS_SYNC=off stops it, and

@@ -1,0 +1,31 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "masterapp",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "src/local.js"
+      ],
+      "env": {
+        "NO_BROWSER": "1"
+      },
+      "port": 3300,
+      "url": "http://127.0.0.1:3300"
+    },
+    {
+      "name": "masterapp-nosync",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "src/local.js"
+      ],
+      "env": {
+        "NO_BROWSER": "1",
+        "SYNC": "off",
+        "LOGISTICS_SYNC": "off"
+      },
+      "port": 3300,
+      "url": "http://127.0.0.1:3300"
+    }
+  ]
+}

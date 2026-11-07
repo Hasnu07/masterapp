@@ -157,6 +157,14 @@ GitHub, copies the photos and the database across, and checks every photo.
    | `CHRONOKEY_PASSWORD` | the same as in this PC's `.env` — encrypt |
    | `VAULT_TOKEN` | the same as in this PC's `.env` — encrypt |
    | `SYNC` | **`off`** — until the move is checked; Claude says when |
+   | `ANTHROPIC_API_KEY` | for the **Ask** page (7 Nov 2026): a key from console.anthropic.com — encrypt. Without it Ask says it is not set up; Sheets work regardless |
+
+   The spreadsheet on the Sheets page (GridCraft, 7 Nov 2026) needs no
+   setting: its web build is committed in `vendor/gridcraft` and served at
+   `/gridcraft/`. To move to a newer release: change `gridcraft.version` in
+   `package.json`, run `npm run gridcraft`, try a sheet, commit. The server
+   makes Brotli and gzip copies of the 25 MB `.wasm` beside it on its first
+   start (a few seconds; the file is cached for a year by its hash).
 
    Do **not** set `ADMIN_EMAIL` / `ADMIN_PASSWORD`: the accounts come across
    with the database.

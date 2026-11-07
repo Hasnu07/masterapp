@@ -15,6 +15,10 @@ import * as lgShared from '../logistics/shared.js';
 import { workerFile, fileById } from '../import/logistics/sync.js';
 import { passport } from '../logistics/passport.js';
 import { mountLogisticsApp, workerOrigin } from './lgapp.js';
+import * as sheets from '../sheets/index.js';
+import { sheetToWorkbook, workbookToDoc } from '../sheets/xlsx.js';
+import * as ask from '../ask/index.js';
+import { mountGridcraft, gridcraftInstalled, gridcraftVersion } from './gridcraft.js';
 import { FIELDS, STATUSES, LOCATIONS, CURRENCIES, PAYMENT_KINDS } from '../watches/fields.js';
 import { query } from '../db/index.js';
 import { importProductCsv } from '../import/listimport.js';
@@ -61,7 +65,7 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
  * the page itself is never kept; and every API answer carries it, so a page
  * left open sees a newer one and offers to reload.
  */
-const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'fxchip.js'];
+const CONSOLE_SCRIPTS = ['app.js', 'logistics.js', 'sheets.js', 'fxchip.js'];
 // Each page's own stylesheet, versioned with the scripts.
 const CONSOLE_STYLES = [];
 function consolePage() {
@@ -214,8 +218,9 @@ export function createServer() {
     next();
   };
 
-  /* The logistics app itself, at /lg-app/ (lgapp.js). */
+  /* The logistics app itself, at /lg-app/ (lgapp.js); GridCraft, the sheets' spreadsheet, at /gridcraft/ (gridcraft.js). */
   mountLogisticsApp(app, need);
+  mountGridcraft(app, need, { production: config.production });
 
   /* ── sign-in ─────────────────────────────────────────────────── */
 
@@ -269,6 +274,9 @@ export function createServer() {
       clientTypes: clients.CLIENT_TYPES,
       expenseFields: expenses.EXPENSE_FIELDS,
       logistics: logistics.catalog(),
+      sheetKinds: sheets.KINDS,
+      gridcraft: { installed: gridcraftInstalled(), version: gridcraftVersion() },
+      ask: { enabled: ask.enabled(), model: config.ask.model },
       chronokeyUrl: config.chronokey.url, // the Inventory card links a watch to its Chrono Key page
       storage: config.r2.configured ? 'r2' : 'disk',
       sync: {
@@ -652,6 +660,145 @@ export function createServer() {
       const p = await passport(String(req.query.no || '').trim());
       if (!p) return res.status(400).json({ error: 'Which stock number?' });
       res.json(p);
+    })
+  );
+
+  /* ── sheets (asked 7 Nov 2026): a spreadsheet of the system, kept and edited here ── */
+
+  app.get('/api/sheets', need('viewer'), wrap(async (req, res) => res.json(await sheets.listSheets(req.query))));
+  /* What a sheet of a kind would hold, not kept: the picker's preview. */
+  app.post(
+    '/api/sheets/preview',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const built = await sheets.buildSheet(String(req.body?.kind || ''), req.body?.subject || {});
+      res.json({ title: built.title, note: built.note, columns: built.columns, rows: built.rows.slice(0, 20), row_count: built.rows.length });
+    })
+  );
+  app.post(
+    '/api/sheets',
+    need('editor'),
+    wrap(async (req, res) => res.status(201).json({ id: await sheets.createSheet(String(req.body?.kind || ''), req.body?.subject || {}, req.user) }))
+  );
+  app.get('/api/sheets/:id', need('viewer'), wrap(async (req, res) => res.json(await sheets.getSheet(req.params.id))));
+  /* The sheet as edited. Its version goes with it: a save over somebody else's is refused (409), not made unseen. */
+  app.patch('/api/sheets/:id', need('editor'), wrap(async (req, res) => res.json(await sheets.saveSheet(req.params.id, req.body || {}, req.user))));
+  app.post('/api/sheets/:id/rebuild', need('editor'), wrap(async (req, res) => res.json(await sheets.rebuildSheet(req.params.id, req.user))));
+  /* A row into the system: the watch it stands for is edited, or a new watch / expense / link is made (sheets.applyRow). */
+  app.post('/api/sheets/:id/apply', need('editor'), wrap(async (req, res) => res.json(await sheets.applyRow(req.params.id, String(req.body?.row || ''), req.user, { as: req.body?.as }))));
+  app.delete(
+    '/api/sheets/:id',
+    need('editor'),
+    wrap(async (req, res) => {
+      await sheets.deleteSheet(req.params.id, req.user);
+      res.json({ ok: true });
+    })
+  );
+  /*
+   * The sheet as a workbook, for GridCraft (and for Excel): the one the
+   * person last saved there, else made from the document. A save in
+   * GridCraft PUTs the workbook back: it is kept whole, read into the
+   * document, and every cell that differs is marked as edited — the page
+   * then asks whether to put those into the system (applyRow).
+   */
+  app.get(
+    '/api/sheets/:id/workbook',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const s = await sheets.getSheet(req.params.id, { workbook: true });
+      const fresh = req.query.fresh === '1' || !s.workbook;
+      const bytes = fresh ? sheetToWorkbook(s) : s.workbook;
+      const name = (s.title || `sheet-${s.id}`).replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+      res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.set('Cache-Control', 'no-store');
+      res.set('X-Sheet-Version', String(s.version));
+      res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${name}.xlsx"`);
+      res.send(bytes);
+    })
+  );
+  app.put(
+    '/api/sheets/:id/workbook',
+    need('editor'),
+    express.raw({ type: () => true, limit: '60mb' }),
+    wrap(async (req, res) => {
+      if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: 'No workbook was sent' });
+      res.json(await sheets.saveWorkbook(req.params.id, req.body, Number(req.get('X-Sheet-Version')) || undefined, req.user, workbookToDoc));
+    })
+  );
+
+  app.get(
+    '/api/sheets/:id/export',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const s = await sheets.getSheet(req.params.id);
+      const name = (s.title || `sheet-${s.id}`).replace(/[^\w.\- ]+/g, '_').slice(0, 80);
+      if (req.query.format === 'pdf') {
+        res.set('Content-Type', 'application/pdf');
+        res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${name}.pdf"`);
+        return res.send(sheets.toPdf(s));
+      }
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', `attachment; filename="${name}.csv"`);
+      res.send(sheets.toCsv(s.doc));
+    })
+  );
+  /* For the pickers: clients by name. */
+  app.get(
+    '/api/sheets-pick/clients',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const r = await clients.listClients({ q: req.query.q, limit: 12 });
+      res.json({ clients: (r.clients || r.rows || []).map((c) => ({ id: c.id, name: c.name || clients.clientName(c), company: c.company || '' })) });
+    })
+  );
+
+  /* ── ask (asked 7 Nov 2026): the assistant over the whole system, read-only ── */
+
+  app.get('/api/ask/threads', need('viewer'), wrap(async (req, res) => res.json(await ask.listThreads(req.user))));
+  app.get('/api/ask/threads/:id', need('viewer'), wrap(async (req, res) => res.json(await ask.getThread(req.params.id, req.user))));
+  app.delete(
+    '/api/ask/threads/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      await ask.deleteThread(req.params.id, req.user);
+      res.json({ ok: true });
+    })
+  );
+  /*
+   * One question. The answer can take a minute (several queries, a PDF), so
+   * the steps are streamed as they happen — one JSON line each — and the
+   * thread comes last. A page that lost the stream reads the thread again.
+   */
+  app.post(
+    '/api/ask',
+    need('viewer'),
+    wrap(async (req, res) => {
+      res.set('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.set('Cache-Control', 'no-store');
+      res.set('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+      const line = (o) => res.write(`${JSON.stringify(o)}\n`);
+      try {
+        const t = await ask.ask({ threadId: req.body?.thread || null, question: req.body?.question, user: req.user, onStep: (s) => line({ step: s }) });
+        line({ thread: t });
+      } catch (err) {
+        line({ error: err.message, status: err.status || 500 });
+      }
+      res.end();
+    })
+  );
+  /* A CSV or PDF the assistant made: the asker's own (an admin may open any). */
+  app.get(
+    '/api/ask/files/:id',
+    need('viewer'),
+    wrap(async (req, res) => {
+      const f = await ask.askFile(req.params.id, req.user);
+      if (!f) return res.status(404).json({ error: 'No such file' });
+      res.set('Content-Type', f.type);
+      res.set('Cache-Control', 'private, max-age=604800, immutable');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', `${f.type.startsWith('application/pdf') && req.query.download !== '1' ? 'inline' : 'attachment'}; filename="${f.name.replace(/[^\w.\- ]+/g, '_')}"`);
+      res.send(f.bytes);
     })
   );
 

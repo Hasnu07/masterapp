@@ -1,2 +1,5 @@
 * text=auto
 *.cmd text eol=crlf
+# GridCraft's web build is served byte for byte: its index.html checks its own
+# files by integrity hashes, so Git must never change their line endings.
+vendor/gridcraft/** -text
